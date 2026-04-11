@@ -8,11 +8,11 @@ import {
   LayoutDashboard, Map, Users, FileText, DollarSign,
   Zap, BarChart3, Building2, Bot, Settings, MapPin,
   Globe, HardHat, ChevronDown, ChevronRight,
-  CreditCard, TrendingUp, Receipt, ChevronLeft,
-  LogOut, Bell, HelpCircle,
+  TrendingUp, ChevronLeft, LogOut, HelpCircle, Receipt,
 } from 'lucide-react'
-import { cn, initials } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { mockTenant } from '@/lib/mock-data'
+
 interface NavItem {
   label: string
   href?: string
@@ -21,6 +21,7 @@ interface NavItem {
   badgeColor?: string
   children?: { label: string; href: string; badge?: string | number }[]
 }
+
 const NAV: NavItem[] = [
   { label: 'Dashboard', href: '/', icon: LayoutDashboard },
   { label: 'Empreendimentos', href: '/empreendimentos', icon: Building2 },
@@ -39,37 +40,52 @@ const NAV: NavItem[] = [
   { label: 'Landing Pages', href: '/landing-pages', icon: Globe },
   { label: 'Simulador de Vendas', href: '/simulador', icon: TrendingUp },
   { label: 'Contratos', href: '/contratos', icon: FileText, badge: 2, badgeColor: 'bg-amber-500' },
+  {
     label: 'Financeiro',
     icon: DollarSign,
+    children: [
       { label: 'Contas a Receber', href: '/financeiro/receber', badge: 3 },
       { label: 'Contas a Pagar', href: '/financeiro/pagar' },
       { label: 'Boletos', href: '/financeiro/boletos' },
       { label: 'Split de Pagamento', href: '/financeiro/split' },
       { label: 'SPED e DIMOB', href: '/financeiro/sped' },
+    ],
+  },
   { label: 'Obras', href: '/obras', icon: HardHat },
   { label: 'Relatórios', href: '/relatorios', icon: BarChart3 },
+  { label: 'Controladoria', href: '/controladoria', icon: Receipt },
   { label: 'Chat IA', href: '/ia', icon: Bot },
-  { label: 'Controladoria', href: '/controladoria', icon: TrendingUp },
 ]
+
 const BOTTOM_NAV: NavItem[] = [
   { label: 'Configurações', href: '/configuracoes', icon: Settings },
   { label: 'Ajuda', href: '/ajuda', icon: HelpCircle },
+]
+
 interface SidebarProps {
   collapsed: boolean
   onToggle: () => void
+}
+
 export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname()
   const [openGroups, setOpenGroups] = useState<string[]>(['CRM & Funil', 'Financeiro'])
+
   function toggleGroup(label: string) {
     setOpenGroups(prev =>
       prev.includes(label) ? prev.filter(l => l !== label) : [...prev, label]
     )
   }
+
   function isActive(href: string) {
     if (href === '/') return pathname === '/'
     return pathname.startsWith(href)
+  }
+
   function isGroupActive(item: NavItem) {
     return item.children?.some(c => isActive(c.href)) ?? false
+  }
+
   return (
     <aside
       className={cn(
@@ -94,14 +110,16 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {collapsed && (
           <div className="mx-auto w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center">
             <MapPin className="w-4 h-4 text-white" />
+          </div>
+        )}
         <button
           onClick={onToggle}
           className="ml-auto text-sidebar-muted hover:text-sidebar-text p-1 rounded-md hover:bg-white/5 transition-colors flex-shrink-0"
-          title={collapsed ? 'Expandir menu' : 'Recolher menu'}
         >
           <ChevronLeft className={cn('w-4 h-4 transition-transform', collapsed && 'rotate-180')} />
         </button>
       </div>
+
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
         {NAV.map(item => {
@@ -133,6 +151,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                         : <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
                       }
                     </>
+                  )}
                 </button>
                 {!collapsed && open && (
                   <div className="mt-0.5 ml-4 pl-2.5 border-l border-sidebar-border space-y-0.5">
@@ -152,6 +171,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                           <span className="text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded-full leading-none">
                             {child.badge}
                           </span>
+                        )}
                       </Link>
                     ))}
                   </div>
@@ -159,6 +179,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
               </div>
             )
           }
+
           return (
             <Link
               key={item.href}
@@ -179,11 +200,14 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                     <span className={cn('text-[10px] text-white px-1.5 py-0.5 rounded-full leading-none', item.badgeColor ?? 'bg-slate-600')}>
                       {item.badge}
                     </span>
+                  )}
                 </>
+              )}
             </Link>
           )
         })}
       </nav>
+
       {/* Bottom */}
       <div className="border-t border-sidebar-border px-2 py-3 space-y-0.5">
         {BOTTOM_NAV.map(item => (
@@ -202,16 +226,21 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             {!collapsed && <span>{item.label}</span>}
           </Link>
         ))}
+
         {/* User */}
         <div className={cn('flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-white/5 transition-colors mt-1', collapsed && 'justify-center')}>
           <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0">
             <span className="text-white text-[10px] font-semibold">FM</span>
+          </div>
           {!collapsed && (
             <div className="flex-1 min-w-0">
               <p className="text-white text-xs font-medium truncate">Fernando Monteiro</p>
               <p className="text-sidebar-muted text-[10px] truncate">Admin</p>
+            </div>
           )}
           {!collapsed && <LogOut className="w-3.5 h-3.5 text-sidebar-muted flex-shrink-0" />}
         </div>
+      </div>
     </aside>
   )
+}
