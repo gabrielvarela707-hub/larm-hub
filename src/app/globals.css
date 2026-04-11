@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── White-label theme variables ─────────────────────────────────────────── */
+:root {
+  /* Brand — overridden per tenant via JS/middleware */
+  --brand-50:  #eff6ff;
+  --brand-100: #dbeafe;
+  --brand-200: #bfdbfe;
+  --brand-500: #3b82f6;
+  --brand-600: #2563eb;
+  --brand-700: #1d4ed8;
+
+  /* Sidebar */
+  --sidebar-bg:      #0D1B2A;
+  --sidebar-text:    #e2e8f0;
+  --sidebar-muted:   #64748b;
+  --sidebar-active:  #1e40af;
+  --sidebar-border:  rgba(255,255,255,0.06);
+
+  /* Surface */
+  --surface:       #f8fafc;
+  --surface-raised: #ffffff;
+
+  /* Sidebar width */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 64px;
+}
+
+/* ─── Base ─────────────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--surface);
+  color: #0f172a;
+}
+
+/* ─── Scrollbar ────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* ─── Lot map colors ───────────────────────────────────────────────────────── */
+.lot-disponivel { fill: #22c55e; stroke: #16a34a; }
+.lot-reservado  { fill: #f59e0b; stroke: #d97706; }
+.lot-vendido    { fill: #ef4444; stroke: #dc2626; }
+.lot-bloqueado  { fill: #6b7280; stroke: #4b5563; }
+.lot-permutado  { fill: #8b5cf6; stroke: #7c3aed; }
+
+/* ─── Prose ────────────────────────────────────────────────────────────────── */
+.prose-chat p { margin-bottom: 0.75rem; }
+.prose-chat p:last-child { margin-bottom: 0; }
+.prose-chat ul { list-style: disc; padding-left: 1.25rem; margin-bottom: 0.75rem; }
+.prose-chat li { margin-bottom: 0.25rem; }
+.prose-chat strong { font-weight: 600; }
+
+/* ─── Kanban drag ─────────────────────────────────────────────────────────── */
+.kanban-card[data-dragging="true"] {
+  opacity: 0.5;
+  cursor: grabbing;
+}
