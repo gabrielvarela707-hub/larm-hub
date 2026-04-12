@@ -4,8 +4,8 @@ import { create } from 'zustand'
 
 export interface TenantConfig {
   // Brand / white-label
-  logoUrl: string        // base64 data URL ou path
-  logoText: string       // fallback text
+  logoUrl: string
+  logoText: string
   primaryColor: string
   sidebarColor: string
   // Google Maps
@@ -16,6 +16,13 @@ export interface TenantConfig {
   sesSecretAccessKey: string
   sesFromEmail: string
   sesFromName: string
+  // AWS SNS / SMS
+  snsRegion: string
+  snsAccessKeyId: string
+  snsSecretAccessKey: string
+  snsSenderId: string
+  snsSMSType: 'Transactional' | 'Promotional'
+  snsMockMode: boolean
   // WhatsApp
   whatsappToken: string
   whatsappPhoneId: string
@@ -45,6 +52,12 @@ const DEFAULT: TenantConfig = {
   sesSecretAccessKey: '',
   sesFromEmail: '',
   sesFromName: '',
+  snsRegion: 'sa-east-1',
+  snsAccessKeyId: '',
+  snsSecretAccessKey: '',
+  snsSenderId: 'SANTACLARA',
+  snsSMSType: 'Transactional',
+  snsMockMode: true,
   whatsappToken: '',
   whatsappPhoneId: '',
   whatsappBusinessId: '',
@@ -71,7 +84,7 @@ export const useTenantConfig = create<TenantConfigState>((set, get) => ({
   },
 
   setConfig: (partial) => {
-    set(state => {
+    set((state) => {
       const next = { ...state.config, ...partial }
       if (typeof window !== 'undefined') {
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next))

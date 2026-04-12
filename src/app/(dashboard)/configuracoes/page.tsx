@@ -238,10 +238,23 @@ export default function ConfiguracoesPage() {
   // Creds
   const [creds, setCreds] = useState({
     googleMapsKey: config.googleMapsKey || '',
-    sesAccessKeyId: '', sesSecretAccessKey: '', sesRegion: 'us-east-1',
-    sesFromEmail: '', sesFromName: '',
-    whatsappToken: '', whatsappPhoneId: '', whatsappBusinessId: '',
-    clicksignKey: '', bankName: '', bankApiKey: '',
+    sesAccessKeyId: config.sesAccessKeyId || '',
+    sesSecretAccessKey: config.sesSecretAccessKey || '',
+    sesRegion: config.sesRegion || 'us-east-1',
+    sesFromEmail: config.sesFromEmail || '',
+    sesFromName: config.sesFromName || '',
+    snsAccessKeyId: config.snsAccessKeyId || '',
+    snsSecretAccessKey: config.snsSecretAccessKey || '',
+    snsRegion: config.snsRegion || 'sa-east-1',
+    snsSenderId: config.snsSenderId || 'SANTACLARA',
+    snsSMSType: config.snsSMSType || 'Transactional',
+    snsMockMode: config.snsMockMode ?? true,
+    whatsappToken: config.whatsappToken || '',
+    whatsappPhoneId: config.whatsappPhoneId || '',
+    whatsappBusinessId: config.whatsappBusinessId || '',
+    clicksignKey: config.clicksignKey || '',
+    bankName: config.bankName || '',
+    bankApiKey: config.bankApiKey || '',
   })
 
   // CRM integration fields
@@ -610,6 +623,9 @@ export default function ConfiguracoesPage() {
             <>
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800 leading-relaxed">
                 <strong>Estrategia de CRM:</strong> o LoteMobile cria e qualifica os leads, envia para o CRM externo via API e usa as automacoes nativas de cada plataforma. Voce escolhe a ferramenta que o cliente ja usa ou prefere.
+                <div className="mt-2 rounded-lg bg-white/70 px-3 py-2 text-xs text-blue-900">
+                  O CRM do sistema <strong>nao dispara e-mails de marketing</strong>. Esse fluxo fica no FluentCRM, RD Station ou HubSpot. Aqui estamos preparando a camada de <strong>SMS via AWS SNS</strong> e os repasses de lead.
+                </div>
               </div>
 
               <div className="space-y-3">
@@ -682,10 +698,79 @@ export default function ConfiguracoesPage() {
                 <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                 Custos cobrados diretamente pelos provedores. Cada tenant tem suas proprias credenciais.
               </div>
+
               <Section title="Google Maps API" sub="Mapa interativo de lotes">
-                <Field label="API Key"><SecretInput value={creds.googleMapsKey} onChange={v => setCreds(c => ({ ...c, googleMapsKey: v }))} placeholder="AIza..." /></Field>
+                <Field label="API Key">
+                  <SecretInput value={creds.googleMapsKey} onChange={v => setCreds(c => ({ ...c, googleMapsKey: v }))} placeholder="AIza..." />
+                </Field>
               </Section>
-              <Section title="AWS SES" sub="E-mails transacionais">
+
+              <Section title="AWS SNS / SMS" sub="Envio de SMS para leads direto do painel">
+                <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                  O envio de mensagens do CRM fica concentrado em <strong>SMS via AWS SNS</strong>. Os fluxos de e-mail continuam no FluentCRM, RD Station ou HubSpot.
+                </div>
+
+                <Field label="Modo demonstracao" sub="Mantem o fluxo em mock para validacao visual com o cliente">
+                  <label className="inline-flex items-center gap-3 rounded-xl border border-slate-200 px-3 py-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(creds.snsMockMode)}
+                      onChange={e => setCreds(c => ({ ...c, snsMockMode: e.target.checked }))}
+                      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-slate-800">Usar envio mockado</p>
+                      <p className="text-xs text-slate-500">Desative somente quando as credenciais e a conta SNS estiverem prontas.</p>
+                    </div>
+                  </label>
+                </Field>
+
+                <Field label="Regiao">
+                  <select
+                    value={creds.snsRegion}
+                    onChange={e => setCreds(c => ({ ...c, snsRegion: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  >
+                    <option value="sa-east-1">sa-east-1 (Sao Paulo)</option>
+                    <option value="us-east-1">us-east-1 (N. Virginia)</option>
+                    <option value="us-east-2">us-east-2 (Ohio)</option>
+                  </select>
+                </Field>
+
+                <Field label="Access Key ID">
+                  <SecretInput value={creds.snsAccessKeyId} onChange={v => setCreds(c => ({ ...c, snsAccessKeyId: v }))} placeholder="AKIA..." />
+                </Field>
+
+                <Field label="Secret Access Key">
+                  <SecretInput value={creds.snsSecretAccessKey} onChange={v => setCreds(c => ({ ...c, snsSecretAccessKey: v }))} />
+                </Field>
+
+                <Field label="Sender ID" sub="Nome exibido quando o pais e a operadora suportam sender ID">
+                  <Input
+                    value={creds.snsSenderId}
+                    onChange={e => setCreds(c => ({ ...c, snsSenderId: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 11) }))}
+                    placeholder="SANTACLARA"
+                    maxLength={11}
+                  />
+                </Field>
+
+                <Field label="Tipo padrao">
+                  <select
+                    value={creds.snsSMSType}
+                    onChange={e => setCreds(c => ({ ...c, snsSMSType: e.target.value as 'Transactional' | 'Promotional' }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  >
+                    <option value="Transactional">Transactional</option>
+                    <option value="Promotional">Promotional</option>
+                  </select>
+                </Field>
+
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500 leading-relaxed">
+                  Dica: para producao, grave essas credenciais no backend ou em secrets do ambiente. Hoje elas ficam na configuracao local do tenant para acelerar a validacao do fluxo visual.
+                </div>
+              </Section>
+
+              <Section title="AWS SES" sub="E-mails transacionais do sistema">
                 <Field label="Regiao">
                   <select value={creds.sesRegion} onChange={e => setCreds(c => ({ ...c, sesRegion: e.target.value }))}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none">
@@ -698,6 +783,7 @@ export default function ConfiguracoesPage() {
                 <Field label="E-mail remetente"><Input value={creds.sesFromEmail} onChange={e => setCreds(c => ({ ...c, sesFromEmail: e.target.value }))} placeholder="noreply@suaempresa.com.br" /></Field>
                 <Field label="Nome remetente"><Input value={creds.sesFromName} onChange={e => setCreds(c => ({ ...c, sesFromName: e.target.value }))} placeholder="Residencial Santa Clara" /></Field>
               </Section>
+
               <Section title="WhatsApp Business API">
                 <Field label="Token"><SecretInput value={creds.whatsappToken} onChange={v => setCreds(c => ({ ...c, whatsappToken: v }))} placeholder="EAAx..." /></Field>
                 <Field label="Phone Number ID"><Input value={creds.whatsappPhoneId} onChange={e => setCreds(c => ({ ...c, whatsappPhoneId: e.target.value }))} /></Field>
