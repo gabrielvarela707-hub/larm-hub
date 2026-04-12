@@ -1,3 +1,4 @@
+import { SANTA_CLARA } from '@/lib/empreendimento-data'
 import type {
   Empreendimento, Lead, Contrato, Parcela,
   ContaPagar, Automation, Obra, DashboardKPIs,
@@ -48,35 +49,8 @@ export const mockKPIs: DashboardKPIs = {
 
 export const mockEmpreendimentos: Empreendimento[] = [
   {
+    ...SANTA_CLARA,
     id: 'emp_001',
-    name: 'Residencial Santa Clara',
-    description: 'Loteamento residencial com infraestrutura completa em Pindamonhangaba SP.',
-    status: 'em_obras',
-    address: 'R. Edison Duarte Junior, 100',
-    city: 'Pindamonhangaba',
-    state: 'SP',
-    totalLots: 48,
-    availableLots: 24,
-    soldLots: 18,
-    reservedLots: 6,
-    logoUrl: null,
-    mapImageUrl: null,
-    humanizedMapUrl: null,
-    lat: -22.9132,
-    lng: -45.4499,
-    lots: Array.from({ length: 48 }, (_, i) => ({
-      id: `lot_${i + 1}`,
-      number: String(i + 1).padStart(2, '0'),
-      quadra: ['A','B','C','D'][Math.floor(i / 12)],
-      area: 180 + ((i * 13) % 120),
-      price: 165000 + (180 + ((i * 13) % 120)) * 280 + ((i * 9973) % 45000),
-      status: ([
-        'vendido','vendido','vendido','reservado',
-        'disponivel','disponivel','disponivel','disponivel',
-        'vendido','reservado','disponivel','disponivel',
-      ] as const)[i % 12],
-    })),
-    createdAt: '2023-06-01T00:00:00Z',
   },
 ]
 

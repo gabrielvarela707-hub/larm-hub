@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MapPin, ZoomIn, ZoomOut, ChevronDown, X, Clock, TrendingUp, Eye, User } from 'lucide-react'
 import { cn, formatCurrency } from '@/lib/utils'
 import { useGoogleMaps } from '@/lib/use-google-maps'
-import { MAP_EMPREENDIMENTOS, LOT_FILL_COLORS, LOT_STROKE_COLORS, STATUS_LABELS, type MapLot, type MapEmpreendimento } from '@/lib/map-data'
+import { MAP_EMPREENDIMENTOS, LOT_FILL_COLORS, LOT_STROKE_COLORS, type MapLot, type MapEmpreendimento } from '@/lib/map-data'
 import { LOT_STATUS_COLOR, LOT_STATUS_LABEL, type LotStatus } from '@/types'
 
 const GOOGLE_MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? ''
