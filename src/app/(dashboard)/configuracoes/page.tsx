@@ -9,6 +9,7 @@ import {
   Check, X, Eye, EyeOff, ChevronDown, AlertCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useTenantConfig } from '@/lib/tenant-config-store'
 import { mockTenant } from '@/lib/mock-data'
 import {
   MODULES, DEFAULT_ROLES, MOCK_TENANT_USERS,
@@ -134,7 +135,22 @@ export default function ConfiguracoesPage() {
   const [tab, setTab]         = useState('identidade')
   const [theme, setTheme]     = useState(mockTenant.theme)
   const [saved, setSaved]     = useState(false)
-  const [creds, setCreds]     = useState(EMPTY_CREDENTIALS)
+  const storedConfig = useTenantConfig(s => s.config)
+  const [creds, setCreds] = useState({
+    ...EMPTY_CREDENTIALS,
+    googleMapsKey:      storedConfig.googleMapsKey,
+    sesAccessKeyId:     storedConfig.sesAccessKeyId,
+    sesSecretAccessKey: storedConfig.sesSecretAccessKey,
+    sesRegion:          storedConfig.sesRegion,
+    sesFromEmail:       storedConfig.sesFromEmail,
+    sesFromName:        storedConfig.sesFromName,
+    whatsappToken:      storedConfig.whatsappToken,
+    whatsappPhoneId:    storedConfig.whatsappPhoneId,
+    whatsappBusinessId: storedConfig.whatsappBusinessId,
+    clicksignKey:       storedConfig.clicksignKey,
+    bankName:           storedConfig.bankName,
+    bankApiKey:         storedConfig.bankApiKey,
+  })
   const [users, setUsers]     = useState<TenantUser[]>(MOCK_TENANT_USERS)
   const [editUser, setEditUser] = useState<TenantUser | null>(null)
   // Per-user permission overrides (local state — persisted to API in real app)
@@ -142,7 +158,23 @@ export default function ConfiguracoesPage() {
     Object.fromEntries(MOCK_TENANT_USERS.map(u => [u.id, u.permissionOverrides ?? {}]))
   )
 
+  const setTenantConfig = useTenantConfig(s => s.setConfig)
+
   function save() {
+    setTenantConfig({
+      googleMapsKey:      creds.googleMapsKey,
+      sesAccessKeyId:     creds.sesAccessKeyId,
+      sesSecretAccessKey: creds.sesSecretAccessKey,
+      sesRegion:          creds.sesRegion,
+      sesFromEmail:       creds.sesFromEmail,
+      sesFromName:        creds.sesFromName,
+      whatsappToken:      creds.whatsappToken,
+      whatsappPhoneId:    creds.whatsappPhoneId,
+      whatsappBusinessId: creds.whatsappBusinessId,
+      clicksignKey:       creds.clicksignKey,
+      bankName:           creds.bankName,
+      bankApiKey:         creds.bankApiKey,
+    })
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }

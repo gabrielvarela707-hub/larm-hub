@@ -7,8 +7,8 @@ import { cn, formatCurrency } from '@/lib/utils'
 import { useGoogleMaps } from '@/lib/use-google-maps'
 import { MAP_EMPREENDIMENTOS, LOT_FILL_COLORS, LOT_STROKE_COLORS, type MapLot, type MapEmpreendimento } from '@/lib/map-data'
 import { LOT_STATUS_COLOR, LOT_STATUS_LABEL, type LotStatus } from '@/types'
+import { useTenantConfig } from '@/lib/tenant-config-store'
 
-const GOOGLE_MAPS_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? ''
 
 const MAP_TYPES = [
   { id: 'hybrid' as const,  label: 'Satellite' },
@@ -133,6 +133,8 @@ function StatsBar({ lots }: { lots: MapLot[] }) {
 }
 
 export default function MapaPage() {
+  const getGoogleMapsKey = useTenantConfig(s => s.getGoogleMapsKey)
+  const GOOGLE_MAPS_KEY  = getGoogleMapsKey()
   const mapRef   = useRef<HTMLDivElement>(null)
   const gMapRef  = useRef<google.maps.Map | null>(null)
   const polysRef = useRef<Map<string, google.maps.Polygon>>(new Map())
