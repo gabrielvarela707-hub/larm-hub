@@ -2,12 +2,11 @@
 
 import { useState } from 'react'
 import {
-  Eye, Settings, Save, MapPin, Phone, Mail, Instagram,
-  Facebook, ChevronDown, Star, CheckCircle, Image, Plus, X,
-  MoveUp, MoveDown, Pencil,
+  Eye, Settings, Save, MapPin, Instagram,
+  CheckCircle, MessageCircle,
 } from 'lucide-react'
 import { cn, formatCurrency } from '@/lib/utils'
-import { useEmpreendimentos } from '@/lib/empreendimentos-store'
+import { useEmpreendimentos, type MapLot } from '@/lib/empreendimentos-store'
 
 // ── Config types ──────────────────────────────────────────────────────────────
 
@@ -67,7 +66,7 @@ const DEFAULT_CONFIG: LPConfig = {
 
 // ── LP Preview ─────────────────────────────────────────────────────────────────
 
-function LPPreview({ cfg, lots }: { cfg: LPConfig; lots: any[] }) {
+function LPPreview({ cfg, lots }: { cfg: LPConfig; lots: MapLot[] }) {
   const shown = (cfg.showOnlyAvailable ? lots.filter(l => l.status === 'livre') : lots).slice(0, cfg.maxLots)
 
   return (
@@ -77,6 +76,7 @@ function LPPreview({ cfg, lots }: { cfg: LPConfig; lots: any[] }) {
       {/* Navbar */}
       <div className="flex items-center justify-between px-6 py-3 border-b" style={{ background: cfg.heroBgColor }}>
         {cfg.logoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img src={cfg.logoUrl} alt="logo" className="h-8 object-contain" style={{ filter: 'brightness(0) invert(1)' }} />
         ) : (
           <div className="flex items-center gap-2">
@@ -194,7 +194,7 @@ export default function LandingPagesPage() {
 
   const emp = empreendimentos.find(e => e.id === cfg.empId) ?? empreendimentos[0]
 
-  function f(key: keyof LPConfig, val: any) {
+  function f<K extends keyof LPConfig>(key: K, val: LPConfig[K]) {
     setCfg(c => ({ ...c, [key]: val }))
   }
 
@@ -329,17 +329,17 @@ export default function LandingPagesPage() {
 
               {tab === 'contato' && (
                 <>
-                  {[
+                  {([
                     { label: 'WhatsApp', key: 'whatsapp', placeholder: '(12) 99999-0000' },
                     { label: 'E-mail', key: 'email', placeholder: 'vendas@empresa.com.br' },
                     { label: 'Instagram', key: 'instagram', placeholder: '@seuperfil' },
                     { label: 'Facebook', key: 'facebook', placeholder: 'Pagina do Facebook' },
                     { label: 'Endereco', key: 'address', placeholder: 'Rua, numero, cidade' },
-                  ].map(field => (
+                  ] as const).map(field => (
                     <div key={field.key}>
                       <label className="block text-xs text-slate-600 mb-1.5">{field.label}</label>
-                      <input value={(cfg as any)[field.key]}
-                        onChange={e => f(field.key as keyof LPConfig, e.target.value)}
+                      <input value={cfg[field.key]}
+                        onChange={e => f(field.key, e.target.value)}
                         placeholder={field.placeholder}
                         className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
                     </div>

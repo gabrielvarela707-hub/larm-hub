@@ -2,7 +2,6 @@
 
 import { create } from 'zustand'
 import type { LotStatus } from '@/types'
-import { SANTA_CLARA } from '@/lib/empreendimento-data'
 import { LOT_FILL_COLORS, LOT_STROKE_COLORS } from '@/lib/map-data'
 
 export interface MapLot {
@@ -158,7 +157,7 @@ interface EmpreendimentosState {
 
 const SC_LOTS = buildSantaClaraLots()
 
-export const useEmpreendimentos = create<EmpreendimentosState>((set, get) => ({
+export const useEmpreendimentos = create<EmpreendimentosState>((set) => ({
   empreendimentos: [{
     id: 'emp_sc_001',
     name: 'Residencial Santa Clara',

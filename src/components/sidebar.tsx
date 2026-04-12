@@ -104,6 +104,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {!collapsed && (
           <div className="flex items-center gap-2.5 flex-1 min-w-0">
             {logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
               <img src={logoUrl} alt={logoText}
                 className="h-8 max-w-[140px] object-contain"
                 style={{ filter: 'brightness(0) invert(1)' }}
@@ -121,6 +122,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {collapsed && (
           <div className="mx-auto w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center overflow-hidden">
             {logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
               <img src={logoUrl} alt={logoText} className="w-full h-full object-contain p-0.5"
                 style={{ filter: 'brightness(0) invert(1)' }} />
             ) : (
