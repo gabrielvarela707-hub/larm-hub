@@ -6,7 +6,7 @@ import {
   Plus, Search, LayoutGrid, List, Star, ChevronDown,
   X, Save, MapPin, Ruler, DollarSign, TrendingUp,
   Clock, AlertCircle, Shield, Check, Building2,
-  Eye, Pencil, Map, Trash2,
+  Eye, Pencil, Map, Trash2, Upload,
 } from 'lucide-react'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
 import { LOT_STATUS_COLOR, LOT_STATUS_LABEL, LOT_STATUS_GROUP, type LotStatus } from '@/types'
@@ -194,7 +194,7 @@ function NewEmpModal({ onClose }: { onClose: () => void }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function EmpreendimentosPage() {
-  const { empreendimentos, setActive, remove } = useEmpreendimentos()
+  const { empreendimentos, setActive, remove, updateLogo } = useEmpreendimentos()
   const [showNew, setShowNew] = useState(false)
   const [view, setView]       = useState<'grid'|'list'>('grid')
   const [search, setSearch]   = useState('')
@@ -264,11 +264,28 @@ export default function EmpreendimentosPage() {
             return (
               <div key={emp.id} className="bg-white border border-slate-100 rounded-2xl p-5 shadow-card hover:shadow-card-hover transition-all">
                 <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <p className="font-semibold text-slate-900">{emp.name}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">{emp.phase} · {emp.city}/{emp.state}</p>
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    {emp.logoUrl ? (
+                      <img src={emp.logoUrl} alt={emp.name}
+                        className="w-10 h-10 rounded-lg object-contain border border-slate-100 flex-shrink-0 bg-white p-1" />
+                    ) : (
+                      <label className="w-10 h-10 rounded-lg border-2 border-dashed border-slate-200 flex items-center justify-center flex-shrink-0 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors group" title="Upload logo">
+                        <input type="file" accept="image/*" className="hidden" onChange={(e) => {
+                          const file = e.target.files?.[0]
+                          if (!file) return
+                          const reader = new FileReader()
+                          reader.onload = (ev) => updateLogo(emp.id, ev.target?.result as string)
+                          reader.readAsDataURL(file)
+                        }} />
+                        <Upload className="w-4 h-4 text-slate-300 group-hover:text-blue-400 transition-colors" />
+                      </label>
+                    )}
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-900 truncate">{emp.name}</p>
+                      <p className="text-xs text-slate-400 mt-0.5">{emp.phase} · {emp.city}/{emp.state}</p>
+                    </div>
                   </div>
-                  <span className={cn('text-[11px] font-semibold px-2 py-0.5 rounded-full', EMP_STATUS_COLORS[emp.status])}>
+                  <span className={cn('text-[11px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ml-2', EMP_STATUS_COLORS[emp.status])}>
                     {EMP_STATUS_LABELS[emp.status]}
                   </span>
                 </div>

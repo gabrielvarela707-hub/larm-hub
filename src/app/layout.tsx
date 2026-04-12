@@ -6,6 +6,7 @@ import { Toaster } from 'react-hot-toast'
 import './globals.css'
 
 export const metadata: Metadata = {
+  icons: { icon: '/favicon.svg', shortcut: '/favicon.svg' },
   title: {
     template: '%s | LoteMobile',
     default: 'LoteMobile — Tecnologia para Loteamentos',
