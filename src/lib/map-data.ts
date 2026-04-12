@@ -45,9 +45,9 @@ function buildSantaClara(): MapLot[] {
   ]
 
   const STATUS_SEQ: LotStatus[] = [
-    'vendido','vendido','vendido','reservado',
-    'disponivel','disponivel','disponivel','disponivel',
-    'vendido','reservado','disponivel','disponivel',
+    'adimplente','adimplente','adimplente','reservado',
+    'livre','livre','livre','livre',
+    'adimplente','reservado','livre','livre',
   ]
 
   const lots: MapLot[] = []
@@ -80,7 +80,7 @@ function buildSantaClara(): MapLot[] {
             [lat1, lng1],
             [lat1, lng0],
           ],
-          buyerName: status === 'vendido' || status === 'reservado'
+          buyerName: status === 'adimplente' || status === 'reservado'
             ? BUYER_NAMES[globalIdx % BUYER_NAMES.length]
             : undefined,
         })
@@ -103,25 +103,37 @@ export const MAP_EMPREENDIMENTOS: MapEmpreendimento[] = [
 ]
 
 export const LOT_FILL_COLORS: Record<LotStatus, string> = {
-  disponivel: '#22c55e',
-  reservado:  '#f59e0b',
-  vendido:    '#ef4444',
-  permutado:  '#8b5cf6',
-  bloqueado:  '#6b7280',
+  livre:        '#22c55e',
+  reservado:    '#f59e0b',
+  adimplente:   '#3b82f6',
+  inadimplente: '#f97316',
+  em_atraso:    '#ef4444',
+  juridico:     '#e11d48',
+  quitado:      '#14b8a6',
+  permutado:    '#8b5cf6',
+  bloqueado:    '#6b7280',
 }
 
 export const LOT_STROKE_COLORS: Record<LotStatus, string> = {
-  disponivel: '#16a34a',
-  reservado:  '#d97706',
-  vendido:    '#dc2626',
-  permutado:  '#7c3aed',
-  bloqueado:  '#4b5563',
+  livre:        '#16a34a',
+  reservado:    '#d97706',
+  adimplente:   '#1d4ed8',
+  inadimplente: '#c2410c',
+  em_atraso:    '#b91c1c',
+  juridico:     '#9f1239',
+  quitado:      '#0f766e',
+  permutado:    '#6d28d9',
+  bloqueado:    '#4b5563',
 }
 
 export const STATUS_LABELS: Record<LotStatus, string> = {
-  disponivel: 'Disponivel',
-  reservado:  'Reservado',
-  vendido:    'Vendido',
-  permutado:  'Permutado',
-  bloqueado:  'Bloqueado',
+  livre:        'Livre',
+  reservado:    'Reservado',
+  adimplente:   'Vendido',
+  inadimplente: 'Inadimplente',
+  em_atraso:    'Em atraso',
+  juridico:     'Juridico',
+  quitado:      'Quitado',
+  permutado:    'Permutado',
+  bloqueado:    'Bloqueado',
 }

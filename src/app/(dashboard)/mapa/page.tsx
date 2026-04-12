@@ -1,3 +1,4 @@
+/// <reference types="@types/google.maps" />
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
@@ -21,10 +22,10 @@ const MAP_TYPES = [
 ]
 
 const STATUS_FILTERS: { id: LotStatus | 'all'; label: string }[] = [
-  { id: 'all',        label: 'Todos' },
-  { id: 'disponivel', label: 'Disponivel' },
-  { id: 'reservado',  label: 'Reservado' },
-  { id: 'vendido',    label: 'Vendido' },
+  { id: 'all',          label: 'Todos' },
+  { id: 'livre',        label: 'Livre' },
+  { id: 'reservado',    label: 'Reservado' },
+  { id: 'adimplente',   label: 'Vendido' },
 ]
 
 function LotPanel({ lot, onClose, onReserve }: {
@@ -80,7 +81,7 @@ function LotPanel({ lot, onClose, onReserve }: {
           </div>
         )}
         <div className="h-px bg-slate-100" />
-        {lot.status === 'disponivel' && (
+        {lot.status === 'livre' && (
           <div className="space-y-2">
             <button onClick={() => onReserve(lot)}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 rounded-lg transition-colors flex items-center justify-center gap-2">
@@ -223,7 +224,7 @@ export default function MapaPage() {
     setLots(updated)
     setSelectedLot(prev => prev?.id === lot.id ? { ...prev, status: 'reservado' } : prev)
     const poly = polysRef.current.get(lot.id)
-    if (poly) poly.setOptions({ fillColor: LOT_FILL_COLORS.reservado, strokeColor: LOT_STROKE_COLORS.reservado })
+    if (poly) poly.setOptions({ fillColor: LOT_FILL_COLORS['reservado'], strokeColor: LOT_STROKE_COLORS['reservado'] })
   }
 
   const visibleLots = filter === 'all' ? lots : lots.filter(l => l.status === filter)

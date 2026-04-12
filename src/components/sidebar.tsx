@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard, Map, Users, FileText, DollarSign,
-  Zap, BarChart3, Building2, Bot, Settings, MapPin,
+  BarChart3, Building2, Bot, Settings, MapPin,
   Globe, HardHat, ChevronDown, ChevronRight,
   TrendingUp, ChevronLeft, LogOut, HelpCircle, Receipt,
 } from 'lucide-react'

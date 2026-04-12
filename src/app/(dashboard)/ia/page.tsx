@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { Send, Bot, User, Sparkles, TrendingUp, Users, DollarSign, Home } from 'lucide-react'
-import { cn, formatCurrency } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import type { ChatMessage } from '@/types'
 
 const QUICK_PROMPTS = [

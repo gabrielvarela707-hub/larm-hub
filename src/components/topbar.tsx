@@ -1,6 +1,6 @@
 'use client'
 
-import { Bell, Search, ChevronRight, LogOut, User } from 'lucide-react'
+import { Bell, Search, ChevronRight, LogOut } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/lib/auth-store'
