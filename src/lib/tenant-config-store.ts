@@ -19,39 +19,35 @@ interface TenantConfig {
 
 interface TenantConfigState {
   config: TenantConfig
+  hydrated: boolean
+  hydrate: () => void
   setConfig: (partial: Partial<TenantConfig>) => void
   getGoogleMapsKey: () => string
 }
 
 const DEFAULT: TenantConfig = {
-  googleMapsKey:        '',
-  sesAccessKeyId:       '',
-  sesSecretAccessKey:   '',
-  sesRegion:            'us-east-1',
-  sesFromEmail:         '',
-  sesFromName:          '',
-  whatsappToken:        '',
-  whatsappPhoneId:      '',
-  whatsappBusinessId:   '',
-  clicksignKey:         '',
-  bankName:             '',
-  bankApiKey:           '',
+  googleMapsKey: '', sesAccessKeyId: '', sesSecretAccessKey: '',
+  sesRegion: 'us-east-1', sesFromEmail: '', sesFromName: '',
+  whatsappToken: '', whatsappPhoneId: '', whatsappBusinessId: '',
+  clicksignKey: '', bankName: '', bankApiKey: '',
 }
 
 const STORAGE_KEY = 'tenant_config'
 
-function loadFromStorage(): Partial<TenantConfig> {
-  if (typeof window === 'undefined') return {}
-  try {
-    const raw = sessionStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : {}
-  } catch {
-    return {}
-  }
-}
-
 export const useTenantConfig = create<TenantConfigState>((set, get) => ({
-  config: { ...DEFAULT, ...loadFromStorage() },
+  config: { ...DEFAULT },
+  hydrated: false,
+
+  hydrate: () => {
+    if (get().hydrated) return
+    try {
+      const raw = typeof window !== 'undefined' ? sessionStorage.getItem(STORAGE_KEY) : null
+      const stored = raw ? (JSON.parse(raw) as Partial<TenantConfig>) : {}
+      set({ config: { ...DEFAULT, ...stored }, hydrated: true })
+    } catch {
+      set({ hydrated: true })
+    }
+  },
 
   setConfig: (partial) => {
     set(state => {
