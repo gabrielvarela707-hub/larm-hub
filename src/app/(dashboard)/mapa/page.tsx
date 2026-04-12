@@ -34,11 +34,15 @@ function LotPanel({ lot, onClose, onReserve }: {
   onReserve: (lot: MapLot) => void
 }) {
   const statusColor: Record<LotStatus, string> = {
-    disponivel: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-    reservado:  'bg-amber-100 text-amber-700 border-amber-200',
-    vendido:    'bg-red-100 text-red-700 border-red-200',
-    permutado:  'bg-violet-100 text-violet-700 border-violet-200',
-    bloqueado:  'bg-slate-100 text-slate-600 border-slate-200',
+    livre:        'bg-emerald-100 text-emerald-700 border-emerald-200',
+    reservado:    'bg-amber-100 text-amber-700 border-amber-200',
+    adimplente:   'bg-blue-100 text-blue-700 border-blue-200',
+    inadimplente: 'bg-orange-100 text-orange-700 border-orange-200',
+    em_atraso:    'bg-red-100 text-red-700 border-red-200',
+    juridico:     'bg-rose-100 text-rose-800 border-rose-200',
+    quitado:      'bg-teal-100 text-teal-700 border-teal-200',
+    permutado:    'bg-violet-100 text-violet-700 border-violet-200',
+    bloqueado:    'bg-slate-100 text-slate-600 border-slate-200',
   }
 
   return (
