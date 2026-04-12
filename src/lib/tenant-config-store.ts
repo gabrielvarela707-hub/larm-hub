@@ -2,16 +2,25 @@
 
 import { create } from 'zustand'
 
-interface TenantConfig {
+export interface TenantConfig {
+  // Brand / white-label
+  logoUrl: string        // base64 data URL ou path
+  logoText: string       // fallback text
+  primaryColor: string
+  sidebarColor: string
+  // Google Maps
   googleMapsKey: string
+  // AWS SES
+  sesRegion: string
   sesAccessKeyId: string
   sesSecretAccessKey: string
-  sesRegion: string
   sesFromEmail: string
   sesFromName: string
+  // WhatsApp
   whatsappToken: string
   whatsappPhoneId: string
   whatsappBusinessId: string
+  // Outros
   clicksignKey: string
   bankName: string
   bankApiKey: string
@@ -26,10 +35,22 @@ interface TenantConfigState {
 }
 
 const DEFAULT: TenantConfig = {
-  googleMapsKey: '', sesAccessKeyId: '', sesSecretAccessKey: '',
-  sesRegion: 'us-east-1', sesFromEmail: '', sesFromName: '',
-  whatsappToken: '', whatsappPhoneId: '', whatsappBusinessId: '',
-  clicksignKey: '', bankName: '', bankApiKey: '',
+  logoUrl: '',
+  logoText: 'LoteMobile',
+  primaryColor: '#2563EB',
+  sidebarColor: '#0D1B2A',
+  googleMapsKey: '',
+  sesRegion: 'us-east-1',
+  sesAccessKeyId: '',
+  sesSecretAccessKey: '',
+  sesFromEmail: '',
+  sesFromName: '',
+  whatsappToken: '',
+  whatsappPhoneId: '',
+  whatsappBusinessId: '',
+  clicksignKey: '',
+  bankName: '',
+  bankApiKey: '',
 }
 
 const STORAGE_KEY = 'tenant_config'
