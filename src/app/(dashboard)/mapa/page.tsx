@@ -129,7 +129,7 @@ export default function MapaPage() {
   const hydrate   = useTenantConfig(s => s.hydrate)
   const hydrated  = useTenantConfig(s => s.hydrated)
 
-  const { empreendimentos, activeId, setActive, updateLot } = useEmpreendimentos()
+  const { empreendimentos, activeId, setActive, updateLotStatus } = useEmpreendimentos()
   const activeEmp = empreendimentos.find(e => e.id === activeId) ?? empreendimentos[0]
 
   const [filter, setFilter]           = useState<LotStatus | 'all'>('all')
@@ -206,7 +206,7 @@ export default function MapaPage() {
 
   function handleReserve(lot: MapLot) {
     if (!activeEmp) return
-    updateLot(activeEmp.id, lot.id, 'reservado')
+    updateLotStatus(activeEmp.id, lot.id, 'reservado')
     setSelectedLot(prev => prev?.id === lot.id ? { ...prev, status: 'reservado' } : prev)
     const poly = polysRef.current.get(lot.id)
     if (poly) poly.setOptions({ fillColor: LOT_FILL_COLORS.reservado, strokeColor: LOT_STROKE_COLORS.reservado })
