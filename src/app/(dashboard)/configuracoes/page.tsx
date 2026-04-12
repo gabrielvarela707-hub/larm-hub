@@ -249,7 +249,7 @@ export default function ConfiguracoesPage() {
   const [activeCrm, setActiveCrm] = useState<string>('')
 
   // Users & Permissions
-  const [users, setUsers]       = useState<AppUser[]>(INITIAL_USERS)
+  const [users]                = useState<AppUser[]>(INITIAL_USERS)
   const [selectedUser, setSelectedUser] = useState<AppUser | null>(null)
   const [perms, setPerms]       = useState<PermsMap>(() =>
     Object.fromEntries(INITIAL_USERS.map(u => [u.id, defaultPerms(u.role)]))
@@ -349,8 +349,11 @@ export default function ConfiguracoesPage() {
                   <div className="w-44 flex flex-col justify-between p-3" style={{ background: sidebarColor }}>
                     <div className="flex items-center gap-2">
                       {logoPreview ? (
-                        <img src={logoPreview} alt="logo" className="h-6 max-w-[100px] object-contain"
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={logoPreview} alt="logo" className="h-6 max-w-[100px] object-contain"
                           style={{ filter: 'brightness(0) invert(1)' }} />
+                        </>
                       ) : (
                         <>
                           <div className="w-5 h-5 rounded flex items-center justify-center" style={{ background: primaryColor }}>
@@ -387,6 +390,7 @@ export default function ConfiguracoesPage() {
                     <div className="w-24 h-24 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center bg-slate-900 overflow-hidden relative group flex-shrink-0">
                       {logoPreview ? (
                         <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={logoPreview} alt="logo" className="max-w-full max-h-full p-2 object-contain"
                             style={{ filter: 'brightness(0) invert(1)' }} />
                           <button onClick={removeLogo}

@@ -1,8 +1,7 @@
 'use client'
 
-import type { ElementType } from 'react'
 import { useState, useMemo } from 'react'
-import { RefreshCw, DollarSign, Megaphone, Plus } from 'lucide-react'
+import { RefreshCw, Plus } from 'lucide-react'
 import { cn, formatCurrency } from '@/lib/utils'
 
 interface Campaign {

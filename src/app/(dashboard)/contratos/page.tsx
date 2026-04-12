@@ -2,8 +2,8 @@
 
 import { useState } from 'react'
 import {
-  Plus, FileText, Upload, Download, Eye, Search,
-  CheckCircle, Clock, X, AlertCircle, Pencil, Tag,
+  Plus, Upload, Download, Eye, Search,
+  CheckCircle, X, Pencil, Tag,
 } from 'lucide-react'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
 
@@ -62,7 +62,7 @@ const TEMPLATE_FIELDS: TemplateField[] = [
 ]
 
 export default function ContratosPage() {
-  const [contratos, setContratos] = useState<Contrato[]>(MOCK)
+  const [contratos] = useState<Contrato[]>(MOCK)
   const [search, setSearch]       = useState('')
   const [showTemplate, setShowTemplate] = useState(false)
   const [templateName, setTemplateName] = useState('')

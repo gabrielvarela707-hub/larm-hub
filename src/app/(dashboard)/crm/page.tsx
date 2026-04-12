@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import {
   Plus, Upload, Search, Filter, MoreHorizontal,
   Phone, Mail, MessageCircle, Calendar, Star,
