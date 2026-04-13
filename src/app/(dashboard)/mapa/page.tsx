@@ -170,7 +170,9 @@ function StatsBar({ lots }: { lots: MapLot[] }) {
 export default function MapaPage() {
   const mapRef    = useRef<HTMLDivElement>(null)
   const gMapRef   = useRef<google.maps.Map | null>(null)
-  const polysRef  = useRef<Map<string, google.maps.Polygon>>(new Map())
+  const polysRef = useRef<globalThis.Map<string, google.maps.Polygon>>(
+  new globalThis.Map()
+)
 
   const getKey    = useTenantConfig(s => s.getGoogleMapsKey)
   const hydrate   = useTenantConfig(s => s.hydrate)
