@@ -2,7 +2,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { MapPin, ZoomIn, ZoomOut, ChevronDown, X, Clock, TrendingUp, Eye, User, Plus } from 'lucide-react'
+import { MapPin, ZoomIn, ZoomOut, ChevronDown, X, Clock, TrendingUp, Eye, User, Plus, Map, FileImage } from 'lucide-react'
 import { cn, formatCurrency } from '@/lib/utils'
 import { useGoogleMaps } from '@/lib/use-google-maps'
 import { useEmpreendimentos, LOT_FILL_COLORS, LOT_STROKE_COLORS, type MapLot } from '@/lib/empreendimentos-store'
@@ -23,6 +23,52 @@ const STATUS_FILTERS: { id: LotStatus | 'all'; label: string }[] = [
   { id: 'adimplente', label: 'Vendido' },
 ]
 
+// ─── Legend panel for "Mapa de Lotes" ────────────────────────────────────────
+const LEGENDA_LOTES = [
+  { cor: '#22c55e', label: 'Livre',     bg: 'bg-emerald-500' },
+  { cor: '#f59e0b', label: 'Reservado', bg: 'bg-amber-400' },
+  { cor: '#ef4444', label: 'Vendido',   bg: 'bg-red-500' },
+]
+
+function MapaDeLotes() {
+  return (
+    <div className="relative w-full h-full flex flex-col overflow-hidden rounded-2xl bg-slate-100">
+      {/* Planta */}
+      <div className="flex-1 overflow-auto flex items-center justify-center p-4">
+        <div className="relative inline-block shadow-lg rounded-xl overflow-hidden max-w-full max-h-full">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/planta-vendas.jpg"
+            alt="Planta de Vendas Santa Clara – Abril 2026"
+            className="block max-w-full max-h-[calc(100vh-220px)] object-contain"
+          />
+        </div>
+      </div>
+
+      {/* Legend bar */}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 w-full max-w-sm px-3">
+        <div className="bg-white/95 backdrop-blur rounded-2xl shadow-lg border border-slate-100 px-5 py-3 flex items-center gap-6 justify-center">
+          {LEGENDA_LOTES.map(l => (
+            <div key={l.label} className="flex items-center gap-2">
+              <span className={`w-4 h-4 rounded-sm flex-shrink-0 ${l.bg}`} />
+              <span className="text-xs font-medium text-slate-700">{l.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Título no topo */}
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10">
+        <div className="bg-white/95 shadow-card border border-slate-200 rounded-xl px-4 py-2 text-center">
+          <p className="text-xs font-semibold text-slate-800">Planta de Vendas – Sta. Clara</p>
+          <p className="text-[10px] text-slate-400">Versão: 07/04/2026</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Existing components (unchanged) ────────────────────────────────────────
 function LotPanel({ lot, onClose, onReserve }: {
   lot: MapLot; onClose: () => void; onReserve: (lot: MapLot) => void
 }) {
@@ -120,6 +166,7 @@ function StatsBar({ lots }: { lots: MapLot[] }) {
   )
 }
 
+// ─── Main page ───────────────────────────────────────────────────────────────
 export default function MapaPage() {
   const mapRef    = useRef<HTMLDivElement>(null)
   const gMapRef   = useRef<google.maps.Map | null>(null)
@@ -136,6 +183,8 @@ export default function MapaPage() {
   const [mapType, setMapType]         = useState<'hybrid' | 'roadmap'>('hybrid')
   const [showEmpDrop, setShowEmpDrop] = useState(false)
   const [selectedLot, setSelectedLot] = useState<MapLot | null>(null)
+  // ── NEW: view toggle ─────────────────────────────────────────────────────
+  const [mapView, setMapView]         = useState<'google' | 'lotes'>('google')
 
   useEffect(() => { hydrate() }, [hydrate])
 
@@ -216,143 +265,183 @@ export default function MapaPage() {
   const noKey = !GOOGLE_MAPS_KEY
 
   return (
-    <div className="relative rounded-2xl overflow-hidden border border-slate-200" style={{ height: 'calc(100vh - 90px)', minHeight: 600 }}>
+    <div className="flex flex-col gap-3" style={{ height: 'calc(100vh - 90px)', minHeight: 600 }}>
 
-      <div className="absolute top-3 left-3 right-3 z-20 flex items-start gap-2 pointer-events-none">
-
-        {/* Empreendimento selector */}
-        <div className="pointer-events-auto relative">
-          <button onClick={() => setShowEmpDrop(v => !v)}
-            className="flex items-center gap-2 bg-white/95 shadow-card border border-slate-200 rounded-xl px-3 py-2 text-sm font-medium text-slate-800 hover:bg-white transition-colors">
-            <MapPin className="w-4 h-4 text-blue-600 flex-shrink-0" />
-            <div className="text-left">
-              <span className="block max-w-[160px] truncate">{activeEmp?.name ?? 'Selecionar'}</span>
-              {activeEmp?.phase && <span className="text-[10px] text-slate-400 font-normal">{activeEmp.phase}</span>}
-            </div>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-          </button>
-          {showEmpDrop && (
-            <div className="absolute top-full mt-1 left-0 bg-white rounded-xl shadow-dialog border border-slate-100 py-1 min-w-[240px]">
-              {empreendimentos.map(emp => (
-                <button key={emp.id} onClick={() => { setActive(emp.id); setShowEmpDrop(false) }}
-                  className={cn('w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors',
-                    emp.id === activeId ? 'text-blue-600' : 'text-slate-700'
-                  )}>
-                  <p className="text-sm font-medium">{emp.name}</p>
-                  <p className="text-xs text-slate-400">{emp.phase} · {emp.city}/{emp.state} · {emp.totalLots} lotes</p>
-                </button>
-              ))}
-              <div className="border-t border-slate-100 mt-1 pt-1">
-                <a href="/empreendimentos"
-                  className="flex items-center gap-2 px-4 py-2 text-xs text-blue-600 hover:bg-blue-50 transition-colors">
-                  <Plus className="w-3 h-3" /> Novo empreendimento
-                </a>
-              </div>
-            </div>
+      {/* ── View toggle tabs ─────────────────────────────────────────────── */}
+      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit self-start">
+        <button
+          onClick={() => setMapView('google')}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all',
+            mapView === 'google'
+              ? 'bg-white shadow text-slate-900'
+              : 'text-slate-500 hover:text-slate-700'
           )}
-        </div>
-
-        {/* Filter pills */}
-        <div className="pointer-events-auto flex gap-1.5 flex-wrap">
-          {STATUS_FILTERS.map(f => (
-            <button key={f.id} onClick={() => setFilter(f.id)}
-              className={cn('flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold shadow-card border transition-colors',
-                filter === f.id
-                  ? f.id === 'all'        ? 'bg-slate-900 text-white border-slate-900'
-                  : f.id === 'livre'      ? 'bg-emerald-600 text-white border-emerald-600'
-                  : f.id === 'reservado'  ? 'bg-amber-500 text-white border-amber-500'
-                  :                         'bg-blue-600 text-white border-blue-600'
-                  : 'bg-white/95 text-slate-600 border-slate-200 hover:bg-white'
-              )}>
-              {f.id !== 'all' && (
-                <span className="w-2 h-2 rounded-full"
-                  style={{ background: filter === f.id ? 'white' : LOT_FILL_COLORS[f.id as LotStatus] ?? '#22c55e' }} />
-              )}
-              {f.label}
-              <span className="opacity-70 text-[10px]">
-                ({f.id === 'all' ? (activeEmp?.lots.length ?? 0)
-                  : f.id === 'adimplente' ? (activeEmp?.lots.filter(l => VENDIDOS.includes(l.status)).length ?? 0)
-                  : (activeEmp?.lots.filter(l => l.status === f.id).length ?? 0)})
-              </span>
-            </button>
-          ))}
-        </div>
-
-        <div className="flex-1" />
-
-        <div className="pointer-events-auto flex bg-white/95 shadow-card border border-slate-200 rounded-xl overflow-hidden">
-          {MAP_TYPES.map(t => (
-            <button key={t.id} onClick={() => setMapType(t.id)}
-              className={cn('px-3 py-2 text-xs font-medium transition-colors',
-                mapType === t.id ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'
-              )}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="pointer-events-auto flex flex-col bg-white/95 shadow-card border border-slate-200 rounded-xl overflow-hidden">
-          <button onClick={() => gMapRef.current?.setZoom((gMapRef.current.getZoom() ?? 17) + 1)}
-            className="p-2 hover:bg-slate-50 border-b border-slate-100">
-            <ZoomIn className="w-4 h-4 text-slate-600" />
-          </button>
-          <button onClick={() => gMapRef.current?.setZoom((gMapRef.current.getZoom() ?? 17) - 1)}
-            className="p-2 hover:bg-slate-50">
-            <ZoomOut className="w-4 h-4 text-slate-600" />
-          </button>
-        </div>
+        >
+          <Map className="w-4 h-4" />
+          Mapa Interativo
+        </button>
+        <button
+          onClick={() => setMapView('lotes')}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all',
+            mapView === 'lotes'
+              ? 'bg-white shadow text-slate-900'
+              : 'text-slate-500 hover:text-slate-700'
+          )}
+        >
+          <FileImage className="w-4 h-4" />
+          Mapa de Lotes
+        </button>
       </div>
 
-      <div ref={mapRef} className="absolute inset-0" style={{ background: '#e8eaed' }} />
+      {/* ── Content area ────────────────────────────────────────────────── */}
+      <div className="relative flex-1 rounded-2xl overflow-hidden border border-slate-200">
 
-      {noKey && hydrated && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 z-10">
-          <div className="text-center p-8 max-w-sm">
-            <div className="w-14 h-14 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <MapPin className="w-7 h-7 text-blue-600" />
+        {/* ── MAPA DE LOTES view ─────────────────────────────────────────── */}
+        {mapView === 'lotes' && <MapaDeLotes />}
+
+        {/* ── GOOGLE MAPS view ───────────────────────────────────────────── */}
+        {mapView === 'google' && (
+          <>
+            <div className="absolute top-3 left-3 right-3 z-20 flex items-start gap-2 pointer-events-none">
+
+              {/* Empreendimento selector */}
+              <div className="pointer-events-auto relative">
+                <button onClick={() => setShowEmpDrop(v => !v)}
+                  className="flex items-center gap-2 bg-white/95 shadow-card border border-slate-200 rounded-xl px-3 py-2 text-sm font-medium text-slate-800 hover:bg-white transition-colors">
+                  <MapPin className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                  <div className="text-left">
+                    <span className="block max-w-[160px] truncate">{activeEmp?.name ?? 'Selecionar'}</span>
+                    {activeEmp?.phase && <span className="text-[10px] text-slate-400 font-normal">{activeEmp.phase}</span>}
+                  </div>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                </button>
+                {showEmpDrop && (
+                  <div className="absolute top-full mt-1 left-0 bg-white rounded-xl shadow-dialog border border-slate-100 py-1 min-w-[240px]">
+                    {empreendimentos.map(emp => (
+                      <button key={emp.id} onClick={() => { setActive(emp.id); setShowEmpDrop(false) }}
+                        className={cn('w-full text-left px-4 py-2.5 hover:bg-slate-50 transition-colors',
+                          emp.id === activeId ? 'text-blue-600' : 'text-slate-700'
+                        )}>
+                        <p className="text-sm font-medium">{emp.name}</p>
+                        <p className="text-xs text-slate-400">{emp.phase} · {emp.city}/{emp.state} · {emp.totalLots} lotes</p>
+                      </button>
+                    ))}
+                    <div className="border-t border-slate-100 mt-1 pt-1">
+                      <a href="/empreendimentos"
+                        className="flex items-center gap-2 px-4 py-2 text-xs text-blue-600 hover:bg-blue-50 transition-colors">
+                        <Plus className="w-3 h-3" /> Novo empreendimento
+                      </a>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Filter pills */}
+              <div className="pointer-events-auto flex gap-1.5 flex-wrap">
+                {STATUS_FILTERS.map(f => (
+                  <button key={f.id} onClick={() => setFilter(f.id)}
+                    className={cn('flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold shadow-card border transition-colors',
+                      filter === f.id
+                        ? f.id === 'all'        ? 'bg-slate-900 text-white border-slate-900'
+                        : f.id === 'livre'      ? 'bg-emerald-600 text-white border-emerald-600'
+                        : f.id === 'reservado'  ? 'bg-amber-500 text-white border-amber-500'
+                        :                         'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white/95 text-slate-600 border-slate-200 hover:bg-white'
+                    )}>
+                    {f.id !== 'all' && (
+                      <span className="w-2 h-2 rounded-full"
+                        style={{ background: filter === f.id ? 'white' : LOT_FILL_COLORS[f.id as LotStatus] ?? '#22c55e' }} />
+                    )}
+                    {f.label}
+                    <span className="opacity-70 text-[10px]">
+                      ({f.id === 'all' ? (activeEmp?.lots.length ?? 0)
+                        : f.id === 'adimplente' ? (activeEmp?.lots.filter(l => VENDIDOS.includes(l.status)).length ?? 0)
+                        : (activeEmp?.lots.filter(l => l.status === f.id).length ?? 0)})
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex-1" />
+
+              <div className="pointer-events-auto flex bg-white/95 shadow-card border border-slate-200 rounded-xl overflow-hidden">
+                {MAP_TYPES.map(t => (
+                  <button key={t.id} onClick={() => setMapType(t.id)}
+                    className={cn('px-3 py-2 text-xs font-medium transition-colors',
+                      mapType === t.id ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-50'
+                    )}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="pointer-events-auto flex flex-col bg-white/95 shadow-card border border-slate-200 rounded-xl overflow-hidden">
+                <button onClick={() => gMapRef.current?.setZoom((gMapRef.current.getZoom() ?? 17) + 1)}
+                  className="p-2 hover:bg-slate-50 border-b border-slate-100">
+                  <ZoomIn className="w-4 h-4 text-slate-600" />
+                </button>
+                <button onClick={() => gMapRef.current?.setZoom((gMapRef.current.getZoom() ?? 17) - 1)}
+                  className="p-2 hover:bg-slate-50">
+                  <ZoomOut className="w-4 h-4 text-slate-600" />
+                </button>
+              </div>
             </div>
-            <h3 className="text-base font-semibold text-slate-900 mb-2">Mapa Interativo de Lotes</h3>
-            <p className="text-sm text-slate-500 mb-5 leading-relaxed">
-              Configure sua chave da Google Maps API em <strong>Configuracoes → Credenciais</strong>.
-            </p>
-            <a href="/configuracoes"
-              className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-              Ir para Configuracoes
-            </a>
-          </div>
-        </div>
-      )}
 
-      {mapsState === 'loading' && !noKey && (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-100/80 z-30">
-          <div className="flex items-center gap-3 bg-white rounded-xl px-5 py-3 shadow-dialog">
-            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-            <span className="text-sm text-slate-700">Carregando mapa...</span>
-          </div>
-        </div>
-      )}
+            <div ref={mapRef} className="absolute inset-0" style={{ background: '#e8eaed' }} />
 
-      {selectedLot && (
-        <LotPanel lot={selectedLot}
-          onClose={() => {
-            setSelectedLot(null)
-            polysRef.current.forEach(p => p.setOptions({ strokeWeight: 1.5, fillOpacity: 0.65 }))
-          }}
-          onReserve={handleReserve}
-        />
-      )}
+            {noKey && hydrated && (
+              <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 z-10">
+                <div className="text-center p-8 max-w-sm">
+                  <div className="w-14 h-14 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <MapPin className="w-7 h-7 text-blue-600" />
+                  </div>
+                  <h3 className="text-base font-semibold text-slate-900 mb-2">Mapa Interativo de Lotes</h3>
+                  <p className="text-sm text-slate-500 mb-5 leading-relaxed">
+                    Configure sua chave da Google Maps API em <strong>Configuracoes → Credenciais</strong>.
+                  </p>
+                  <a href="/configuracoes"
+                    className="inline-flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
+                    Ir para Configuracoes
+                  </a>
+                </div>
+              </div>
+            )}
 
-      <StatsBar lots={visibleLots} />
+            {mapsState === 'loading' && !noKey && (
+              <div className="absolute inset-0 flex items-center justify-center bg-slate-100/80 z-30">
+                <div className="flex items-center gap-3 bg-white rounded-xl px-5 py-3 shadow-dialog">
+                  <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm text-slate-700">Carregando mapa...</span>
+                </div>
+              </div>
+            )}
 
-      <div className="absolute bottom-24 right-3 z-20 bg-white/95 backdrop-blur rounded-xl shadow-card border border-slate-100 px-3 py-2.5">
-        <p className="text-[10px] font-semibold text-slate-400 mb-2 uppercase tracking-wide">Legenda</p>
-        {(['livre','reservado','adimplente','em_atraso','juridico','bloqueado'] as LotStatus[]).map(s => (
-          <div key={s} className="flex items-center gap-2 mb-1.5 last:mb-0">
-            <span className="w-3 h-3 rounded-sm flex-shrink-0"
-              style={{ background: LOT_FILL_COLORS[s] ?? '#6b7280' }} />
-            <span className="text-xs text-slate-600">{LOT_STATUS_LABEL[s]}</span>
-          </div>
-        ))}
+            {selectedLot && (
+              <LotPanel lot={selectedLot}
+                onClose={() => {
+                  setSelectedLot(null)
+                  polysRef.current.forEach(p => p.setOptions({ strokeWeight: 1.5, fillOpacity: 0.65 }))
+                }}
+                onReserve={handleReserve}
+              />
+            )}
+
+            <StatsBar lots={visibleLots} />
+
+            <div className="absolute bottom-24 right-3 z-20 bg-white/95 backdrop-blur rounded-xl shadow-card border border-slate-100 px-3 py-2.5">
+              <p className="text-[10px] font-semibold text-slate-400 mb-2 uppercase tracking-wide">Legenda</p>
+              {(['livre','reservado','adimplente','em_atraso','juridico','bloqueado'] as LotStatus[]).map(s => (
+                <div key={s} className="flex items-center gap-2 mb-1.5 last:mb-0">
+                  <span className="w-3 h-3 rounded-sm flex-shrink-0"
+                    style={{ background: LOT_FILL_COLORS[s] ?? '#6b7280' }} />
+                  <span className="text-xs text-slate-600">{LOT_STATUS_LABEL[s]}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
