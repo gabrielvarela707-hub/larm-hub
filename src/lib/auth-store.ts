@@ -1,78 +1,172 @@
+/**
+ * src/lib/auth-store.ts
+ * Auth store com integração real à API backend
+ * Substitui completamente o mock anterior
+ */
+
+'use client'
+
 import { create } from 'zustand'
+import axios from 'axios'
+
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface AuthUser {
-  id: string
-  name: string
-  email: string
-  role: string
+  id:         string
+  name:       string
+  email:      string
+  role:       string
+  avatarUrl:  string | null
+  tenantId:   string
   tenantName: string
+  tenantSlug: string
+  hubType:    'santa_clara' | 'larm' | 'generic'
 }
 
 interface AuthState {
-  user: AuthUser | null
-  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
-  logout: () => void
+  user:        AuthUser | null
+  accessToken: string | null
+  loading:     boolean
+  login:   (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
+  logout:  () => Promise<void>
+  refresh: () => Promise<boolean>
+  hydrate: () => void
 }
 
-// Mock users — replace with real API call
-const MOCK_USERS = [
-  {
-    id: 'user_001',
-    email: 'admin',
-    password: 'admin',
-    name: 'Fernando Monteiro',
-    role: 'admin',
-    tenantName: 'Residencial Santa Clara',
-  },
-  {
-    id: 'user_002',
-    email: 'carlos@santaclara.com.br',
-    password: '123456',
-    name: 'Carlos Henrique',
-    role: 'broker',
-    tenantName: 'Residencial Santa Clara',
-  },
-]
+// ─── Axios instance ───────────────────────────────────────────────────────────
 
-export const useAuthStore = create<AuthState>((set) => ({
-  user: null,
+export const apiClient = axios.create({
+  baseURL: API,
+  timeout: 10000,
+  headers: { 'Content-Type': 'application/json' },
+})
 
-  login: async (email, password) => {
-    await new Promise(r => setTimeout(r, 700)) // simulate API
-    const found = MOCK_USERS.find(
-      u => u.email === email && u.password === password
-    )
-    if (found) {
-      const user: AuthUser = {
-        id: found.id,
-        name: found.name,
-        email: found.email,
-        role: found.role,
-        tenantName: found.tenantName,
-      }
-      set({ user })
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem('auth_user', JSON.stringify(user))
-      }
-      return { ok: true }
+// Injeta o Bearer token em todas as requisições
+apiClient.interceptors.request.use((config) => {
+  const token = useAuthStore.getState().accessToken
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// Em 401: tenta refresh e repete a requisição original uma vez
+let isRefreshing = false
+apiClient.interceptors.response.use(
+  (res) => res,
+  async (error) => {
+    const original = error.config
+    if (error.response?.status === 401 && !original._retry && !isRefreshing) {
+      original._retry = true
+      isRefreshing    = true
+      const ok = await useAuthStore.getState().refresh()
+      isRefreshing = false
+      if (ok) return apiClient(original)
+      await useAuthStore.getState().logout()
     }
-    return { ok: false, error: 'E-mail ou senha incorretos' }
+    return Promise.reject(error)
+  }
+)
+
+// ─── Store ────────────────────────────────────────────────────────────────────
+
+export const useAuthStore = create<AuthState>((set, get) => ({
+  user:        null,
+  accessToken: null,
+  loading:     false,
+
+  // ── Login ────────────────────────────────────────────────────────────────
+  login: async (email, password) => {
+    set({ loading: true })
+    try {
+      const { data } = await apiClient.post('/auth/login', { email, password })
+
+      if (!data.ok) {
+        return { ok: false, error: data.message }
+      }
+
+      const { accessToken, refreshToken, user } = data.data
+
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('refresh_token', refreshToken)
+        sessionStorage.setItem('auth_user',     JSON.stringify(user))
+      }
+
+      set({ user, accessToken })
+      return { ok: true }
+
+    } catch (err: unknown) {
+      const msg = axios.isAxiosError(err)
+        ? (err.response?.data?.message ?? 'Erro ao conectar com o servidor')
+        : 'Erro inesperado'
+      return { ok: false, error: msg }
+
+    } finally {
+      set({ loading: false })
+    }
   },
 
-  logout: () => {
-    set({ user: null })
+  // ── Logout ───────────────────────────────────────────────────────────────
+  logout: async () => {
+    const refreshToken = typeof window !== 'undefined'
+      ? sessionStorage.getItem('refresh_token')
+      : null
+
+    try {
+      await apiClient.post('/auth/logout', { refreshToken })
+    } catch {
+      // silencia erro de rede no logout
+    }
+
     if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('refresh_token')
       sessionStorage.removeItem('auth_user')
+    }
+
+    set({ user: null, accessToken: null })
+  },
+
+  // ── Refresh token ────────────────────────────────────────────────────────
+  refresh: async () => {
+    const refreshToken = typeof window !== 'undefined'
+      ? sessionStorage.getItem('refresh_token')
+      : null
+
+    if (!refreshToken) return false
+
+    try {
+      const { data } = await axios.post(`${API}/auth/refresh`, { refreshToken })
+      if (data.ok) {
+        set({ accessToken: data.data.accessToken })
+        return true
+      }
+    } catch {
+      // token expirado ou inválido
+    }
+
+    return false
+  },
+
+  // ── Hydrate (reidrata do sessionStorage no boot) ─────────────────────────
+  hydrate: () => {
+    if (typeof window === 'undefined') return
+    try {
+      const stored = sessionStorage.getItem('auth_user')
+      if (stored) {
+        const user = JSON.parse(stored) as AuthUser
+        set({ user })
+        // Obtém um accessToken válido imediatamente via refresh
+        get().refresh()
+      }
+    } catch {
+      // sessionStorage corrompido — ignora
     }
   },
 }))
 
-// Rehydrate from sessionStorage on first load
+// Reidrata automaticamente no carregamento do client
 if (typeof window !== 'undefined') {
-  const stored = sessionStorage.getItem('auth_user')
-  if (stored) {
-    try {
-      useAuthStore.setState({ user: JSON.parse(stored) })
-    } catch {}
-  }
+  useAuthStore.getState().hydrate()
 }
