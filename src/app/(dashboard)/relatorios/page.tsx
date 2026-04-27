@@ -426,7 +426,7 @@ export default function RelatoriosPage() {
                 {!d.loading && d.data.map((v: Record<string, unknown>, i) => (
                   <tr key={String(v.vend1_cod ?? i)} className="border-b border-slate-50 hover:bg-slate-50">
                     <td className="px-4 py-3 font-mono text-xs text-slate-400">{String(v.vend1_cod ?? '—')}</td>
-                    <td className="px-4 py-3"><p className="font-medium text-slate-700">{String(v.cliente ?? '—')}</p>{v.email && <p className="text-xs text-slate-400">{String(v.email)}</p>}</td>
+                    <td className="px-4 py-3"><p className="font-medium text-slate-700">{String(v.cliente ?? '—')}</p>{!!v.email && <p className="text-xs text-slate-400">{String(v.email)}</p>}</td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{String(v.telefone ?? '—')}</td>
                     <td className="px-4 py-3 text-slate-500 text-xs">{String(v.corretor ?? '—')}</td>
                     <td className="px-4 py-3 font-semibold text-slate-700">{R$(v.vend1_val_ven as number)}</td>
