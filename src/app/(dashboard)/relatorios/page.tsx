@@ -580,7 +580,7 @@ export default function RelatoriosPage() {
                         Number(r.dias_em_atraso) > 90 ? 'bg-red-100 text-red-700' :
                         Number(r.dias_em_atraso) > 30 ? 'bg-orange-100 text-orange-700' :
                         'bg-yellow-100 text-yellow-700')}>
-                        {r.dias_em_atraso} dias
+                        {String(r.dias_em_atraso)} dias
                       </span>
                     </td>
                   </tr>
