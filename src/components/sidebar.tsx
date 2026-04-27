@@ -40,6 +40,8 @@ const NAV: NavItem[] = [
   {
     label: 'Financeiro', icon: DollarSign,
     children: [
+      { label: 'CashFlow',          href: '/financeiro/cashflow' },
+      { label: 'Mov. Bancário',     href: '/financeiro/movimento' },
       { label: 'Contas a Receber',  href: '/financeiro/receber', badge: 3 },
       { label: 'Contas a Pagar',    href: '/financeiro/pagar' },
       { label: 'Boletos',           href: '/financeiro/boletos' },
