@@ -1,7 +1,7 @@
 /**
  * src/lib/auth-store.ts
- * Auth store com integração real à API backend
- * Substitui completamente o mock anterior
+ * Auth store com integração real à API backend.
+ * Grava cookie "hub_session" para o middleware poder verificar a sessão.
  */
 
 'use client'
@@ -35,6 +35,19 @@ interface AuthState {
   hydrate: () => void
 }
 
+// ─── Cookie helpers ───────────────────────────────────────────────────────────
+
+function setCookie(name: string, value: string, days = 1) {
+  if (typeof document === 'undefined') return
+  const expires = new Date(Date.now() + days * 864e5).toUTCString()
+  document.cookie = `${name}=${value}; expires=${expires}; path=/; SameSite=Lax`
+}
+
+function deleteCookie(name: string) {
+  if (typeof document === 'undefined') return
+  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
+}
+
 // ─── Axios instance ───────────────────────────────────────────────────────────
 
 export const apiClient = axios.create({
@@ -43,16 +56,14 @@ export const apiClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-// Injeta o Bearer token em todas as requisições
+// Injeta Bearer token em todas as requisições
 apiClient.interceptors.request.use((config) => {
   const token = useAuthStore.getState().accessToken
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
+  if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 })
 
-// Em 401: tenta refresh e repete a requisição original uma vez
+// Em 401: tenta refresh e repete
 let isRefreshing = false
 apiClient.interceptors.response.use(
   (res) => res,
@@ -77,38 +88,36 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   accessToken: null,
   loading:     false,
 
-  // ── Login ────────────────────────────────────────────────────────────────
   login: async (email, password) => {
     set({ loading: true })
     try {
       const { data } = await apiClient.post('/auth/login', { email, password })
-
-      if (!data.ok) {
-        return { ok: false, error: data.message }
-      }
+      if (!data.ok) return { ok: false, error: data.message }
 
       const { accessToken, refreshToken, user } = data.data
 
+      // Persiste no sessionStorage
       if (typeof window !== 'undefined') {
         sessionStorage.setItem('refresh_token', refreshToken)
-        sessionStorage.setItem('auth_user',     JSON.stringify(user))
+        sessionStorage.setItem('auth_user', JSON.stringify(user))
       }
+
+      // ✅ Cookie para o middleware Edge (sem acesso ao sessionStorage)
+      // Expiração = 1 dia (alinhado com o refreshToken de 30d mas sessão curta)
+      setCookie('hub_session', '1', 1)
 
       set({ user, accessToken })
       return { ok: true }
-
     } catch (err: unknown) {
       const msg = axios.isAxiosError(err)
         ? (err.response?.data?.message ?? 'Erro ao conectar com o servidor')
         : 'Erro inesperado'
       return { ok: false, error: msg }
-
     } finally {
       set({ loading: false })
     }
   },
 
-  // ── Logout ───────────────────────────────────────────────────────────────
   logout: async () => {
     const refreshToken = typeof window !== 'undefined'
       ? sessionStorage.getItem('refresh_token')
@@ -116,40 +125,38 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     try {
       await apiClient.post('/auth/logout', { refreshToken })
-    } catch {
-      // silencia erro de rede no logout
-    }
+    } catch {}
 
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem('refresh_token')
       sessionStorage.removeItem('auth_user')
     }
 
+    // Remove o cookie de sessão → middleware vai redirecionar para /login
+    deleteCookie('hub_session')
+
     set({ user: null, accessToken: null })
   },
 
-  // ── Refresh token ────────────────────────────────────────────────────────
   refresh: async () => {
     const refreshToken = typeof window !== 'undefined'
       ? sessionStorage.getItem('refresh_token')
       : null
-
     if (!refreshToken) return false
 
     try {
       const { data } = await axios.post(`${API}/auth/refresh`, { refreshToken })
       if (data.ok) {
         set({ accessToken: data.data.accessToken })
+        // Renova o cookie também
+        setCookie('hub_session', '1', 1)
         return true
       }
-    } catch {
-      // token expirado ou inválido
-    }
+    } catch {}
 
     return false
   },
 
-  // ── Hydrate (reidrata do sessionStorage no boot) ─────────────────────────
   hydrate: () => {
     if (typeof window === 'undefined') return
     try {
@@ -157,16 +164,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (stored) {
         const user = JSON.parse(stored) as AuthUser
         set({ user })
-        // Obtém um accessToken válido imediatamente via refresh
         get().refresh()
       }
-    } catch {
-      // sessionStorage corrompido — ignora
-    }
+    } catch {}
   },
 }))
 
-// Reidrata automaticamente no carregamento do client
+// Reidrata no carregamento client
 if (typeof window !== 'undefined') {
   useAuthStore.getState().hydrate()
 }
