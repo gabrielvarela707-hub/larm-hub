@@ -50,7 +50,11 @@ const NAV: NavItem[] = [
     ],
   },
   { label: 'Obras',             href: '/obras',          icon: HardHat },
-  { label: 'Relatorios',        href: '/relatorios',     icon: BarChart3 },
+  { label: 'Relatorios',        href: '/relatorios',     icon: BarChart3,
+    children: [
+       { label: 'Mapa de Vendas', href: '/relatorios/mapa-vendas' },
+   ],
+  },
   { label: 'Controladoria',     href: '/controladoria',  icon: Receipt },
   { label: 'Chat IA',           href: '/ia',             icon: Bot },
 ]
