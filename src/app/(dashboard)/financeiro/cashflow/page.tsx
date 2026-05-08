@@ -1,301 +1,155 @@
 'use client'
+/**
+ * src/app/financeiro/cashflow/page.tsx
+ * Relatório de Cash Flow — espelha estrutura do Excel
+ */
+import { useState, useEffect } from 'react'
+import { Download, Printer } from 'lucide-react'
+import { getCashflow, getCashflowResumo, type Empresa } from '@/lib/api/financeiro'
 
-import { useState, useEffect, useCallback } from 'react'
-import { RefreshCw, TrendingUp, TrendingDown, DollarSign, BarChart2, ChevronRight, ChevronDown } from 'lucide-react'
-import { apiClient } from '@/lib/auth-store'
-import { cn } from '@/lib/utils'
+const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const R$ = (v: number | null | undefined, compact = false) => {
-  const n = v ?? 0
-  if (compact && Math.abs(n) >= 1_000_000) return `R$ ${(n / 1_000_000).toFixed(1)}M`
-  if (compact && Math.abs(n) >= 1_000)    return `R$ ${(n / 1_000).toFixed(0)}K`
-  return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-}
-
-const MESES = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-const EMPRESAS = ['CONSOLIDADO', 'LARM', 'LUCKY', 'LM', 'HOLDING', 'RM']
-const ANOS = [2021, 2022, 2023, 2024, 2025, 2026]
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface Linha {
-  id: number; row_idx: number; codigo: string | null
-  descricao: string; nivel: number; tipo: string
-  valores: Record<number, number>  // mes -> valor
-  total: number
-}
-
-interface Coluna { mes: number; label: string }
-
-interface Resumo {
-  saldo_final: number; receita_bruta: number; receita_liquida: number
-  despesas: number; geracao_caixa: number; distribuicao: number
-  saldo_cc: number; aplicacoes: number; saldo_inicial: number
-}
-
-// ─── Row styles ───────────────────────────────────────────────────────────────
-
-const ROW_STYLE: Record<string, string> = {
-  header:   'bg-[#1e3a5f] text-white font-bold text-xs',
-  total:    'bg-slate-700 text-white font-semibold text-xs',
-  subtotal: 'bg-slate-100 text-slate-700 font-semibold text-xs',
-  item:     'hover:bg-blue-50 text-slate-700 text-xs',
-}
-
-const ROW_INDENT: Record<number, string> = {
-  1: 'pl-2', 2: 'pl-4', 3: 'pl-8',
-}
-
-export default function CashflowPage() {
-  const [empresa, setEmpresa] = useState('CONSOLIDADO')
-  const [ano,     setAno]     = useState(2026)
-  const [mes,     setMes]     = useState<number | null>(null)
-
-  const [linhas,  setLinhas]  = useState<Linha[]>([])
-  const [colunas, setColunas] = useState<Coluna[]>([])
-  const [resumo,  setResumo]  = useState<Resumo | null>(null)
+export default function CashFlowPage() {
+  const [empresa, setEmpresa] = useState<Empresa>('CONSOLIDADO')
+  const [ano, setAno]         = useState(2026)
+  const [data, setData]       = useState<any>(null)
+  const [resumo, setResumo]   = useState<any>(null)
   const [loading, setLoading] = useState(false)
 
-  // Controle de expansão de grupos
-  const [collapsed, setCollapsed] = useState<Set<number>>(new Set())
-
-  const load = useCallback(async () => {
+  const load = async () => {
     setLoading(true)
     try {
-      const params: Record<string, unknown> = { empresa, ano }
-      if (mes) params.mes = mes
-
-      const [cfRes, resumoRes] = await Promise.all([
-        apiClient.get('/financeiro/cashflow', { params }),
-        apiClient.get('/financeiro/cashflow/resumo', { params }),
+      const [cf, res] = await Promise.all([
+        getCashflow(empresa, ano),
+        getCashflowResumo(empresa, ano),
       ])
-
-      setLinhas(cfRes.data.data.linhas)
-      setColunas(cfRes.data.data.colunas)
-      setResumo(resumoRes.data.data)
-    } catch (err) {
-      console.error('Erro cashflow:', err)
+      setData(cf)
+      setResumo(res)
     } finally {
       setLoading(false)
     }
-  }, [empresa, ano, mes])
-
-  useEffect(() => { load() }, [load])
-
-  function toggleCollapse(id: number) {
-    setCollapsed(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
   }
 
-  // Decide se uma linha deve ser ocultada (seu pai está colapsado)
-  // Simplificação: oculta linhas de nível > 1 quando o header acima está colapsado
-  const colapsedHeaders = new Set(
-    linhas.filter(l => collapsed.has(l.id) && (l.tipo === 'header' || l.tipo === 'total')).map(l => l.id)
-  )
+  useEffect(() => { load() }, [empresa, ano])
 
-  // Monta a lista de linhas visíveis
-  let currentParent: Linha | null = null
-  const visibleLinhas: (Linha & { hidden?: boolean })[] = []
-
-  for (const l of linhas) {
-    if (l.tipo === 'header' || l.tipo === 'total') {
-      currentParent = l
-      visibleLinhas.push(l)
-    } else {
-      const isHidden = currentParent ? collapsed.has(currentParent.id) : false
-      visibleLinhas.push({ ...l, hidden: isHidden })
-    }
+  const fmtBRL = (v: number) => {
+    if (v === 0) return '–'
+    const abs = Math.abs(v)
+    const s = abs >= 1_000_000
+      ? (abs / 1_000_000).toFixed(2) + 'M'
+      : abs >= 1_000
+      ? (abs / 1_000).toFixed(0) + 'K'
+      : abs.toFixed(0)
+    return (v < 0 ? '-' : '') + 'R$ ' + s
   }
 
-  const valorCell = (val: number | undefined, tipo: string) => {
-    const n = val ?? 0
-    if (n === 0) return <span className="text-slate-300">—</span>
-    const isNeg = n < 0
-    const baseColor = tipo === 'header' || tipo === 'total'
-      ? (isNeg ? 'text-red-300' : 'text-emerald-300')
-      : (isNeg ? 'text-red-600' : 'text-emerald-700')
-    return (
-      <span className={cn('tabular-nums', baseColor)}>
-        {n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-      </span>
-    )
+  const getRowStyle = (tipo: string) => {
+    if (tipo === 'header') return 'bg-amber-50/60 dark:bg-amber-900/20 font-semibold text-amber-700 dark:text-amber-400'
+    if (tipo === 'total')  return 'bg-zinc-100 dark:bg-zinc-800 font-semibold'
+    return ''
   }
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-slate-800">CashFlow Consolidado</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Fluxo de caixa por empresa e período</p>
-        </div>
-        <button onClick={load}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs text-slate-600 bg-white border border-slate-200 hover:bg-slate-50">
-          <RefreshCw className={cn('w-3.5 h-3.5', loading && 'animate-spin')} /> Atualizar
+    <div className="p-6 space-y-4">
+      {/* Controles */}
+      <div className="flex gap-2 items-center flex-wrap">
+        <select className={iCls} value={`${ano}-${empresa}`} onChange={e => {
+          const [a, emp] = e.target.value.split('-')
+          setAno(parseInt(a)); setEmpresa(emp as Empresa)
+        }}>
+          {[2026, 2025, 2024].map(a =>
+            ['CONSOLIDADO','LARM','LM','HOLDING','RM'].map(emp => (
+              <option key={`${a}-${emp}`} value={`${a}-${emp}`}>{a} — {emp}</option>
+            ))
+          )}
+        </select>
+        <select className={iCls}>
+          <option>Visão Mensal</option>
+          <option>Visão Diária</option>
+        </select>
+        <div className="flex-1" />
+        <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50">
+          <Download className="h-3.5 w-3.5" /> Exportar XLSX
+        </button>
+        <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50">
+          <Printer className="h-3.5 w-3.5" /> Imprimir
         </button>
       </div>
 
-      {/* Filtros */}
-      <div className="flex gap-3 flex-wrap items-center bg-white rounded-xl border border-slate-100 px-4 py-3 shadow-sm">
-        {/* Empresa */}
-        <div className="flex gap-1 flex-wrap">
-          {EMPRESAS.map(e => (
-            <button key={e} onClick={() => setEmpresa(e)}
-              className={cn('px-3 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                empresa === e ? 'bg-[#1e3a5f] text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              )}>
-              {e}
-            </button>
-          ))}
-        </div>
-
-        <div className="w-px h-6 bg-slate-200 hidden sm:block" />
-
-        {/* Ano */}
-        <select value={ano} onChange={e => setAno(Number(e.target.value))}
-          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400">
-          {ANOS.map(a => <option key={a} value={a}>{a}</option>)}
-        </select>
-
-        {/* Mês */}
-        <div className="flex gap-1 flex-wrap">
-          <button onClick={() => setMes(null)}
-            className={cn('px-2 py-1 rounded text-xs transition-colors',
-              mes === null ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>
-            Ano todo
-          </button>
-          {MESES.slice(1).map((m, i) => (
-            <button key={i+1} onClick={() => setMes(i + 1)}
-              className={cn('px-2 py-1 rounded text-xs transition-colors',
-                mes === i+1 ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>
-              {m}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Cards de resumo */}
+      {/* Cards resumo */}
       {resumo && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           {[
-            { label: 'Saldo Final',      value: resumo.saldo_final,    icon: DollarSign,   color: 'bg-blue-50 text-blue-600' },
-            { label: 'Receita Bruta',    value: resumo.receita_bruta,  icon: TrendingUp,   color: 'bg-green-50 text-green-600' },
-            { label: 'Despesas',         value: resumo.despesas,       icon: TrendingDown, color: 'bg-red-50 text-red-600' },
-            { label: 'Geração de Caixa', value: resumo.geracao_caixa,  icon: BarChart2,    color: 'bg-purple-50 text-purple-600' },
-          ].map(card => (
-            <div key={card.label} className="bg-white rounded-xl p-4 border border-slate-100 shadow-sm">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">{card.label}</p>
-                  <p className={cn('text-sm font-bold', card.value < 0 ? 'text-red-600' : 'text-slate-800')}>
-                    {R$(card.value, true)}
-                  </p>
-                </div>
-                <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center', card.color)}>
-                  <card.icon className="w-4 h-4" />
-                </div>
-              </div>
+            { label: 'Saldo Inicial', value: fmtBRL(resumo.saldo_inicial), color: 'text-amber-600' },
+            { label: 'Receita Bruta', value: fmtBRL(resumo.receita_bruta), color: 'text-green-600' },
+            { label: 'Despesas', value: fmtBRL(resumo.despesas), color: 'text-red-500' },
+            { label: 'Saldo Final', value: fmtBRL(resumo.saldo_final), color: resumo.saldo_final >= 0 ? 'text-green-600' : 'text-red-500' },
+          ].map(c => (
+            <div key={c.label} className="bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+              <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">{c.label}</p>
+              <p className={`text-xl font-semibold font-mono ${c.color}`}>{c.value}</p>
             </div>
           ))}
         </div>
       )}
 
-      {/* Tabela principal */}
-      <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-        {loading && !linhas.length && (
-          <div className="flex items-center justify-center gap-2 h-40 text-slate-400 text-sm">
-            <RefreshCw className="w-4 h-4 animate-spin" /> Carregando dados…
-          </div>
-        )}
-
-        {!linhas.length && !loading && (
-          <div className="text-center py-16 text-slate-400 text-sm">
-            Nenhum dado encontrado. Execute a importação primeiro.
-          </div>
-        )}
-
-        {linhas.length > 0 && (
-          <div className="overflow-x-auto">
+      {/* Tabela Cash Flow */}
+      <div className="bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 dark:border-zinc-700">
+          <h3 className="text-sm font-semibold">Cash Flow — {empresa} {ano}</h3>
+          <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">Orçado</span>
+        </div>
+        <div className="overflow-x-auto">
+          {loading ? (
+            <div className="text-center py-10 text-zinc-400">Carregando...</div>
+          ) : !data?.linhas?.length ? (
+            <div className="text-center py-10 text-zinc-400">
+              <p className="text-sm">Sem dados para {empresa} / {ano}</p>
+              <p className="text-xs mt-1 text-zinc-400">Execute o script de importação para carregar os dados do Excel.</p>
+            </div>
+          ) : (
             <table className="w-full text-xs">
               <thead>
-                <tr className="bg-[#0d1b2a] text-white">
-                  <th className="text-left px-3 py-2.5 font-semibold sticky left-0 bg-[#0d1b2a] min-w-[280px] z-10">
-                    Descrição
-                  </th>
-                  {colunas.map(col => (
-                    <th key={col.mes} className="text-right px-3 py-2.5 font-semibold whitespace-nowrap min-w-[110px]">
-                      {col.label}
-                    </th>
+                <tr className="bg-zinc-50 dark:bg-zinc-800/80 text-zinc-400 uppercase" style={{fontSize:'10px'}}>
+                  <th className="px-3 py-2.5 text-left w-6">#</th>
+                  <th className="px-3 py-2.5 text-left min-w-[220px]">Descrição</th>
+                  {data.colunas.map((c: any) => (
+                    <th key={c.mes} className="px-2 py-2.5 text-right min-w-[70px]">{c.label}</th>
                   ))}
-                  <th className="text-right px-3 py-2.5 font-semibold whitespace-nowrap min-w-[120px] bg-[#162d4a]">
-                    Acumulado
-                  </th>
+                  <th className="px-3 py-2.5 text-right font-semibold min-w-[80px]">Total</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleLinhas.filter(l => !l.hidden).map(l => {
-                  const style = ROW_STYLE[l.tipo] ?? ROW_STYLE.item
-                  const canCollapse = l.tipo === 'header' || l.tipo === 'total'
-                  const isCollapsed = collapsed.has(l.id)
-
+                {data.linhas.map((linha: any) => {
+                  const rowCls = getRowStyle(linha.tipo)
+                  const isNeg = (v: number) => v < 0
                   return (
-                    <tr key={l.id}
-                      className={cn('border-b border-slate-100 transition-colors', style)}
-                    >
-                      {/* Descrição */}
-                      <td
-                        className={cn(
-                          'px-3 py-1.5 sticky left-0 z-10',
-                          ROW_INDENT[l.nivel] ?? 'pl-2',
-                          l.tipo === 'header' ? 'bg-[#1e3a5f]' :
-                          l.tipo === 'total'  ? 'bg-slate-700' :
-                          l.tipo === 'subtotal' ? 'bg-slate-100' : 'bg-white',
-                          style
-                        )}
-                        onClick={() => canCollapse && toggleCollapse(l.id)}
-                        style={{ cursor: canCollapse ? 'pointer' : 'default' }}
-                      >
-                        <div className="flex items-center gap-1.5">
-                          {canCollapse && (
-                            isCollapsed
-                              ? <ChevronRight className="w-3 h-3 flex-shrink-0 opacity-70" />
-                              : <ChevronDown  className="w-3 h-3 flex-shrink-0 opacity-70" />
-                          )}
-                          {l.codigo && (
-                            <span className="opacity-60 font-mono">{l.codigo}</span>
-                          )}
-                          <span>{l.descricao}</span>
-                        </div>
+                    <tr key={linha.id} className={`border-t border-zinc-100 dark:border-zinc-800 ${rowCls}`}>
+                      <td className="px-3 py-1.5 text-zinc-400" style={{fontSize:'10px'}}>{linha.codigo}</td>
+                      <td className={`px-3 py-1.5 ${linha.nivel >= 2 ? 'pl-6' : ''} ${linha.nivel >= 3 ? 'pl-9 text-zinc-500' : ''}`}>
+                        {linha.descricao}
                       </td>
-
-                      {/* Valores mensais */}
-                      {colunas.map(col => (
-                        <td key={col.mes} className="text-right px-3 py-1.5 tabular-nums">
-                          {valorCell(l.valores[col.mes], l.tipo)}
-                        </td>
-                      ))}
-
-                      {/* Total acumulado */}
-                      <td className={cn(
-                        'text-right px-3 py-1.5 tabular-nums font-medium',
-                        l.tipo === 'header' ? 'bg-[#162d4a]' :
-                        l.tipo === 'total'  ? 'bg-slate-600' : 'bg-slate-50'
-                      )}>
-                        {valorCell(l.total, l.tipo)}
+                      {data.colunas.map((c: any) => {
+                        const v = linha.valores[c.mes] ?? 0
+                        return (
+                          <td key={c.mes} className={`px-2 py-1.5 text-right font-mono ${v === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(v) ? 'text-red-500' : 'text-green-600'}`}>
+                            {v === 0 ? '–' : fmtBRL(v)}
+                          </td>
+                        )
+                      })}
+                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${linha.total === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(linha.total) ? 'text-red-500' : 'text-green-600'}`}>
+                        {linha.total === 0 ? '–' : fmtBRL(linha.total)}
                       </td>
                     </tr>
                   )
                 })}
               </tbody>
             </table>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   )
 }
+
+const iCls = 'px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent'

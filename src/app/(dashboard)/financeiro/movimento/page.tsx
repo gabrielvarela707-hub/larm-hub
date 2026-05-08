@@ -1,369 +1,183 @@
 'use client'
-
+/**
+ * src/app/financeiro/movimento/page.tsx
+ * Movimento Bancário — visão financeira
+ */
 import { useState, useEffect, useCallback } from 'react'
-import { Search, RefreshCw, TrendingUp, TrendingDown, DollarSign, ChevronLeft, ChevronRight } from 'lucide-react'
-import { apiClient } from '@/lib/auth-store'
-import { cn } from '@/lib/utils'
+import { Download, ArrowDownCircle, ArrowUpCircle } from 'lucide-react'
+import { getMovimento, getMovimentoFiltros, type Movimento, type Empresa } from '@/lib/api/financeiro'
 
-const R$ = (v: number | null | undefined) => {
-  const n = v ?? 0
-  if (n === 0) return '—'
-  return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-}
-
-const fmtDate = (d: string | null | undefined) => {
-  if (!d) return '—'
-  try { return new Date(d).toLocaleDateString('pt-BR') } catch { return String(d) }
-}
-
-const MESES = ['', 'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-               'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
-const MESES_SHORT = ['', 'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-
-interface Mov {
-  id: number; data: string; empresa: string; banco: string
-  entradas: number; saidas: number; saldo: number
-  fornecedor: string; historico: string; nf_doc: string
-  conta_contabil: string; centro_custo: string; natureza_financeira: string
-  dia: number; mes: number; ano: number
-}
-
-interface Filtros { empresas: string[]; bancos: string[]; anos: number[]; contas: Array<{ conta_contabil: string; natureza_financeira: string }> }
-interface Pagination { page: number; pages: number; total: number; limit: number }
-interface Summary { total_entradas: number; total_saidas: number; saldo_periodo: number }
-interface ResumoMensal { mensal: Array<{ mes: number; entradas: number; saidas: number; saldo: number }>; por_empresa: Array<{ empresa: string; entradas: number; saidas: number }>; top_despesas: Array<{ conta_contabil: string; total: number }> }
-
-const LIMIT = 50
-
-// ─── Pagination component ─────────────────────────────────────────────────────
-
-function Pager({ page, pages, total, limit, loading, onChange }: { page: number; pages: number; total: number; limit: number; loading: boolean; onChange: (p: number) => void }) {
-  if (total === 0) return null
-  return (
-    <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50/50">
-      <p className="text-xs text-slate-400">
-        {((page-1)*limit)+1}–{Math.min(page*limit, total)} de <b>{total.toLocaleString('pt-BR')}</b>
-      </p>
-      <div className="flex items-center gap-1">
-        <button onClick={() => onChange(page-1)} disabled={page<=1||loading}
-          className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 text-slate-500 disabled:opacity-30">
-          <ChevronLeft className="w-3.5 h-3.5" />
-        </button>
-        <span className="text-xs px-2 text-slate-600">{page}/{pages}</span>
-        <button onClick={() => onChange(page+1)} disabled={page>=pages||loading}
-          className="w-7 h-7 flex items-center justify-center rounded border border-slate-200 text-slate-500 disabled:opacity-30">
-          <ChevronRight className="w-3.5 h-3.5" />
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// ─── Skeletons ────────────────────────────────────────────────────────────────
-function Skel({ cols }: { cols: number }) {
-  return <>{[...Array(8)].map((_,i) => (
-    <tr key={i} className="border-b border-slate-50">
-      {[...Array(cols)].map((_,j) => (
-        <td key={j} className="px-3 py-2.5">
-          <div className="h-3 bg-slate-100 rounded animate-pulse" style={{ width: `${55+((i*13+j*7)%40)}%` }} />
-        </td>
-      ))}
-    </tr>
-  ))}</>
-}
+const NATUREZAS_FINANCEIRAS = ['1.1','1.2','1.3','1.4','4.1','4.2','4.3','4.4','4.5','4.6','4.9','4.11','4.12','7.3']
 
 export default function MovimentoPage() {
-  const [filtros,    setFiltros]    = useState<Filtros | null>(null)
-  const [movs,       setMovs]       = useState<Mov[]>([])
-  const [pag,        setPag]        = useState<Pagination>({ page:1, pages:1, total:0, limit:LIMIT })
-  const [summary,    setSummary]    = useState<Summary | null>(null)
-  const [resumo,     setResumo]     = useState<ResumoMensal | null>(null)
-  const [loading,    setLoading]    = useState(false)
-  const [activeTab,  setActiveTab]  = useState<'lista'|'resumo'>('lista')
+  const [movimentos, setMovimentos] = useState<Movimento[]>([])
+  const [summary, setSummary]       = useState({ total_entradas: 0, total_saidas: 0, saldo_periodo: 0 })
+  const [pagination, setPagination]  = useState({ total: 0, page: 1, pages: 1 })
+  const [loading, setLoading]        = useState(false)
 
-  // Filtros ativos
-  const [fEmpresa,   setFEmpresa]   = useState('')
-  const [fBanco,     setFBanco]     = useState('')
-  const [fAno,       setFAno]       = useState<number>(2026)
-  const [fMes,       setFMes]       = useState<number | null>(null)
-  const [fTipo,      setFTipo]      = useState('') // entrada|saida
-  const [busca,      setBusca]      = useState('')
-  const [page,       setPage]       = useState(1)
+  // Filtros
+  const [busca, setBusca]       = useState('')
+  const [empresa, setEmpresa]   = useState('')
+  const [banco, setBanco]       = useState('')
+  const [natureza, setNatureza] = useState('')
+  const [tipo, setTipo]         = useState('')
+  const [page, setPage]         = useState(1)
+  const [sortField, setSortField] = useState('data')
 
-  // Carrega filtros disponíveis
-  useEffect(() => {
-    apiClient.get('/financeiro/movimento/filtros')
-      .then(r => setFiltros(r.data.data))
-      .catch(() => {})
-  }, [])
+  const [filtrosData, setFiltrosData] = useState<{ empresas: string[]; bancos: string[]; anos: number[] }>({
+    empresas: [], bancos: [], anos: []
+  })
 
-  const loadMovs = useCallback(async (pg = 1) => {
+  const load = useCallback(async () => {
     setLoading(true)
     try {
-      const params: Record<string, unknown> = { page: pg, limit: LIMIT, ano: fAno }
-      if (fEmpresa) params.empresa  = fEmpresa
-      if (fBanco)   params.banco    = fBanco
-      if (fMes)     params.mes      = fMes
-      if (fTipo)    params.tipo     = fTipo
-      if (busca)    params.busca    = busca
+      const res = await getMovimento({
+        page, limit: 50,
+        empresa: empresa as Empresa || undefined,
+        banco: banco || undefined,
+        natureza: natureza || undefined,
+        tipo: tipo as any || undefined,
+        busca: busca || undefined,
+      })
+      // Filter to financial codes only
+      const financial = res.data.filter(m =>
+        !m.natureza_financeira || NATUREZAS_FINANCEIRAS.some(n => (m.natureza_financeira || '').startsWith(n.split('.')[0]))
+      )
+      setMovimentos(financial)
+      setSummary(res.summary)
+      setPagination(res.pagination)
+    } finally {
+      setLoading(false)
+    }
+  }, [page, busca, empresa, banco, natureza, tipo])
 
-      const r = await apiClient.get('/financeiro/movimento', { params })
-      setMovs(r.data.data)
-      setPag(r.data.pagination)
-      setSummary(r.data.summary)
-      setPage(pg)
-    } catch { }
-    finally { setLoading(false) }
-  }, [fEmpresa, fBanco, fAno, fMes, fTipo, busca])
+  useEffect(() => { load() }, [load])
+  useEffect(() => { getMovimentoFiltros().then(setFiltrosData) }, [])
 
-  const loadResumo = useCallback(async () => {
-    try {
-      const params: Record<string, unknown> = { ano: fAno }
-      if (fEmpresa) params.empresa = fEmpresa
-      const r = await apiClient.get('/financeiro/movimento/resumo', { params })
-      setResumo(r.data.data)
-    } catch { }
-  }, [fAno, fEmpresa])
-
-  useEffect(() => {
-    if (activeTab === 'lista') loadMovs(1)
-    else loadResumo()
-  }, [fEmpresa, fBanco, fAno, fMes, fTipo, activeTab])
+  const fmtBRL = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  const fmtDate = (d: string) => d?.slice(0, 10).split('-').reverse().join('/')
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-slate-800">Movimento Bancário</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Todas as movimentações por empresa e banco</p>
-        </div>
-        <div className="flex gap-2">
-          {['lista', 'resumo'].map(t => (
-            <button key={t} onClick={() => setActiveTab(t as 'lista'|'resumo')}
-              className={cn('px-4 py-2 rounded-lg text-xs font-medium transition-colors',
-                activeTab === t ? 'bg-[#1e3a5f] text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50')}>
-              {t === 'lista' ? 'Extrato' : 'Resumo'}
-            </button>
-          ))}
-        </div>
+    <div className="p-6 space-y-4">
+      {/* Aviso */}
+      <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-2.5 text-sm text-amber-700 dark:text-amber-300">
+        <ArrowUpCircle className="h-4 w-4 flex-shrink-0" />
+        Visão restrita ao módulo <strong>Financeiro</strong>. Aplicações automáticas, participações societárias e outros itens não-financeiros estão ocultados.
+      </div>
+
+      {/* Cards */}
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          { label: 'Total Entradas', value: fmtBRL(summary.total_entradas), color: 'text-green-600', icon: ArrowDownCircle },
+          { label: 'Total Saídas', value: fmtBRL(summary.total_saidas), color: 'text-red-500', icon: ArrowUpCircle },
+          { label: 'Saldo do Período', value: fmtBRL(summary.saldo_periodo), color: summary.saldo_periodo >= 0 ? 'text-green-600' : 'text-red-500', icon: null },
+          { label: 'Registros', value: pagination.total.toLocaleString(), color: 'text-zinc-800 dark:text-zinc-100', icon: null },
+        ].map(c => (
+          <div key={c.label} className="bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+            <p className="text-xs text-zinc-500 uppercase tracking-wide mb-1">{c.label}</p>
+            <p className={`text-lg font-semibold font-mono ${c.color}`}>{c.value}</p>
+          </div>
+        ))}
       </div>
 
       {/* Filtros */}
-      <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4 py-3 flex flex-wrap gap-3 items-center">
-        {/* Empresa */}
-        <select value={fEmpresa} onChange={e => setFEmpresa(e.target.value)}
-          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400">
-          <option value="">Todas empresas</option>
-          {(filtros?.empresas ?? []).map(e => <option key={e} value={e}>{e}</option>)}
+      <div className="flex gap-2 flex-wrap">
+        <input className={iCls + ' flex-1 min-w-[180px]'} placeholder="🔍  Fornecedor, histórico..."
+          value={busca} onChange={e => { setBusca(e.target.value); setPage(1) }} />
+        <select className={iCls + ' w-[140px]'} value={empresa} onChange={e => setEmpresa(e.target.value)}>
+          <option value="">Todas as empresas</option>
+          {filtrosData.empresas.map(e => <option key={e}>{e}</option>)}
         </select>
-
-        {/* Banco */}
-        <select value={fBanco} onChange={e => setFBanco(e.target.value)}
-          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400">
-          <option value="">Todos bancos</option>
-          {(filtros?.bancos ?? []).map(b => <option key={b} value={b}>{b}</option>)}
+        <select className={iCls + ' w-[140px]'} value={banco} onChange={e => setBanco(e.target.value)}>
+          <option value="">Todos os bancos</option>
+          {filtrosData.bancos.map(b => <option key={b}>{b}</option>)}
         </select>
-
-        {/* Ano */}
-        <select value={fAno} onChange={e => setFAno(Number(e.target.value))}
-          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400">
-          {(filtros?.anos ?? [2026, 2025, 2024]).map(a => <option key={a} value={a}>{a}</option>)}
+        <select className={iCls + ' w-[140px]'} value={tipo} onChange={e => setTipo(e.target.value)}>
+          <option value="">Todos</option>
+          <option value="entrada">Entradas</option>
+          <option value="saida">Saídas</option>
         </select>
-
-        {/* Mês */}
-        <select value={fMes ?? ''} onChange={e => setFMes(e.target.value ? Number(e.target.value) : null)}
-          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400">
-          <option value="">Todos meses</option>
-          {MESES.slice(1).map((m, i) => <option key={i+1} value={i+1}>{m}</option>)}
+        <select className={iCls + ' w-[120px]'} value={sortField} onChange={e => setSortField(e.target.value)}>
+          <option value="data">Por Data</option>
+          <option value="fornecedor">Por Fornecedor</option>
+          <option value="valor">Por Valor</option>
         </select>
-
-        {/* Tipo */}
-        <div className="flex gap-1">
-          {[{v:'',l:'Todos'},{v:'entrada',l:'Entradas'},{v:'saida',l:'Saídas'}].map(o => (
-            <button key={o.v} onClick={() => setFTipo(o.v)}
-              className={cn('px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                fTipo === o.v ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>
-              {o.l}
-            </button>
-          ))}
-        </div>
+        <button className="px-3 py-2 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs flex items-center gap-1.5 hover:bg-zinc-50 text-zinc-600 dark:text-zinc-300">
+          <Download className="h-3.5 w-3.5" /> Exportar
+        </button>
       </div>
 
-      {/* ── ABA EXTRATO ─────────────────────────────────────────────────────── */}
-      {activeTab === 'lista' && (
-        <>
-          {/* Busca + summary */}
-          <div className="flex flex-wrap gap-3 items-center justify-between">
-            <div className="flex gap-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input value={busca} onChange={e => setBusca(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && loadMovs(1)}
-                  placeholder="Fornecedor, histórico ou conta…"
-                  className="pl-9 pr-4 py-2 w-72 text-sm bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100" />
-              </div>
-              <button onClick={() => loadMovs(1)}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg">
-                Buscar
-              </button>
-            </div>
-
-            {summary && (
-              <div className="flex gap-3 flex-wrap">
-                {[
-                  { label: 'Entradas', value: summary.total_entradas, color: 'text-green-600', icon: TrendingUp },
-                  { label: 'Saídas',   value: summary.total_saidas,   color: 'text-red-600',   icon: TrendingDown },
-                  { label: 'Saldo',    value: summary.saldo_periodo,  color: summary.saldo_periodo >= 0 ? 'text-blue-600' : 'text-orange-600', icon: DollarSign },
-                ].map(s => (
-                  <div key={s.label} className="bg-white rounded-lg border border-slate-100 px-3 py-2 flex items-center gap-2">
-                    <s.icon className={cn('w-4 h-4', s.color)} />
-                    <div>
-                      <p className="text-[10px] text-slate-400">{s.label}</p>
-                      <p className={cn('text-sm font-bold', s.color)}>{R$(s.value)}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-[#0d1b2a] text-white">
-                    {['Data','Empresa','Banco','Fornecedor / Histórico','Conta','Entradas','Saídas','Saldo'].map(h => (
-                      <th key={h} className="text-left px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>
-                    ))}
+      {/* Tabela */}
+      <div className="bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-zinc-50 dark:bg-zinc-800/80 text-xs text-zinc-500 uppercase tracking-wide">
+                <th className="px-3 py-3 text-left cursor-pointer hover:text-zinc-700" onClick={() => setSortField('data')}>Data {sortField==='data'&&'↓'}</th>
+                <th className="px-3 py-3 text-left">Empresa</th>
+                <th className="px-3 py-3 text-left">Banco</th>
+                <th className="px-3 py-3 text-left cursor-pointer hover:text-zinc-700" onClick={() => setSortField('fornecedor')}>Fornecedor {sortField==='fornecedor'&&'↓'}</th>
+                <th className="px-3 py-3 text-left">Histórico</th>
+                <th className="px-3 py-3 text-left">Plano de Contas</th>
+                <th className="px-3 py-3 text-left">NF/DOC</th>
+                <th className="px-3 py-3 text-center">Tipo</th>
+                <th className="px-3 py-3 text-right cursor-pointer hover:text-zinc-700" onClick={() => setSortField('valor')}>Valor {sortField==='valor'&&'↓'}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={9} className="text-center py-10 text-zinc-400">Carregando...</td></tr>
+              ) : movimentos.length === 0 ? (
+                <tr><td colSpan={9} className="text-center py-10 text-zinc-400">Nenhum registro encontrado</td></tr>
+              ) : movimentos.map(m => {
+                const isEntrada = (m.entradas || 0) > 0
+                return (
+                  <tr key={m.id} className="border-t border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
+                    <td className="px-3 py-2.5 font-mono text-xs text-zinc-500">{fmtDate(m.data)}</td>
+                    <td className="px-3 py-2.5">
+                      <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">{m.empresa}</span>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs text-zinc-500">{m.banco}</td>
+                    <td className="px-3 py-2.5 max-w-[150px] truncate text-sm" title={m.fornecedor}>{m.fornecedor || '—'}</td>
+                    <td className="px-3 py-2.5 max-w-[180px] truncate text-xs text-zinc-500" title={m.historico}>{m.historico || '—'}</td>
+                    <td className="px-3 py-2.5 text-xs text-zinc-400 max-w-[120px] truncate">{m.conta_contabil || m.natureza_financeira || '—'}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-zinc-400">{m.nf_doc || '—'}</td>
+                    <td className="px-3 py-2.5 text-center">
+                      <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded font-medium ${
+                        isEntrada
+                          ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                          : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+                      }`}>
+                        {isEntrada ? '↓ Entrada' : '↑ Saída'}
+                      </span>
+                    </td>
+                    <td className={`px-3 py-2.5 text-right font-mono font-medium ${isEntrada ? 'text-green-600' : 'text-red-500'}`}>
+                      {fmtBRL(isEntrada ? m.entradas : m.saidas)}
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {loading && <Skel cols={8} />}
-                  {!loading && movs.length === 0 && (
-                    <tr><td colSpan={8} className="text-center text-slate-400 py-12 text-sm">Nenhuma transação encontrada</td></tr>
-                  )}
-                  {!loading && movs.map(m => (
-                    <tr key={m.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                      <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(m.data)}</td>
-                      <td className="px-3 py-2">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 font-medium">{m.empresa}</span>
-                      </td>
-                      <td className="px-3 py-2 text-slate-500">{m.banco}</td>
-                      <td className="px-3 py-2 max-w-[260px]">
-                        <p className="font-medium text-slate-700 truncate">{m.fornecedor || '—'}</p>
-                        {m.historico && <p className="text-slate-400 truncate">{m.historico}</p>}
-                      </td>
-                      <td className="px-3 py-2 text-slate-500 max-w-[140px] truncate">{m.conta_contabil || '—'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {m.entradas ? <span className="font-semibold text-green-600">{R$(m.entradas)}</span> : <span className="text-slate-300">—</span>}
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">
-                        {m.saidas ? <span className="font-semibold text-red-600">{R$(m.saidas)}</span> : <span className="text-slate-300">—</span>}
-                      </td>
-                      <td className={cn('px-3 py-2 text-right tabular-nums font-medium',
-                        (m.saldo ?? 0) >= 0 ? 'text-blue-600' : 'text-orange-600')}>
-                        {R$(m.saldo)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <Pager {...pag} loading={loading} onChange={p => loadMovs(p)} />
-          </div>
-        </>
-      )}
-
-      {/* ── ABA RESUMO ──────────────────────────────────────────────────────── */}
-      {activeTab === 'resumo' && (
-        <div className="space-y-4">
-          {/* Gráfico mensal */}
-          {resumo?.mensal && resumo.mensal.length > 0 && (
-            <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5">
-              <h3 className="text-sm font-semibold text-slate-700 mb-4">Entradas vs Saídas por Mês — {fAno}</h3>
-              <div className="overflow-x-auto">
-                <div className="flex items-end gap-3 h-36 min-w-max pb-1">
-                  {resumo.mensal.map(m => {
-                    const maxVal = Math.max(...resumo.mensal.map(x => Math.max(x.entradas, x.saidas)))
-                    const pctE = maxVal > 0 ? (m.entradas / maxVal) * 100 : 0
-                    const pctS = maxVal > 0 ? (m.saidas   / maxVal) * 100 : 0
-                    return (
-                      <div key={m.mes} className="flex flex-col items-center gap-1">
-                        <div className="flex items-end gap-0.5 h-28">
-                          <div className="w-5 rounded-t bg-green-400 hover:bg-green-500 transition-colors"
-                            style={{ height: `${Math.max(pctE, 2)}%` }}
-                            title={`Entradas: ${R$(m.entradas)}`} />
-                          <div className="w-5 rounded-t bg-red-400 hover:bg-red-500 transition-colors"
-                            style={{ height: `${Math.max(pctS, 2)}%` }}
-                            title={`Saídas: ${R$(m.saidas)}`} />
-                        </div>
-                        <span className="text-[9px] text-slate-400">{MESES_SHORT[m.mes]}</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-              <div className="flex gap-4 mt-2">
-                <div className="flex items-center gap-1.5 text-xs text-slate-500"><div className="w-3 h-3 rounded bg-green-400" />Entradas</div>
-                <div className="flex items-center gap-1.5 text-xs text-slate-500"><div className="w-3 h-3 rounded bg-red-400" />Saídas</div>
-              </div>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Por empresa */}
-            {resumo?.por_empresa && resumo.por_empresa.length > 0 && (
-              <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5">
-                <h3 className="text-sm font-semibold text-slate-700 mb-3">Por Empresa</h3>
-                <table className="w-full text-xs">
-                  <thead><tr className="border-b border-slate-100">
-                    {['Empresa','Entradas','Saídas','Saldo'].map(h => (
-                      <th key={h} className="text-left py-1.5 text-slate-500 font-medium">{h}</th>
-                    ))}
-                  </tr></thead>
-                  <tbody>
-                    {resumo.por_empresa.map(e => (
-                      <tr key={e.empresa} className="border-b border-slate-50">
-                        <td className="py-2 font-medium text-slate-700">{e.empresa}</td>
-                        <td className="py-2 text-green-600 tabular-nums">{R$(e.entradas)}</td>
-                        <td className="py-2 text-red-600 tabular-nums">{R$(e.saidas)}</td>
-                        <td className={cn('py-2 tabular-nums font-semibold', (e.entradas - e.saidas) >= 0 ? 'text-blue-600' : 'text-orange-600')}>
-                          {R$(e.entradas - e.saidas)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Top despesas */}
-            {resumo?.top_despesas && resumo.top_despesas.length > 0 && (
-              <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5">
-                <h3 className="text-sm font-semibold text-slate-700 mb-3">Top 10 Categorias de Despesa</h3>
-                <div className="space-y-2">
-                  {resumo.top_despesas.map((d, i) => {
-                    const max = resumo.top_despesas[0].total
-                    const pct = (d.total / max) * 100
-                    return (
-                      <div key={i} className="space-y-0.5">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-slate-600 truncate max-w-[180px]">{d.conta_contabil}</span>
-                          <span className="text-red-600 font-medium tabular-nums ml-2">{R$(d.total)}</span>
-                        </div>
-                        <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-red-400 rounded-full" style={{ width: `${pct}%` }} />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        {/* Paginação */}
+        <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-100 dark:border-zinc-800">
+          <span className="text-xs text-zinc-400">{pagination.total} registros financeiros</span>
+          <div className="flex gap-1">
+            <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}
+              className="px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-700 text-xs disabled:opacity-40 hover:bg-zinc-50">
+              ← Anterior
+            </button>
+            <span className="px-3 py-1.5 text-xs text-zinc-500">{page} / {pagination.pages}</span>
+            <button disabled={page >= pagination.pages} onClick={() => setPage(p => p + 1)}
+              className="px-3 py-1.5 rounded border border-zinc-200 dark:border-zinc-700 text-xs disabled:opacity-40 hover:bg-zinc-50">
+              Próximo →
+            </button>
           </div>
         </div>
-      )}
+      </div>
     </div>
   )
 }
+
+const iCls = 'px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent'
