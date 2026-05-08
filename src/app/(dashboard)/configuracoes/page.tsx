@@ -6,7 +6,9 @@ import {
   Save, Check, Upload, Palette, Globe, Mail, Users, Bell,
   CreditCard, Shield, Key, MapPin, Eye, EyeOff,
   AlertCircle, X, Link2, Zap, ExternalLink, CheckCircle,
+  UserPlus, Copy, RefreshCw, Send, ChevronDown, Loader2,
 } from 'lucide-react'
+import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 import { useTenantConfig } from '@/lib/tenant-config-store'
 
@@ -262,11 +264,74 @@ export default function ConfiguracoesPage() {
   const [activeCrm, setActiveCrm] = useState<string>('')
 
   // Users & Permissions
-  const [users]                = useState<AppUser[]>(INITIAL_USERS)
+  const [users, setUsers]              = useState<AppUser[]>(INITIAL_USERS)
   const [selectedUser, setSelectedUser] = useState<AppUser | null>(null)
   const [perms, setPerms]       = useState<PermsMap>(() =>
     Object.fromEntries(INITIAL_USERS.map(u => [u.id, defaultPerms(u.role)]))
   )
+
+  // ── Convite ────────────────────────────────────────────────────────────────
+  const [showInvite,      setShowInvite]      = useState(false)
+  const [invName,         setInvName]         = useState('')
+  const [invEmail,        setInvEmail]        = useState('')
+  const [invRole,         setInvRole]         = useState<AppUser['role']>('broker')
+  const [invAutoActivate, setInvAutoActivate] = useState(true)
+  const [invUseTempPw,    setInvUseTempPw]    = useState(false)
+  const [invMsgMode,      setInvMsgMode]      = useState<'padrao'|'custom'>('padrao')
+  const [invCustomMsg,    setInvCustomMsg]    = useState('')
+  const [invSaving,       setInvSaving]       = useState(false)
+  const [invResult,       setInvResult]       = useState<{url: string; temp_password?: string} | null>(null)
+  const [invErrors,       setInvErrors]       = useState<Record<string,string>>({})
+  const [invCopied,       setInvCopied]       = useState<string>('')
+
+  function resetInvite() {
+    setInvName(''); setInvEmail(''); setInvRole('broker')
+    setInvAutoActivate(true); setInvUseTempPw(false)
+    setInvMsgMode('padrao'); setInvCustomMsg('')
+    setInvResult(null); setInvErrors({})
+  }
+
+  function copyToClipboard(text: string, key: string) {
+    navigator.clipboard.writeText(text).then(() => {
+      setInvCopied(key)
+      setTimeout(() => setInvCopied(''), 2000)
+    })
+  }
+
+  async function sendInvite() {
+    const e: Record<string, string> = {}
+    if (!invName.trim())  e.name  = 'Obrigatório'
+    if (!invEmail.trim()) e.email = 'Obrigatório'
+    if (!/^[^@]+@[^@]+\.[^@]+$/.test(invEmail)) e.email = 'E-mail inválido'
+    setInvErrors(e)
+    if (Object.keys(e).length) return
+
+    setInvSaving(true)
+    try {
+      const r = await apiClient.post('/users/invite', {
+        name:             invName.trim(),
+        email:            invEmail.trim().toLowerCase(),
+        role:             invRole,
+        auto_activate:    invAutoActivate,
+        use_temp_password: invUseTempPw,
+        custom_message:   invMsgMode === 'custom' ? invCustomMsg.trim() : null,
+      })
+      setInvResult({ url: r.data.data.invite_url, temp_password: r.data.data.temp_password })
+      // Adiciona à lista local
+      setUsers(prev => [...prev, {
+        id: r.data.data.invite.id,
+        name: invName.trim(),
+        email: invEmail.trim().toLowerCase(),
+        role: invRole,
+        active: invAutoActivate && invUseTempPw,
+      }])
+    } catch (err: unknown) {
+      const msg = (err instanceof Error ? err.message : 'Erro ao enviar convite')
+      setInvErrors({ _geral: (err as {response?: {data?: {message?: string}}}).response?.data?.message || msg })
+    } finally {
+      setInvSaving(false)
+    }
+  }
 
   function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -473,37 +538,249 @@ export default function ConfiguracoesPage() {
 
           {/* ── Usuarios ── */}
           {tab === 'usuarios' && (
-            <Section title="Usuarios da conta" sub={`${users.filter(u => u.active).length} ativos`}>
-              <div className="space-y-1">
-                {users.map(u => (
-                  <div key={u.id} className={cn('flex items-center gap-3 py-3 border-b border-slate-50 last:border-0', !u.active && 'opacity-50')}>
-                    <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                      <span className="text-blue-700 text-xs font-semibold">
-                        {u.name.split(' ').slice(0,2).map(n => n[0]).join('')}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium text-slate-900">{u.name}</p>
-                        {!u.active && <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">Inativo</span>}
+            <>
+              <Section title="Usuarios da conta" sub={`${users.filter(u => u.active).length} ativos`}>
+                <div className="space-y-1">
+                  {users.map(u => (
+                    <div key={u.id} className={cn('flex items-center gap-3 py-3 border-b border-slate-50 last:border-0', !u.active && 'opacity-50')}>
+                      <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                        <span className="text-blue-700 text-xs font-semibold">
+                          {u.name.split(' ').slice(0,2).map(n => n[0]).join('')}
+                        </span>
                       </div>
-                      <p className="text-xs text-slate-500">{u.email}</p>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-slate-900">{u.name}</p>
+                          {!u.active && <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">Inativo</span>}
+                        </div>
+                        <p className="text-xs text-slate-500">{u.email}</p>
+                      </div>
+                      <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium', ROLE_COLORS[u.role])}>
+                        {ROLE_LABELS[u.role]}
+                      </span>
+                      <button
+                        onClick={() => { setSelectedUser(u); setTab('permissoes') }}
+                        className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-colors">
+                        <Shield className="w-3.5 h-3.5" /> Permissoes
+                      </button>
                     </div>
-                    <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium', ROLE_COLORS[u.role])}>
-                      {ROLE_LABELS[u.role]}
-                    </span>
-                    <button
-                      onClick={() => { setSelectedUser(u); setTab('permissoes') }}
-                      className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-colors">
-                      <Shield className="w-3.5 h-3.5" /> Permissoes
-                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => { resetInvite(); setShowInvite(true) }}
+                  className="flex items-center gap-2 text-sm font-medium text-white bg-[#1e3a5f] hover:bg-[#162d4a] px-4 py-2 rounded-lg mt-3 transition-colors">
+                  <UserPlus className="w-4 h-4" /> Convidar usuario
+                </button>
+              </Section>
+
+              {/* ── Modal de Convite ── */}
+              {showInvite && (
+                <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 pt-10 overflow-y-auto">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                      <div>
+                        <h2 className="text-base font-bold text-slate-800">Convidar usuario</h2>
+                        <p className="text-xs text-slate-500 mt-0.5">O convidado receberá um link para criar sua senha</p>
+                      </div>
+                      <button onClick={() => setShowInvite(false)}
+                        className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Se convite já foi enviado — tela de resultado */}
+                    {invResult ? (
+                      <div className="px-6 py-6 space-y-4">
+                        <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-xl">
+                          <CheckCircle className="w-6 h-6 text-green-500 shrink-0" />
+                          <div>
+                            <p className="text-sm font-semibold text-green-800">Convite criado!</p>
+                            <p className="text-xs text-green-600 mt-0.5">Compartilhe o link abaixo com {invName}</p>
+                          </div>
+                        </div>
+
+                        {/* Link do convite */}
+                        <div>
+                          <p className="text-xs font-medium text-slate-600 mb-1.5">Link do convite</p>
+                          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                            <p className="flex-1 text-xs text-slate-600 truncate font-mono">{invResult.url}</p>
+                            <button onClick={() => copyToClipboard(invResult.url, 'url')}
+                              className="shrink-0 flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                              {invCopied === 'url' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                              {invCopied === 'url' ? 'Copiado!' : 'Copiar'}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Senha temporária (se gerada) */}
+                        {invResult.temp_password && (
+                          <div>
+                            <p className="text-xs font-medium text-slate-600 mb-1.5">Senha temporária</p>
+                            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                              <p className="flex-1 text-sm font-mono font-bold text-amber-800 tracking-widest">
+                                {invResult.temp_password}
+                              </p>
+                              <button onClick={() => copyToClipboard(invResult.temp_password!, 'pw')}
+                                className="shrink-0 flex items-center gap-1.5 text-xs text-amber-700 hover:text-amber-900 font-medium">
+                                {invCopied === 'pw' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                                {invCopied === 'pw' ? 'Copiado!' : 'Copiar'}
+                              </button>
+                            </div>
+                            <p className="text-[10px] text-amber-600 mt-1">
+                              ⚠ Guarde esta senha agora — não será exibida novamente. O usuario será obrigado a trocá-la no primeiro acesso.
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="flex gap-2 pt-2">
+                          <button onClick={() => { resetInvite() }}
+                            className="flex-1 py-2 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
+                            Novo convite
+                          </button>
+                          <button onClick={() => { setShowInvite(false); resetInvite() }}
+                            className="flex-1 py-2 text-xs font-semibold text-white bg-[#1e3a5f] hover:bg-[#162d4a] rounded-lg transition-colors">
+                            Fechar
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Formulário */
+                      <div className="px-6 py-5 space-y-4">
+                        {invErrors._geral && (
+                          <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-red-600">
+                            {invErrors._geral}
+                          </div>
+                        )}
+
+                        {/* Nome + E-mail */}
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-xs font-medium text-slate-600">Nome completo <span className="text-red-500">*</span></label>
+                            <input
+                              className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400"
+                              value={invName} onChange={e => setInvName(e.target.value)}
+                              placeholder="Nome do usuario" />
+                            {invErrors.name && <p className="text-[10px] text-red-500">{invErrors.name}</p>}
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-xs font-medium text-slate-600">E-mail <span className="text-red-500">*</span></label>
+                            <input
+                              className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400"
+                              type="email" value={invEmail} onChange={e => setInvEmail(e.target.value)}
+                              placeholder="email@dominio.com" />
+                            {invErrors.email && <p className="text-[10px] text-red-500">{invErrors.email}</p>}
+                          </div>
+                        </div>
+
+                        {/* Role */}
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-medium text-slate-600">Perfil de acesso</label>
+                          <div className="flex gap-2 flex-wrap">
+                            {(Object.entries(ROLE_LABELS) as [AppUser['role'], string][]).map(([r, label]) => (
+                              <button key={r} onClick={() => setInvRole(r)}
+                                className={cn(
+                                  'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border',
+                                  invRole === r
+                                    ? cn(ROLE_COLORS[r], 'border-transparent')
+                                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                )}>
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Opções */}
+                        <div className="space-y-3 bg-slate-50 rounded-xl p-4">
+                          <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Opções de acesso</p>
+
+                          {/* Ativar automaticamente */}
+                          <label className="flex items-center justify-between cursor-pointer">
+                            <div>
+                              <p className="text-sm font-medium text-slate-700">Ativar automaticamente</p>
+                              <p className="text-xs text-slate-500">Conta ativa sem precisar de aprovação manual</p>
+                            </div>
+                            <button onClick={() => setInvAutoActivate(v => !v)}
+                              className={cn(
+                                'relative w-10 h-6 rounded-full transition-colors',
+                                invAutoActivate ? 'bg-blue-500' : 'bg-slate-300'
+                              )}>
+                              <span className={cn(
+                                'absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all',
+                                invAutoActivate ? 'left-5' : 'left-1'
+                              )} />
+                            </button>
+                          </label>
+
+                          {/* Senha temporária */}
+                          <label className="flex items-center justify-between cursor-pointer">
+                            <div>
+                              <p className="text-sm font-medium text-slate-700">Gerar senha temporária</p>
+                              <p className="text-xs text-slate-500">Cria a conta agora com senha que você compartilha</p>
+                            </div>
+                            <button onClick={() => setInvUseTempPw(v => !v)}
+                              className={cn(
+                                'relative w-10 h-6 rounded-full transition-colors',
+                                invUseTempPw ? 'bg-blue-500' : 'bg-slate-300'
+                              )}>
+                              <span className={cn(
+                                'absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all',
+                                invUseTempPw ? 'left-5' : 'left-1'
+                              )} />
+                            </button>
+                          </label>
+                        </div>
+
+                        {/* Mensagem */}
+                        <div className="space-y-2">
+                          <div className="flex gap-2">
+                            {[{v:'padrao',l:'Mensagem padrão'},{v:'custom',l:'Personalizar'}].map(o => (
+                              <button key={o.v} onClick={() => setInvMsgMode(o.v as 'padrao'|'custom')}
+                                className={cn(
+                                  'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border',
+                                  invMsgMode === o.v
+                                    ? 'bg-[#1e3a5f] text-white border-[#1e3a5f]'
+                                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                )}>
+                                {o.l}
+                              </button>
+                            ))}
+                          </div>
+
+                          {invMsgMode === 'padrao' ? (
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-500 italic leading-relaxed">
+                              Olá! Você foi convidado para acessar o sistema como <span className="font-semibold text-slate-700">{ROLE_LABELS[invRole]}</span>.
+                              Use o link do convite para configurar sua senha e começar a usar.
+                            </div>
+                          ) : (
+                            <textarea
+                              className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400 resize-none min-h-[80px]"
+                              value={invCustomMsg}
+                              onChange={e => setInvCustomMsg(e.target.value)}
+                              placeholder="Escreva uma mensagem personalizada para o convite..." />
+                          )}
+                        </div>
+
+                        <div className="flex gap-2 pt-1">
+                          <button onClick={() => setShowInvite(false)}
+                            className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
+                            Cancelar
+                          </button>
+                          <button onClick={sendInvite} disabled={invSaving}
+                            className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold text-white bg-[#1e3a5f] hover:bg-[#162d4a] rounded-lg transition-colors disabled:opacity-60">
+                            {invSaving
+                              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Enviando…</>
+                              : <><Send className="w-3.5 h-3.5" /> Enviar convite</>}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-              <button className="flex items-center gap-2 text-sm text-blue-600 hover:underline mt-1">
-                + Convidar usuario
-              </button>
-            </Section>
+                </div>
+              )}
+            </>
           )}
 
           {/* ── Permissoes — SIMPLE READ/WRITE TOGGLES ── */}
