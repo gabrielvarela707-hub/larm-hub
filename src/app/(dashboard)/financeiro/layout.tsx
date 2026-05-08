@@ -91,7 +91,7 @@ export default function FinanceiroLayout({ children }: { children: React.ReactNo
 
               {/* Links */}
               {group.items.map(item => {
-                const active = isActive(item.href, item.exact)
+                const active = isActive(item.href, (item as { href: string; label: string; icon: React.ElementType; exact?: boolean }).exact)
                 const Icon = item.icon
                 return (
                   <Link
