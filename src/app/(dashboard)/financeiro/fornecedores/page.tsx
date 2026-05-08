@@ -99,8 +99,8 @@ export default function FornecedoresPage() {
       }
       closeForm()
       load()
-    } catch (err: any) {
-      const msg = err.response?.data?.message || 'Erro ao salvar'
+    } catch (err: unknown) {
+      const msg = (err instanceof Error ? err.message : 'Erro ao salvar') || 'Erro ao salvar'
       setErrors({ _geral: msg })
     } finally {
       setSaving(false)

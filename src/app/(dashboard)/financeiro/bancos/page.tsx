@@ -111,8 +111,8 @@ export default function BancosPage() {
       }
       closeForm()
       load()
-    } catch (err: any) {
-      setErrors({ _geral: err.response?.data?.message || 'Erro ao salvar' })
+    } catch (err: unknown) {
+      setErrors({ _geral: (err instanceof Error ? err.message : 'Erro ao salvar') || 'Erro ao salvar' })
     } finally {
       setSaving(false)
     }
