@@ -1,242 +1,407 @@
 'use client'
 
-import { useState } from 'react'
-import { Building2, Shield, FileText, Landmark, Plus, Filter, Search, ChevronDown, AlertCircle, CheckCircle2, Clock, Calendar, DollarSign } from 'lucide-react'
-import { cn, formatCurrency } from '@/lib/utils'
+import { useState, useEffect, useCallback } from 'react'
+import { Plus, Search, Pencil, X, Check, ChevronLeft, ChevronRight, Calendar, DollarSign } from 'lucide-react'
+import { apiClient } from '@/lib/auth-store'
+import { cn } from '@/lib/utils'
 
-// ─── Types ──────────────────────────────────────────────────────────────────
-type StatusPagto = 'pago' | 'pendente' | 'vencido'
-type CategoriaPagto = 'iptu' | 'cartorio' | 'seguranca' | 'taxa' | 'outros'
+interface Fornecedor { id: number; razao_social: string; empresa: string }
+interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null }
+interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
+interface Parcela     { id?: number; numero: number; valor: number; vencimento: string; status: string }
 
-interface ContaAPagar {
-  id: string
-  descricao: string
-  categoria: CategoriaPagto
-  valor: number
-  vencimento: string
-  status: StatusPagto
-  empreendimento: string
-  referencia?: string
+interface Lancamento {
+  id: number; empresa: string; historico: string; produto_servico: string | null
+  nf_doc: string | null; dt_emissao: string | null; valor_total: number
+  qtd_parcelas: number; status: string; conta_contabil: string | null
+  descricao_conta: string | null; centro_custo: string | null; obs: string | null
+  fornecedor_nome: string | null; banco_nome: string | null; proximo_venc: string | null
 }
 
-// ─── Mock data ───────────────────────────────────────────────────────────────
-const CONTAS: ContaAPagar[] = [
-  { id: '1',  descricao: 'IPTU – Lote 01/Quadra A',        categoria: 'iptu',      valor: 1240.00,  vencimento: '2026-04-10', status: 'vencido',  empreendimento: 'Santa Clara', referencia: 'IPTU-2026-001' },
-  { id: '2',  descricao: 'IPTU – Lote 02/Quadra A',        categoria: 'iptu',      valor: 1240.00,  vencimento: '2026-04-10', status: 'vencido',  empreendimento: 'Santa Clara', referencia: 'IPTU-2026-002' },
-  { id: '3',  descricao: 'IPTU – Área Comum Central',      categoria: 'iptu',      valor: 3850.00,  vencimento: '2026-04-30', status: 'pendente', empreendimento: 'Santa Clara', referencia: 'IPTU-2026-AC' },
-  { id: '4',  descricao: 'Registro Escritura – Lote 05',   categoria: 'cartorio',  valor: 890.50,   vencimento: '2026-04-15', status: 'vencido',  empreendimento: 'Santa Clara', referencia: 'REG-2026-005' },
-  { id: '5',  descricao: 'Averbação – Quadra B',           categoria: 'cartorio',  valor: 1450.00,  vencimento: '2026-04-22', status: 'pendente', empreendimento: 'Santa Clara', referencia: 'AV-2026-QB' },
-  { id: '6',  descricao: 'Certidão Negativa – Abril',      categoria: 'cartorio',  valor: 215.00,   vencimento: '2026-04-28', status: 'pendente', empreendimento: 'Santa Clara', referencia: 'CN-ABR-2026' },
-  { id: '7',  descricao: 'Contrato Segurança Patrimonial', categoria: 'seguranca', valor: 4200.00,  vencimento: '2026-04-05', status: 'pago',     empreendimento: 'Santa Clara', referencia: 'SEG-ABR-2026' },
-  { id: '8',  descricao: 'Monitoramento Eletrônico – Abr', categoria: 'seguranca', valor: 680.00,   vencimento: '2026-04-05', status: 'pago',     empreendimento: 'Santa Clara', referencia: 'MON-ABR-2026' },
-  { id: '9',  descricao: 'Taxa de Condomínio – Abril',     categoria: 'taxa',      valor: 12800.00, vencimento: '2026-04-10', status: 'pago',     empreendimento: 'Santa Clara', referencia: 'COND-ABR-2026' },
-  { id: '10', descricao: 'Taxa de Manutenção – Maio',      categoria: 'taxa',      valor: 12800.00, vencimento: '2026-05-10', status: 'pendente', empreendimento: 'Santa Clara', referencia: 'MANUT-MAI-2026' },
-  { id: '11', descricao: 'Taxa de Administração – Abril',  categoria: 'taxa',      valor: 3500.00,  vencimento: '2026-04-15', status: 'pago',     empreendimento: 'Santa Clara', referencia: 'ADM-ABR-2026' },
-  { id: '12', descricao: 'IPTU – Lote 07/Quadra C',        categoria: 'iptu',      valor: 1240.00,  vencimento: '2026-05-10', status: 'pendente', empreendimento: 'Santa Clara', referencia: 'IPTU-2026-007' },
-]
-
-// ─── Config ──────────────────────────────────────────────────────────────────
-const CATEGORIAS = [
-  { id: 'all',       label: 'Todas',       icon: Filter,    cor: 'text-slate-500' },
-  { id: 'iptu',      label: 'IPTU',        icon: Landmark,  cor: 'text-blue-600' },
-  { id: 'cartorio',  label: 'Cartório',    icon: FileText,  cor: 'text-purple-600' },
-  { id: 'seguranca', label: 'Segurança',   icon: Shield,    cor: 'text-orange-500' },
-  { id: 'taxa',      label: 'Taxas',       icon: Building2, cor: 'text-emerald-600' },
-]
-
-const STATUS_CONFIG: Record<StatusPagto, { label: string; cls: string; icon: React.FC<{ className?: string }> }> = {
-  pago:     { label: 'Pago',     cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: CheckCircle2 },
-  pendente: { label: 'Pendente', cls: 'bg-amber-50 text-amber-700 border-amber-200',       icon: Clock },
-  vencido:  { label: 'Vencido',  cls: 'bg-red-50 text-red-700 border-red-200',             icon: AlertCircle },
+const EMPRESAS = ['LARM', 'LUCKY', 'LM', 'HOLDING', 'RM']
+const STATUS_COLORS: Record<string, string> = {
+  pendente: 'bg-amber-100 text-amber-700',
+  pago:     'bg-green-100 text-green-700',
+  vencido:  'bg-red-100 text-red-700',
+  cancelado:'bg-slate-100 text-slate-500',
 }
 
-const CATEGORIA_ICON: Record<CategoriaPagto, React.FC<{ className?: string }>> = {
-  iptu:      Landmark,
-  cartorio:  FileText,
-  seguranca: Shield,
-  taxa:      Building2,
-  outros:    DollarSign,
+const R$ = (v: number | null | undefined) =>
+  (v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+const fmtDate = (d: string | null | undefined) => {
+  if (!d) return '—'
+  try { return new Date(d).toLocaleDateString('pt-BR') } catch { return String(d) }
 }
 
-const CATEGORIA_COR: Record<CategoriaPagto, string> = {
-  iptu:      'bg-blue-100 text-blue-600',
-  cartorio:  'bg-purple-100 text-purple-600',
-  seguranca: 'bg-orange-100 text-orange-500',
-  taxa:      'bg-emerald-100 text-emerald-600',
-  outros:    'bg-slate-100 text-slate-500',
-}
+export default function PagarPage() {
+  const [lista,     setLista]     = useState<Lancamento[]>([])
+  const [total,     setTotal]     = useState(0)
+  const [totalVlr,  setTotalVlr]  = useState(0)
+  const [loading,   setLoading]   = useState(false)
+  const [saving,    setSaving]    = useState(false)
+  const [showForm,  setShowForm]  = useState(false)
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-function fmtDate(s: string) {
-  const [y, m, d] = s.split('-')
-  return `${d}/${m}/${y}`
-}
+  // Listas para selects
+  const [fornecedores, setFornecedores] = useState<Fornecedor[]>([])
+  const [bancos,       setBancos]       = useState<BancoConta[]>([])
+  const [plano,        setPlano]        = useState<PlanoConta[]>([])
 
-// ─── Component ───────────────────────────────────────────────────────────────
-export default function ContasAPagarPage() {
-  const [catFiltro, setCatFiltro] = useState<string>('all')
-  const [statusFiltro, setStatusFiltro] = useState<string>('all')
-  const [busca, setBusca] = useState('')
+  // Filtros
+  const [fEmpresa, setFEmpresa] = useState('')
+  const [fStatus,  setFStatus]  = useState('')
+  const [fBusca,   setFBusca]   = useState('')
 
-  const filtradas = CONTAS.filter(c => {
-    const okCat    = catFiltro === 'all' || c.categoria === catFiltro
-    const okStatus = statusFiltro === 'all' || c.status === statusFiltro
-    const okBusca  = c.descricao.toLowerCase().includes(busca.toLowerCase()) ||
-                     (c.referencia ?? '').toLowerCase().includes(busca.toLowerCase())
-    return okCat && okStatus && okBusca
-  })
+  // Form state
+  const [fEmp,     setFEmp]     = useState('')
+  const [fForn,    setFForn]    = useState('')
+  const [fBanco,   setFBanco]   = useState('')
+  const [fConta,   setFConta]   = useState('')
+  const [fHistorico, setFHistorico] = useState('')
+  const [fProduto, setFProduto] = useState('')
+  const [fNF,      setFNF]      = useState('')
+  const [fEmissao, setFEmissao] = useState(new Date().toISOString().split('T')[0])
+  const [fValor,   setFValor]   = useState('')
+  const [fNParc,   setFNParc]   = useState(1)
+  const [fCC,      setFCC]      = useState('')
+  const [fObs,     setFObs]     = useState('')
+  const [parcelas, setParcelas] = useState<Parcela[]>([])
+  const [errors,   setErrors]   = useState<Record<string, string>>({})
 
-  const totalPagar   = CONTAS.filter(c => c.status !== 'pago').reduce((s, c) => s + c.valor, 0)
-  const totalVencido = CONTAS.filter(c => c.status === 'vencido').reduce((s, c) => s + c.valor, 0)
-  const totalPago    = CONTAS.filter(c => c.status === 'pago').reduce((s, c) => s + c.valor, 0)
-  const totalPendente= CONTAS.filter(c => c.status === 'pendente').reduce((s, c) => s + c.valor, 0)
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const params: Record<string, string> = {}
+      if (fEmpresa) params.empresa = fEmpresa
+      if (fStatus)  params.status  = fStatus
+      if (fBusca)   params.busca   = fBusca
+      const r = await apiClient.get('/financeiro/lancamentos-cp', { params })
+      setLista(r.data.data)
+      setTotal(r.data.total)
+      setTotalVlr(r.data.total_valor)
+    } catch { }
+    finally { setLoading(false) }
+  }, [fEmpresa, fStatus, fBusca])
+
+  useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    Promise.all([
+      apiClient.get('/financeiro/fornecedores/select'),
+      apiClient.get('/financeiro/bancos/select'),
+      apiClient.get('/financeiro/plano-contas'),
+    ]).then(([f, b, p]) => {
+      setFornecedores(f.data.data)
+      setBancos(b.data.data)
+      setPlano(p.data.data.filter((c: PlanoConta) => c.tipo === 'A'))
+    }).catch(() => {})
+  }, [])
+
+  // Recalcula parcelas ao mudar valor ou nparcs
+  useEffect(() => {
+    const vlr = parseFloat(fValor) || 0
+    const n   = fNParc || 1
+    if (vlr <= 0) { setParcelas([]); return }
+    const base = new Date(fEmissao || new Date())
+    const ps: Parcela[] = Array.from({ length: n }, (_, i) => {
+      const d = new Date(base)
+      d.setMonth(d.getMonth() + i + 1)
+      return {
+        numero: i + 1,
+        valor: parseFloat((vlr / n).toFixed(2)),
+        vencimento: d.toISOString().split('T')[0],
+        status: 'pendente',
+      }
+    })
+    setParcelas(ps)
+  }, [fValor, fNParc, fEmissao])
+
+  function updateParcela(i: number, key: keyof Parcela, val: string | number) {
+    setParcelas(p => p.map((x, idx) => idx === i ? { ...x, [key]: val } : x))
+  }
+
+  function openNew() { setShowForm(true); setErrors({}) }
+  function closeForm() {
+    setShowForm(false)
+    setFEmp(''); setFForn(''); setFBanco(''); setFConta(''); setFHistorico('')
+    setFProduto(''); setFNF(''); setFValor(''); setFNParc(1); setFCC(''); setFObs('')
+    setParcelas([]); setErrors({})
+  }
+
+  function validate() {
+    const e: Record<string, string> = {}
+    if (!fEmp)       e.empresa   = 'Obrigatório'
+    if (!fHistorico) e.historico = 'Obrigatório'
+    if (!fValor || parseFloat(fValor) <= 0) e.valor = 'Informe um valor válido'
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
+
+  async function save() {
+    if (!validate()) return
+    setSaving(true)
+    try {
+      const contaObj = plano.find(p => p.codigo === fConta)
+      await apiClient.post('/financeiro/lancamentos-cp', {
+        empresa:         fEmp,
+        fornecedor_id:   fForn   || null,
+        banco_conta_id:  fBanco  || null,
+        conta_contabil:  fConta  || null,
+        descricao_conta: contaObj?.descricao || null,
+        historico:       fHistorico,
+        produto_servico: fProduto || null,
+        nf_doc:          fNF      || null,
+        dt_emissao:      fEmissao || null,
+        valor_total:     parseFloat(fValor),
+        qtd_parcelas:    fNParc,
+        centro_custo:    fCC      || null,
+        obs:             fObs     || null,
+        parcelas,
+      })
+      closeForm()
+      load()
+    } catch (err: any) {
+      setErrors({ _geral: err.response?.data?.message || 'Erro ao salvar' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const inp = 'w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100'
+  const F = ({ label, name, required, children }: { label: string; name: string; required?: boolean; children: React.ReactNode }) => (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-medium text-slate-600">{label}{required && <span className="text-red-500 ml-0.5">*</span>}</label>
+      {children}
+      {errors[name] && <p className="text-[10px] text-red-500">{errors[name]}</p>}
+    </div>
+  )
 
   return (
-    <div className="space-y-6 animate-fade-in">
-
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">Contas a Pagar</h1>
-          <p className="text-sm text-slate-500 mt-0.5">IPTU · Cartório · Segurança · Taxas</p>
+          <h1 className="text-xl font-bold text-slate-800">Contas a Pagar</h1>
+          <p className="text-sm text-slate-500 mt-0.5">{total} lançamentos · {R$(totalVlr)} em aberto</p>
         </div>
-        <button className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors">
-          <Plus className="w-4 h-4" /> Nova Conta
+        <button onClick={openNew}
+          className="flex items-center gap-2 px-4 py-2 bg-[#1e3a5f] hover:bg-[#162d4a] text-white text-xs font-semibold rounded-lg transition-colors">
+          <Plus className="w-3.5 h-3.5" /> Novo Lançamento
         </button>
       </div>
 
-      {/* ── Cards de resumo ────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: 'Total a Pagar',  valor: totalPagar,   cor: 'text-slate-900', bg: 'bg-slate-50',   borda: 'border-slate-200', icon: DollarSign },
-          { label: 'Vencidos',       valor: totalVencido, cor: 'text-red-600',   bg: 'bg-red-50',     borda: 'border-red-100',   icon: AlertCircle },
-          { label: 'A Vencer',       valor: totalPendente,cor: 'text-amber-600', bg: 'bg-amber-50',   borda: 'border-amber-100', icon: Clock },
-          { label: 'Pagos (mês)',    valor: totalPago,    cor: 'text-emerald-600',bg:'bg-emerald-50',  borda: 'border-emerald-100',icon: CheckCircle2 },
-        ].map(c => (
-          <div key={c.label} className={cn('rounded-2xl border p-4', c.bg, c.borda)}>
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs text-slate-500 font-medium">{c.label}</p>
-              <c.icon className={cn('w-4 h-4', c.cor)} />
-            </div>
-            <p className={cn('text-xl font-semibold', c.cor)}>
-              {formatCurrency(c.valor)}
-            </p>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Filtros ────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
-        <div className="flex flex-wrap gap-2">
-          {CATEGORIAS.map(cat => (
-            <button key={cat.id}
-              onClick={() => setCatFiltro(cat.id)}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border',
-                catFiltro === cat.id
-                  ? 'bg-slate-900 text-white border-slate-900'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-              )}>
-              <cat.icon className="w-3.5 h-3.5" />
-              {cat.label}
-            </button>
-          ))}
-
-          <div className="ml-auto flex gap-2">
-            {(['all','pendente','vencido','pago'] as const).map(s => (
-              <button key={s}
-                onClick={() => setStatusFiltro(s)}
-                className={cn(
-                  'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border',
-                  statusFiltro === s
-                    ? 'bg-slate-900 text-white border-slate-900'
-                    : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
-                )}>
-                {s === 'all' ? 'Todos' : s.charAt(0).toUpperCase() + s.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="relative">
+      {/* Filtros */}
+      <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4 py-3 flex flex-wrap gap-3 items-center">
+        <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input
-            type="text"
-            value={busca}
-            onChange={e => setBusca(e.target.value)}
-            placeholder="Buscar por descrição ou referência…"
-            className="w-full pl-9 pr-4 py-2 text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 transition-colors"
-          />
+          <input value={fBusca} onChange={e => setFBusca(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && load()}
+            placeholder="Fornecedor ou histórico…"
+            className="pl-9 pr-4 py-2 w-full text-sm bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-blue-400" />
+        </div>
+        <select value={fEmpresa} onChange={e => setFEmpresa(e.target.value)}
+          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700">
+          <option value="">Todas empresas</option>
+          {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
+        </select>
+        <select value={fStatus} onChange={e => setFStatus(e.target.value)}
+          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700">
+          <option value="">Todos status</option>
+          <option value="pendente">Pendente</option>
+          <option value="pago">Pago</option>
+          <option value="vencido">Vencido</option>
+        </select>
+      </div>
+
+      {/* Tabela */}
+      <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-[#0d1b2a] text-white">
+                {['Empresa','Fornecedor','Histórico / Produto','Conta','Valor Total','Parcelas','Próx. Venc.','Status'].map(h => (
+                  <th key={h} className="text-left px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading && [...Array(6)].map((_,i) => (
+                <tr key={i} className="border-b border-slate-50">
+                  {[...Array(8)].map((_,j) => (
+                    <td key={j} className="px-3 py-2.5">
+                      <div className="h-3 bg-slate-100 rounded animate-pulse" style={{ width: `${50+((i*11+j*9)%40)}%` }} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              {!loading && lista.length === 0 && (
+                <tr><td colSpan={8} className="text-center text-slate-400 py-12 text-sm">
+                  Nenhum lançamento encontrado
+                </td></tr>
+              )}
+              {!loading && lista.map(l => (
+                <tr key={l.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                  <td className="px-3 py-2.5">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 font-medium">{l.empresa}</span>
+                  </td>
+                  <td className="px-3 py-2 max-w-[160px]">
+                    <p className="font-medium text-slate-700 truncate">{l.fornecedor_nome || '—'}</p>
+                    {l.banco_nome && <p className="text-slate-400 text-[10px]">{l.banco_nome}</p>}
+                  </td>
+                  <td className="px-3 py-2 max-w-[200px]">
+                    <p className="text-slate-700 truncate">{l.historico}</p>
+                    {l.produto_servico && <p className="text-slate-400 text-[10px] truncate">{l.produto_servico}</p>}
+                  </td>
+                  <td className="px-3 py-2 text-slate-500 text-[10px]">
+                    {l.conta_contabil ? `${l.conta_contabil} – ${l.descricao_conta || ''}` : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-800">{R$(l.valor_total)}</td>
+                  <td className="px-3 py-2 text-center text-slate-500">{l.qtd_parcelas}x</td>
+                  <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.proximo_venc)}</td>
+                  <td className="px-3 py-2">
+                    <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', STATUS_COLORS[l.status] || STATUS_COLORS.cancelado)}>
+                      {l.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* ── Tabela ─────────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-          <p className="text-sm font-medium text-slate-700">
-            {filtradas.length} {filtradas.length === 1 ? 'conta' : 'contas'}
-          </p>
-          <button className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700 transition-colors">
-            <Calendar className="w-3.5 h-3.5" />
-            Vencimento <ChevronDown className="w-3 h-3" />
-          </button>
-        </div>
-
-        <div className="divide-y divide-slate-100">
-          {filtradas.length === 0 && (
-            <div className="py-16 text-center text-slate-400 text-sm">
-              Nenhuma conta encontrada com os filtros selecionados.
-            </div>
-          )}
-          {filtradas.map(conta => {
-            const StatusIcon = STATUS_CONFIG[conta.status].icon
-            const CatIcon = CATEGORIA_ICON[conta.categoria]
-            return (
-              <div key={conta.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-slate-50 transition-colors group">
-                {/* Ícone categoria */}
-                <div className={cn('w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0', CATEGORIA_COR[conta.categoria])}>
-                  <CatIcon className="w-4 h-4" />
-                </div>
-
-                {/* Descrição + ref */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-slate-900 truncate">{conta.descricao}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">{conta.referencia} · {conta.empreendimento}</p>
-                </div>
-
-                {/* Vencimento */}
-                <div className="text-right hidden sm:block">
-                  <p className="text-xs text-slate-500">Vencimento</p>
-                  <p className={cn('text-sm font-medium', conta.status === 'vencido' ? 'text-red-600' : 'text-slate-700')}>
-                    {fmtDate(conta.vencimento)}
-                  </p>
-                </div>
-
-                {/* Valor */}
-                <div className="text-right w-28 flex-shrink-0">
-                  <p className="text-sm font-semibold text-slate-900">{formatCurrency(conta.valor)}</p>
-                </div>
-
-                {/* Status badge */}
-                <div className="flex-shrink-0">
-                  <span className={cn(
-                    'flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full border',
-                    STATUS_CONFIG[conta.status].cls
-                  )}>
-                    <StatusIcon className="w-3 h-3" />
-                    {STATUS_CONFIG[conta.status].label}
-                  </span>
-                </div>
-
-                {/* Ação */}
-                <button className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-blue-600 font-medium px-3 py-1.5 rounded-lg hover:bg-blue-50">
-                  {conta.status === 'pago' ? 'Ver' : 'Pagar'}
-                </button>
+      {/* Modal Form */}
+      {showForm && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 pt-6 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <div>
+                <h2 className="text-base font-bold text-slate-800">Novo Lançamento — Contas a Pagar</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Preencha os dados do lançamento e suas parcelas</p>
               </div>
-            )
-          })}
+              <button onClick={closeForm} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-5 max-h-[75vh] overflow-y-auto">
+              {errors._geral && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">{errors._geral}</div>
+              )}
+
+              {/* Dados principais */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Dados do Lançamento</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <F label="Empresa" name="empresa" required>
+                    <select className={inp} value={fEmp} onChange={e => setFEmp(e.target.value)}>
+                      <option value="">Selecione</option>
+                      {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
+                    </select>
+                  </F>
+                  <F label="Fornecedor" name="fornecedor_id">
+                    <select className={inp} value={fForn} onChange={e => setFForn(e.target.value)}>
+                      <option value="">Selecione (opcional)</option>
+                      {fornecedores
+                        .filter(f => !fEmp || f.empresa === fEmp || f.empresa === 'TODOS')
+                        .map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
+                    </select>
+                  </F>
+                  <div className="col-span-2">
+                    <F label="Histórico" name="historico" required>
+                      <input className={inp} value={fHistorico} onChange={e => setFHistorico(e.target.value)}
+                        placeholder="Descrição do lançamento" />
+                    </F>
+                  </div>
+                  <F label="Produto / Serviço" name="produto_servico">
+                    <input className={inp} value={fProduto} onChange={e => setFProduto(e.target.value)}
+                      placeholder="Descrição do produto ou serviço" />
+                  </F>
+                  <F label="NF / Documento" name="nf_doc">
+                    <input className={inp} value={fNF} onChange={e => setFNF(e.target.value)} placeholder="Número da NF" />
+                  </F>
+                  <F label="Plano de Contas" name="conta_contabil">
+                    <select className={inp} value={fConta} onChange={e => setFConta(e.target.value)}>
+                      <option value="">Selecione</option>
+                      {plano.map(c => <option key={c.codigo} value={c.codigo}>{c.codigo} – {c.descricao}</option>)}
+                    </select>
+                  </F>
+                  <F label="Banco para Pagamento" name="banco_conta_id">
+                    <select className={inp} value={fBanco} onChange={e => setFBanco(e.target.value)}>
+                      <option value="">Selecione</option>
+                      {bancos
+                        .filter(b => !fEmp || b.empresa === fEmp)
+                        .map(b => <option key={b.id} value={b.id}>{b.empresa} – {b.banco_nome} {b.agencia ? `ag.${b.agencia}` : ''} {b.conta || ''}</option>)}
+                    </select>
+                  </F>
+                  <F label="Data de Emissão" name="dt_emissao">
+                    <input className={inp} type="date" value={fEmissao} onChange={e => setFEmissao(e.target.value)} />
+                  </F>
+                  <F label="Centro de Custo" name="centro_custo">
+                    <input className={inp} value={fCC} onChange={e => setFCC(e.target.value)} placeholder="Opcional" />
+                  </F>
+                </div>
+              </div>
+
+              {/* Valor e parcelas */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Valor e Parcelas</p>
+                <div className="grid grid-cols-2 gap-3 mb-4">
+                  <F label="Valor Total (R$)" name="valor" required>
+                    <input className={inp} type="number" step="0.01" min="0"
+                      value={fValor} onChange={e => setFValor(e.target.value)} placeholder="0,00" />
+                  </F>
+                  <F label="Número de Parcelas" name="qtd_parcelas">
+                    <select className={inp} value={fNParc} onChange={e => setFNParc(parseInt(e.target.value))}>
+                      {[1,2,3,4,5,6,7,8,9,10,11,12,18,24,36].map(n => (
+                        <option key={n} value={n}>{n === 1 ? '1 (à vista)' : `${n}x`}</option>
+                      ))}
+                    </select>
+                  </F>
+                </div>
+
+                {parcelas.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium text-slate-600 mb-2">Parcelas e Vencimentos</p>
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {parcelas.map((p, i) => (
+                        <div key={i} className="flex items-center gap-3 bg-slate-50 rounded-lg px-3 py-2">
+                          <span className="text-[10px] font-semibold text-slate-500 w-14">{i+1}/{parcelas.length}</span>
+                          <div className="flex-1">
+                            <input type="date" value={p.vencimento}
+                              onChange={e => updateParcela(i, 'vencimento', e.target.value)}
+                              className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full" />
+                          </div>
+                          <div className="w-28">
+                            <input type="number" step="0.01" value={p.valor}
+                              onChange={e => updateParcela(i, 'valor', parseFloat(e.target.value))}
+                              className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Obs */}
+              <F label="Observações" name="obs">
+                <textarea className={cn(inp, 'min-h-[56px] resize-none')}
+                  value={fObs} onChange={e => setFObs(e.target.value)} placeholder="Notas adicionais..." />
+              </F>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
+              <button onClick={closeForm} className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
+                Cancelar
+              </button>
+              <button onClick={save} disabled={saving}
+                className="flex items-center gap-2 px-5 py-2 text-xs font-semibold bg-[#1e3a5f] hover:bg-[#162d4a] text-white rounded-lg disabled:opacity-60">
+                {saving ? 'Salvando…' : <><Check className="w-3.5 h-3.5" /> Salvar Lançamento</>}
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

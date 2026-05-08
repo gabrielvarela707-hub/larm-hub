@@ -1,413 +1,355 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { z } from 'zod'
-import { toast } from 'react-hot-toast'
-import {
-  Plus, Search, Pencil, Trash2, Building2, User, ChevronLeft, ChevronRight
-} from 'lucide-react'
-import {
-  getFornecedores, createFornecedor, updateFornecedor, deleteFornecedor,
-  getPlanoContas, type Fornecedor, type PlanoContas
-} from '@/lib/api/financeiro'
+import { Plus, Search, Pencil, X, Building2, User, ChevronDown, Check } from 'lucide-react'
+import { apiClient } from '@/lib/auth-store'
+import { cn } from '@/lib/utils'
 
-// ─── Schema ───────────────────────────────────────────────────────────────────
-const schema = z.object({
-  tipo_pessoa:    z.enum(['PJ', 'PF']),
-  cnpj_cpf:       z.string().min(11, 'Obrigatório'),
-  razao_social:   z.string().min(3, 'Obrigatório'),
-  nome_fantasia:  z.string().optional(),
-  inscricao_est:  z.string().optional(),
-  categoria:      z.string().optional(),
-  plano_contas_id: z.coerce.number().optional(),
-  // Endereço
-  cep:        z.string().optional(),
-  logradouro: z.string().optional(),
-  numero:     z.string().optional(),
-  complemento: z.string().optional(),
-  bairro:     z.string().optional(),
-  cidade:     z.string().optional(),
-  estado:     z.string().optional(),
-  // Contato
-  telefone:     z.string().optional(),
-  whatsapp:     z.string().optional(),
-  email:        z.string().email('E-mail inválido').optional().or(z.literal('')),
-  site:         z.string().optional(),
-  nome_contato: z.string().optional(),
-  // Bancário
-  banco_pag:      z.string().optional(),
-  agencia_pag:    z.string().optional(),
-  conta_pag:      z.string().optional(),
-  tipo_conta_pag: z.enum(['CC', 'CP']).optional(),
-  pix_chave:      z.string().optional(),
-  pix_tipo:       z.string().optional(),
-  // Config
-  ativo:         z.boolean().default(true),
-  bloquear_lanc: z.boolean().default(false),
-  requer_aprova: z.boolean().default(false),
-  limite_aprova: z.coerce.number().default(5000),
-  obs:           z.string().optional(),
-})
-type FormData = z.infer<typeof schema>
+interface Fornecedor {
+  id: number; razao_social: string; nome_fantasia: string | null
+  cnpj_cpf: string | null; tipo_pessoa: string; categoria: string | null
+  email: string | null; telefone: string | null; empresa: string
+  cep: string | null; endereco: string | null; cidade_uf: string | null
+  banco_nome: string | null; agencia: string | null; conta: string | null
+  tipo_conta: string; chave_pix: string | null; obs: string | null; ativo: boolean
+}
 
-// ─── Componente ───────────────────────────────────────────────────────────────
+const EMPTY: Partial<Fornecedor> = {
+  razao_social: '', nome_fantasia: '', cnpj_cpf: '', tipo_pessoa: 'PJ', categoria: '',
+  email: '', telefone: '', empresa: 'TODOS', cep: '', endereco: '', cidade_uf: '',
+  banco_nome: '', agencia: '', conta: '', tipo_conta: 'Corrente', chave_pix: '', obs: '', ativo: true,
+}
+
+const EMPRESAS = ['TODOS', 'LARM', 'LUCKY', 'LM', 'HOLDING', 'RM']
+const CATEGORIAS = ['Serviços', 'Materiais', 'Condomínio / Imóvel', 'Prestador de Serviços (PF)', 'Órgão Público', 'Outros']
+const BANCOS_BR = ['001 - Banco do Brasil', '033 - Santander', '104 - Caixa Econômica', '237 - Bradesco', '341 - Itaú', '707 - Daycoval', '260 - Nubank', 'Outro']
+
 export default function FornecedoresPage() {
-  const [tab, setTab]           = useState<'lista' | 'form'>('lista')
-  const [fornecedores, setList] = useState<Fornecedor[]>([])
-  const [planos, setPlanos]     = useState<PlanoContas[]>([])
-  const [loading, setLoading]   = useState(false)
-  const [editing, setEditing]   = useState<Fornecedor | null>(null)
-  const [busca, setBusca]       = useState('')
-  const [page, setPage]         = useState(1)
-  const [total, setTotal]       = useState(0)
-  const LIMIT = 20
+  const [lista,    setLista]    = useState<Fornecedor[]>([])
+  const [total,    setTotal]    = useState(0)
+  const [loading,  setLoading]  = useState(false)
+  const [saving,   setSaving]   = useState(false)
+  const [showForm, setShowForm] = useState(false)
+  const [editId,   setEditId]   = useState<number | null>(null)
+  const [form,     setForm]     = useState<Partial<Fornecedor>>(EMPTY)
+  const [errors,   setErrors]   = useState<Record<string, string>>({})
 
-  const { register, handleSubmit, reset, watch, formState: { errors } } = useForm<FormData>({
-    resolver: zodResolver(schema),
-    defaultValues: { tipo_pessoa: 'PJ', ativo: true, bloquear_lanc: false, requer_aprova: false, limite_aprova: 5000 },
-  })
+  const [fBusca,    setFBusca]    = useState('')
+  const [fEmpresa,  setFEmpresa]  = useState('')
+  const [fCategoria,setFCategoria]= useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await getFornecedores({ page, limit: LIMIT, busca: busca || undefined })
-      setList(res.data)
-      setTotal(res.pagination.total)
-    } finally {
-      setLoading(false)
-    }
-  }, [page, busca])
+      const params: Record<string, string> = {}
+      if (fBusca)     params.busca     = fBusca
+      if (fEmpresa)   params.empresa   = fEmpresa
+      if (fCategoria) params.categoria = fCategoria
+      const r = await apiClient.get('/financeiro/fornecedores', { params })
+      setLista(r.data.data)
+      setTotal(r.data.total)
+    } catch { }
+    finally { setLoading(false) }
+  }, [fBusca, fEmpresa, fCategoria])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { getPlanoContas().then(setPlanos) }, [])
 
-  const openNew = () => {
-    setEditing(null)
-    reset({ tipo_pessoa: 'PJ', ativo: true, bloquear_lanc: false, requer_aprova: false, limite_aprova: 5000 })
-    setTab('form')
+  function openNew() {
+    setEditId(null)
+    setForm(EMPTY)
+    setErrors({})
+    setShowForm(true)
   }
 
-  const openEdit = (f: Fornecedor) => {
-    setEditing(f)
-    reset(f as any)
-    setTab('form')
+  function openEdit(f: Fornecedor) {
+    setEditId(f.id)
+    setForm({ ...f })
+    setErrors({})
+    setShowForm(true)
   }
 
-  const onSubmit = async (values: FormData) => {
+  function closeForm() {
+    setShowForm(false)
+    setEditId(null)
+    setForm(EMPTY)
+    setErrors({})
+  }
+
+  function set(key: keyof Fornecedor, val: string | boolean) {
+    setForm(p => ({ ...p, [key]: val }))
+    if (errors[key]) setErrors(p => ({ ...p, [key]: '' }))
+  }
+
+  function validate() {
+    const e: Record<string, string> = {}
+    if (!form.razao_social?.trim()) e.razao_social = 'Obrigatório'
+    if (!form.empresa)              e.empresa      = 'Obrigatório'
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
+
+  async function save() {
+    if (!validate()) return
+    setSaving(true)
     try {
-      if (editing) {
-        await updateFornecedor(editing.id, values)
-        toast.success('Fornecedor atualizado!')
+      if (editId) {
+        await apiClient.put(`/financeiro/fornecedores/${editId}`, form)
       } else {
-        await createFornecedor(values)
-        toast.success('Fornecedor cadastrado!')
+        await apiClient.post('/financeiro/fornecedores', form)
       }
-      setTab('lista')
+      closeForm()
       load()
-    } catch (e: any) {
-      toast.error(e?.response?.data?.message || 'Erro ao salvar')
+    } catch (err: any) {
+      const msg = err.response?.data?.message || 'Erro ao salvar'
+      setErrors({ _geral: msg })
+    } finally {
+      setSaving(false)
     }
   }
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Desativar este fornecedor?')) return
-    await deleteFornecedor(id)
-    toast.success('Fornecedor desativado')
-    load()
+  async function toggleAtivo(f: Fornecedor) {
+    try {
+      await apiClient.put(`/financeiro/fornecedores/${f.id}`, { ...f, ativo: !f.ativo })
+      load()
+    } catch { }
   }
 
-  const pages = Math.ceil(total / LIMIT)
-
-  // Filtra planos analíticos (só tipo A)
-  const planosAnaliticos = planos.filter(p => p.tipo === 'A')
-
-  return (
-    <div className="p-6 space-y-4">
-      {/* Tabs */}
-      <div className="flex gap-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-1 w-fit">
-        {(['lista', 'form'] as const).map(t => (
-          <button
-            key={t}
-            onClick={() => t === 'lista' ? setTab('lista') : openNew()}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-              tab === t
-                ? 'bg-white dark:bg-zinc-700 shadow text-zinc-900 dark:text-white'
-                : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
-            }`}
-          >
-            {t === 'lista' ? 'Lista' : tab === 'form' && editing ? 'Editar' : 'Novo Cadastro'}
-          </button>
-        ))}
-      </div>
-
-      {/* ── LISTA ── */}
-      {tab === 'lista' && (
-        <>
-          <div className="flex gap-2 flex-wrap">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />
-              <input
-                className="pl-9 pr-3 py-2 w-full rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm outline-none focus:ring-2 focus:ring-amber-500"
-                placeholder="Buscar fornecedor..."
-                value={busca}
-                onChange={e => { setBusca(e.target.value); setPage(1) }}
-              />
-            </div>
-            <button
-              onClick={openNew}
-              className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium"
-            >
-              <Plus className="h-4 w-4" /> Novo
-            </button>
-          </div>
-
-          <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-zinc-50 dark:bg-zinc-800/60 text-zinc-500 text-xs uppercase tracking-wide">
-                  <th className="px-4 py-3 text-left">Razão Social / Nome</th>
-                  <th className="px-4 py-3 text-left">CNPJ / CPF</th>
-                  <th className="px-4 py-3 text-left">Tipo</th>
-                  <th className="px-4 py-3 text-left">Categoria</th>
-                  <th className="px-4 py-3 text-left">Telefone</th>
-                  <th className="px-4 py-3 text-left">Status</th>
-                  <th className="px-4 py-3 text-left">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr><td colSpan={7} className="text-center py-8 text-zinc-400">Carregando...</td></tr>
-                ) : fornecedores.length === 0 ? (
-                  <tr><td colSpan={7} className="text-center py-8 text-zinc-400">Nenhum fornecedor encontrado</td></tr>
-                ) : fornecedores.map(f => (
-                  <tr key={f.id} className="border-t border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                    <td className="px-4 py-3 font-medium">{f.razao_social}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-zinc-500">{f.cnpj_cpf}</td>
-                    <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
-                        f.tipo_pessoa === 'PJ'
-                          ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                          : 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-                      }`}>
-                        {f.tipo_pessoa === 'PJ' ? <Building2 className="h-3 w-3" /> : <User className="h-3 w-3" />}
-                        {f.tipo_pessoa}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-zinc-500 text-xs">{f.categoria || '—'}</td>
-                    <td className="px-4 py-3 text-zinc-500 text-xs">{f.telefone || '—'}</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                        f.ativo
-                          ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300'
-                          : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-                      }`}>
-                        {f.ativo ? 'Ativo' : 'Inativo'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1">
-                        <button onClick={() => openEdit(f)} className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded">
-                          <Pencil className="h-3.5 w-3.5 text-zinc-400" />
-                        </button>
-                        <button onClick={() => handleDelete(f.id)} className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded">
-                          <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Paginação */}
-          {pages > 1 && (
-            <div className="flex items-center justify-between text-sm text-zinc-500">
-              <span>{total} fornecedores</span>
-              <div className="flex gap-1">
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
-                  className="p-1.5 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40 hover:bg-zinc-50">
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                {Array.from({ length: Math.min(5, pages) }, (_, i) => i + 1).map(p => (
-                  <button key={p} onClick={() => setPage(p)}
-                    className={`w-8 h-8 rounded border text-xs ${page === p ? 'bg-amber-500 text-white border-amber-500' : 'border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50'}`}>
-                    {p}
-                  </button>
-                ))}
-                <button onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page === pages}
-                  className="p-1.5 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40 hover:bg-zinc-50">
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* ── FORMULÁRIO ── */}
-      {tab === 'form' && (
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-          {/* Dados cadastrais */}
-          <section className="bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 p-5">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-600 mb-4 pb-3 border-b border-zinc-100 dark:border-zinc-700">
-              Dados Cadastrais
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Tipo de Pessoa *">
-                <select {...register('tipo_pessoa')} className={input}>
-                  <option value="PJ">Pessoa Jurídica</option>
-                  <option value="PF">Pessoa Física</option>
-                </select>
-              </Field>
-              <Field label="CNPJ / CPF *" error={errors.cnpj_cpf?.message}>
-                <input {...register('cnpj_cpf')} className={input} placeholder="00.000.000/0001-00" />
-              </Field>
-              <Field label="Razão Social / Nome *" error={errors.razao_social?.message} full>
-                <input {...register('razao_social')} className={input} />
-              </Field>
-              <Field label="Nome Fantasia">
-                <input {...register('nome_fantasia')} className={input} />
-              </Field>
-              <Field label="Inscrição Estadual">
-                <input {...register('inscricao_est')} className={input} placeholder="IE ou ISENTO" />
-              </Field>
-              <Field label="Categoria">
-                <select {...register('categoria')} className={input}>
-                  <option value="">Selecione...</option>
-                  {['Serviços Gerais','Materiais / Insumos','Pessoal / RH','Utilidades','Imóveis / Ocupação','Financeiro / Bancário','Impostos / Tributos','Outros'].map(c => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Plano de Contas Padrão">
-                <select {...register('plano_contas_id')} className={input}>
-                  <option value="">Selecione...</option>
-                  {planosAnaliticos.map(p => (
-                    <option key={p.id} value={p.id}>{p.codigo} — {p.descricao}</option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-          </section>
-
-          {/* Endereço */}
-          <section className="bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 p-5">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-600 mb-4 pb-3 border-b border-zinc-100 dark:border-zinc-700">
-              Endereço
-            </h3>
-            <div className="grid grid-cols-3 gap-4">
-              <Field label="CEP"><input {...register('cep')} className={input} placeholder="00000-000" /></Field>
-              <div />
-              <Field label="Logradouro" full><input {...register('logradouro')} className={input} /></Field>
-              <Field label="Número"><input {...register('numero')} className={input} /></Field>
-              <Field label="Complemento"><input {...register('complemento')} className={input} /></Field>
-              <Field label="Bairro"><input {...register('bairro')} className={input} /></Field>
-              <Field label="Cidade"><input {...register('cidade')} className={input} /></Field>
-              <Field label="Estado">
-                <select {...register('estado')} className={input}>
-                  {['SP','RJ','MG','PR','RS','SC','BA','PE','CE','GO','DF'].map(e => <option key={e}>{e}</option>)}
-                </select>
-              </Field>
-            </div>
-          </section>
-
-          {/* Contato */}
-          <section className="bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 p-5">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-600 mb-4 pb-3 border-b border-zinc-100 dark:border-zinc-700">
-              Contato
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Telefone *" error={errors.telefone?.message}><input {...register('telefone')} className={input} placeholder="(11) 9 0000-0000" /></Field>
-              <Field label="WhatsApp"><input {...register('whatsapp')} className={input} /></Field>
-              <Field label="E-mail" error={errors.email?.message}><input {...register('email')} className={input} type="email" /></Field>
-              <Field label="Site"><input {...register('site')} className={input} /></Field>
-              <Field label="Nome do Contato"><input {...register('nome_contato')} className={input} /></Field>
-            </div>
-          </section>
-
-          {/* Dados bancários */}
-          <section className="bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 p-5">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-600 mb-4 pb-3 border-b border-zinc-100 dark:border-zinc-700">
-              Dados Bancários para Pagamento
-            </h3>
-            <div className="grid grid-cols-3 gap-4">
-              <Field label="Banco">
-                <select {...register('banco_pag')} className={input}>
-                  <option value="">Selecione...</option>
-                  {['001 - Banco do Brasil','033 - Santander','104 - Caixa Econômica','237 - Bradesco','341 - Itaú','655 - Daycoval','077 - Inter'].map(b => <option key={b}>{b}</option>)}
-                </select>
-              </Field>
-              <Field label="Agência"><input {...register('agencia_pag')} className={input} placeholder="0000" /></Field>
-              <Field label="Conta / Dígito"><input {...register('conta_pag')} className={input} placeholder="00000-0" /></Field>
-              <Field label="Tipo">
-                <select {...register('tipo_conta_pag')} className={input}>
-                  <option value="CC">Corrente</option>
-                  <option value="CP">Poupança</option>
-                </select>
-              </Field>
-              <Field label="Chave PIX"><input {...register('pix_chave')} className={input} /></Field>
-              <Field label="Tipo da Chave">
-                <select {...register('pix_tipo')} className={input}>
-                  <option value="">Selecione...</option>
-                  {['CNPJ','CPF','EMAIL','CELULAR','ALEATORIA'].map(t => <option key={t}>{t}</option>)}
-                </select>
-              </Field>
-            </div>
-          </section>
-
-          {/* Configurações */}
-          <section className="bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 p-5">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-600 mb-4 pb-3 border-b border-zinc-100 dark:border-zinc-700">
-              Configurações
-            </h3>
-            <div className="space-y-3">
-              {[
-                { name: 'ativo' as const, label: 'Fornecedor ativo' },
-                { name: 'bloquear_lanc' as const, label: 'Bloquear novos lançamentos' },
-                { name: 'requer_aprova' as const, label: 'Requer aprovação para pagamentos acima do limite' },
-              ].map(({ name, label }) => (
-                <label key={name} className="flex items-center justify-between py-2.5 border-b border-zinc-100 dark:border-zinc-700 cursor-pointer">
-                  <span className="text-sm text-zinc-700 dark:text-zinc-300">{label}</span>
-                  <input type="checkbox" {...register(name)} className="w-4 h-4 rounded accent-amber-500" />
-                </label>
-              ))}
-              <Field label="Limite para aprovação (R$)">
-                <input {...register('limite_aprova')} type="number" className={input} />
-              </Field>
-              <Field label="Observações" full>
-                <textarea {...register('obs')} rows={3} className={`${input} resize-none`} />
-              </Field>
-            </div>
-          </section>
-
-          <div className="flex gap-2 justify-end">
-            <button type="button" onClick={() => setTab('lista')} className="px-4 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800">
-              Cancelar
-            </button>
-            <button type="submit" className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium">
-              {editing ? 'Salvar Alterações' : 'Cadastrar Fornecedor'}
-            </button>
-          </div>
-        </form>
-      )}
+  const F = ({ label, name, required, children, half }: {
+    label: string; name: string; required?: boolean; children: React.ReactNode; half?: boolean
+  }) => (
+    <div className={cn('flex flex-col gap-1', half ? 'col-span-1' : 'col-span-1')}>
+      <label className="text-xs font-medium text-slate-600">
+        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
+      {children}
+      {errors[name] && <p className="text-[10px] text-red-500">{errors[name]}</p>}
     </div>
   )
-}
 
-// ─── Helpers de UI ────────────────────────────────────────────────────────────
-const input = 'w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent'
+  const inp = 'w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100'
+  const sel = inp
 
-function Field({ label, children, error, full }: {
-  label: string; children: React.ReactNode; error?: string; full?: boolean
-}) {
   return (
-    <div className={`flex flex-col gap-1 ${full ? 'col-span-full' : ''}`}>
-      <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">{label}</label>
-      {children}
-      {error && <span className="text-xs text-red-500">{error}</span>}
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-800">Fornecedores</h1>
+          <p className="text-sm text-slate-500 mt-0.5">{total} cadastros</p>
+        </div>
+        <button onClick={openNew}
+          className="flex items-center gap-2 px-4 py-2 bg-[#1e3a5f] hover:bg-[#162d4a] text-white text-xs font-semibold rounded-lg transition-colors">
+          <Plus className="w-3.5 h-3.5" /> Novo Fornecedor
+        </button>
+      </div>
+
+      {/* Filtros */}
+      <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4 py-3 flex flex-wrap gap-3 items-center">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input value={fBusca} onChange={e => setFBusca(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && load()}
+            placeholder="Buscar por nome ou CNPJ/CPF…"
+            className="pl-9 pr-4 py-2 w-full text-sm bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-blue-400" />
+        </div>
+        <select value={fEmpresa} onChange={e => setFEmpresa(e.target.value)}
+          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700">
+          <option value="">Todas empresas</option>
+          {EMPRESAS.filter(e => e !== 'TODOS').map(e => <option key={e} value={e}>{e}</option>)}
+        </select>
+        <select value={fCategoria} onChange={e => setFCategoria(e.target.value)}
+          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700">
+          <option value="">Todas categorias</option>
+          {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
+      {/* Tabela */}
+      <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-[#0d1b2a] text-white">
+                {['Razão Social / Fantasia', 'CNPJ/CPF', 'Categoria', 'Empresa', 'Banco', 'Status', 'Ações'].map(h => (
+                  <th key={h} className="text-left px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading && [...Array(6)].map((_,i) => (
+                <tr key={i} className="border-b border-slate-50">
+                  {[...Array(7)].map((_,j) => (
+                    <td key={j} className="px-3 py-2.5">
+                      <div className="h-3 bg-slate-100 rounded animate-pulse" style={{ width: `${50+((i*11+j*9)%40)}%` }} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              {!loading && lista.length === 0 && (
+                <tr><td colSpan={7} className="text-center text-slate-400 py-12 text-sm">
+                  Nenhum fornecedor cadastrado
+                </td></tr>
+              )}
+              {!loading && lista.map(f => (
+                <tr key={f.id} className={cn('border-b border-slate-50 hover:bg-slate-50 transition-colors', !f.ativo && 'opacity-50')}>
+                  <td className="px-3 py-2.5">
+                    <p className="font-medium text-slate-800">{f.razao_social}</p>
+                    {f.nome_fantasia && <p className="text-slate-400 text-[10px]">{f.nome_fantasia}</p>}
+                  </td>
+                  <td className="px-3 py-2 text-slate-500">{f.cnpj_cpf || '—'}</td>
+                  <td className="px-3 py-2 text-slate-500">{f.categoria || '—'}</td>
+                  <td className="px-3 py-2">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 font-medium">{f.empresa}</span>
+                  </td>
+                  <td className="px-3 py-2 text-slate-500">
+                    {f.banco_nome ? `${f.banco_nome}${f.agencia ? ` ag.${f.agencia}` : ''}` : '—'}
+                  </td>
+                  <td className="px-3 py-2">
+                    <button onClick={() => toggleAtivo(f)}
+                      className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium',
+                        f.ativo ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500')}>
+                      {f.ativo ? 'Ativo' : 'Inativo'}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2">
+                    <button onClick={() => openEdit(f)}
+                      className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Modal Form */}
+      {showForm && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 pt-10 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
+            {/* Cabeçalho */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <div>
+                <h2 className="text-base font-bold text-slate-800">{editId ? 'Editar Fornecedor' : 'Novo Fornecedor'}</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Campos marcados com * são obrigatórios</p>
+              </div>
+              <button onClick={closeForm} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-5">
+              {errors._geral && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">{errors._geral}</div>
+              )}
+
+              {/* Dados principais */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Dados Principais</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <F label="Razão Social" name="razao_social" required>
+                    <input className={inp} value={form.razao_social || ''} onChange={e => set('razao_social', e.target.value)} placeholder="Nome completo / razão social" />
+                  </F>
+                  <F label="Nome Fantasia" name="nome_fantasia">
+                    <input className={inp} value={form.nome_fantasia || ''} onChange={e => set('nome_fantasia', e.target.value)} placeholder="Nome fantasia" />
+                  </F>
+                  <F label="CNPJ / CPF" name="cnpj_cpf">
+                    <input className={inp} value={form.cnpj_cpf || ''} onChange={e => set('cnpj_cpf', e.target.value)} placeholder="00.000.000/0000-00" />
+                  </F>
+                  <F label="Tipo de Pessoa" name="tipo_pessoa" required>
+                    <select className={sel} value={form.tipo_pessoa || 'PJ'} onChange={e => set('tipo_pessoa', e.target.value)}>
+                      <option value="PJ">Pessoa Jurídica (CNPJ)</option>
+                      <option value="PF">Pessoa Física (CPF)</option>
+                    </select>
+                  </F>
+                  <F label="Categoria" name="categoria">
+                    <select className={sel} value={form.categoria || ''} onChange={e => set('categoria', e.target.value)}>
+                      <option value="">Selecione</option>
+                      {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </F>
+                  <F label="Empresa" name="empresa" required>
+                    <select className={sel} value={form.empresa || 'TODOS'} onChange={e => set('empresa', e.target.value)}>
+                      {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
+                    </select>
+                  </F>
+                  <F label="E-mail" name="email">
+                    <input className={inp} type="email" value={form.email || ''} onChange={e => set('email', e.target.value)} placeholder="email@fornecedor.com" />
+                  </F>
+                  <F label="Telefone" name="telefone">
+                    <input className={inp} value={form.telefone || ''} onChange={e => set('telefone', e.target.value)} placeholder="(11) 99999-9999" />
+                  </F>
+                </div>
+              </div>
+
+              {/* Endereço */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Endereço</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <F label="CEP" name="cep">
+                    <input className={inp} value={form.cep || ''} onChange={e => set('cep', e.target.value)} placeholder="00000-000" />
+                  </F>
+                  <F label="Cidade / UF" name="cidade_uf">
+                    <input className={inp} value={form.cidade_uf || ''} onChange={e => set('cidade_uf', e.target.value)} placeholder="São Paulo - SP" />
+                  </F>
+                  <div className="col-span-2">
+                    <F label="Endereço" name="endereco">
+                      <input className={inp} value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua, número, complemento" />
+                    </F>
+                  </div>
+                </div>
+              </div>
+
+              {/* Dados bancários */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Dados Bancários (para pagamento)</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <F label="Banco" name="banco_nome">
+                    <select className={sel} value={form.banco_nome || ''} onChange={e => set('banco_nome', e.target.value)}>
+                      <option value="">Selecione</option>
+                      {BANCOS_BR.map(b => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                  </F>
+                  <F label="Tipo de Conta" name="tipo_conta">
+                    <select className={sel} value={form.tipo_conta || 'Corrente'} onChange={e => set('tipo_conta', e.target.value)}>
+                      <option>Corrente</option>
+                      <option>Poupança</option>
+                      <option>PIX</option>
+                    </select>
+                  </F>
+                  <F label="Agência" name="agencia">
+                    <input className={inp} value={form.agencia || ''} onChange={e => set('agencia', e.target.value)} placeholder="0000" />
+                  </F>
+                  <F label="Conta / Dígito" name="conta">
+                    <input className={inp} value={form.conta || ''} onChange={e => set('conta', e.target.value)} placeholder="00000-0" />
+                  </F>
+                  <div className="col-span-2">
+                    <F label="Chave PIX" name="chave_pix">
+                      <input className={inp} value={form.chave_pix || ''} onChange={e => set('chave_pix', e.target.value)} placeholder="CPF, CNPJ, e-mail ou telefone" />
+                    </F>
+                  </div>
+                  <div className="col-span-2">
+                    <F label="Observações" name="obs">
+                      <textarea className={cn(inp, 'min-h-[60px] resize-none')} value={form.obs || ''} onChange={e => set('obs', e.target.value)} placeholder="Notas adicionais..." />
+                    </F>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
+              <button onClick={closeForm} className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+                Cancelar
+              </button>
+              <button onClick={save} disabled={saving}
+                className="flex items-center gap-2 px-5 py-2 text-xs font-semibold bg-[#1e3a5f] hover:bg-[#162d4a] text-white rounded-lg transition-colors disabled:opacity-60">
+                {saving ? 'Salvando…' : <><Check className="w-3.5 h-3.5" /> {editId ? 'Atualizar' : 'Salvar'}</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

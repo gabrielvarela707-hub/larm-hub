@@ -44,6 +44,8 @@ const NAV: NavItem[] = [
       { label: 'Mov. Bancário',     href: '/financeiro/movimento' },
       { label: 'Contas a Receber',  href: '/financeiro/receber', badge: 3 },
       { label: 'Contas a Pagar',    href: '/financeiro/pagar' },
+      { label: 'Fornecedores',      href: '/financeiro/fornecedores' },
+      { label: 'Bancos e Contas',   href: '/financeiro/bancos' },
       { label: 'Boletos',           href: '/financeiro/boletos' },
       { label: 'Split de Pagamento',href: '/financeiro/split' },
       { label: 'SPED e DIMOB',      href: '/financeiro/sped' },
