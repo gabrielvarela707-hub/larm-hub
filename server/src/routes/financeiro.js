@@ -10,25 +10,156 @@ const { authenticate } = require('../middleware/authenticate')
 const router = express.Router()
 router.use(authenticate)
 
+
+// Valores futuros em aberto entram no Cash Flow apenas enquanto estiverem pendentes.
+// Quando a parcela é baixada/paga, ela sai daqui e passa a aparecer no Movimento Bancário realizado.
+const STATUS_ABERTO_CP = ['pendente', 'vencido', 'aberto', 'aberta']
+const STATUS_PAGO_CR   = ['pago', 'paga', 'quitado', 'quitada', 'recebido', 'recebida', 'q']
+const STATUS_CANCELADO = ['cancelado', 'cancelada', 'c']
+
+async function tableExists(tableName) {
+  const { rows } = await query(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = $1
+     ) AS exists`,
+    [tableName]
+  )
+  return !!rows[0]?.exists
+}
+
+async function getTableColumns(tableName) {
+  const { rows } = await query(
+    `SELECT column_name FROM information_schema.columns
+     WHERE table_schema = 'public' AND table_name = $1`,
+    [tableName]
+  )
+  return new Set(rows.map(r => r.column_name))
+}
+
+function pickColumn(columns, candidates) {
+  return candidates.find(c => columns.has(c)) || null
+}
+
+function emptyMonthMap() {
+  return Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, 0]))
+}
+
+function normalizeEmpresaFilter(empresa) {
+  return String(empresa || 'CONSOLIDADO').toUpperCase()
+}
+
+async function getContasPagarFuturoAberto(empresa, ano, mes = null) {
+  const empresaFiltro = normalizeEmpresaFilter(empresa)
+  const params = [ano]
+  const conditions = [
+    `p.vencimento IS NOT NULL`,
+    `EXTRACT(YEAR FROM p.vencimento)::int = $1`,
+    `LOWER(COALESCE(p.status::text, 'pendente')) = ANY($${params.length + 1})`,
+  ]
+  params.push(STATUS_ABERTO_CP)
+
+  if (mes) {
+    params.push(mes)
+    conditions.push(`EXTRACT(MONTH FROM p.vencimento)::int = $${params.length}`)
+  }
+
+  if (empresaFiltro !== 'CONSOLIDADO') {
+    params.push(empresaFiltro)
+    conditions.push(`l.empresa = $${params.length}`)
+  }
+
+  const { rows } = await query(
+    `SELECT EXTRACT(MONTH FROM p.vencimento)::int AS mes,
+            COALESCE(SUM(p.valor), 0) AS total
+       FROM fin_parcelas_cp p
+       JOIN fin_lancamentos_cp l ON l.id = p.lancamento_id
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY 1
+      ORDER BY 1`,
+    params
+  )
+
+  const valores = emptyMonthMap()
+  for (const r of rows) valores[Number(r.mes)] = -Math.abs(parseFloat(r.total || 0))
+  return valores
+}
+
+async function getContasReceberFuturoAberto(empresa, ano, mes = null) {
+  // O módulo de Contas a Receber ainda pode não existir neste banco.
+  // Por isso a consulta é defensiva e só roda se as tabelas/colunas estiverem presentes.
+  const hasParc = await tableExists('fin_parcelas_cr')
+  const hasLanc = await tableExists('fin_lancamentos_cr')
+  if (!hasParc || !hasLanc) return emptyMonthMap()
+
+  const pCols = await getTableColumns('fin_parcelas_cr')
+  const lCols = await getTableColumns('fin_lancamentos_cr')
+  const vencCol = pickColumn(pCols, ['vencimento', 'data_vencimento', 'dt_vencimento'])
+  const valorCol = pickColumn(pCols, ['valor', 'valor_parcela', 'valor_total'])
+  const statusCol = pickColumn(pCols, ['status', 'parcela_status'])
+  const lancCol = pickColumn(pCols, ['lancamento_id', 'conta_receber_id', 'receber_id'])
+  const empCol = pickColumn(lCols, ['empresa'])
+
+  if (!vencCol || !valorCol || !lancCol || !empCol) return emptyMonthMap()
+
+  const empresaFiltro = normalizeEmpresaFilter(empresa)
+  const params = [ano]
+  const conditions = [
+    `p.${vencCol} IS NOT NULL`,
+    `EXTRACT(YEAR FROM p.${vencCol})::int = $1`,
+  ]
+
+  if (statusCol) {
+    params.push([...STATUS_PAGO_CR, ...STATUS_CANCELADO])
+    conditions.push(`LOWER(COALESCE(p.${statusCol}::text, 'aberta')) <> ALL($${params.length})`)
+  }
+
+  if (mes) {
+    params.push(mes)
+    conditions.push(`EXTRACT(MONTH FROM p.${vencCol})::int = $${params.length}`)
+  }
+
+  if (empresaFiltro !== 'CONSOLIDADO') {
+    params.push(empresaFiltro)
+    conditions.push(`l.${empCol} = $${params.length}`)
+  }
+
+  const { rows } = await query(
+    `SELECT EXTRACT(MONTH FROM p.${vencCol})::int AS mes,
+            COALESCE(SUM(p.${valorCol}), 0) AS total
+       FROM fin_parcelas_cr p
+       JOIN fin_lancamentos_cr l ON l.id = p.${lancCol}
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY 1
+      ORDER BY 1`,
+    params
+  )
+
+  const valores = emptyMonthMap()
+  for (const r of rows) valores[Number(r.mes)] = Math.abs(parseFloat(r.total || 0))
+  return valores
+}
+
+function mapTotal(valores, mes = null) {
+  if (mes) return Number(valores[mes] || 0)
+  return Object.values(valores).reduce((s, v) => s + Number(v || 0), 0)
+}
+
 // ─── GET /financeiro/cashflow ─────────────────────────────────────────────────
 // Query params: empresa, ano, mes (opcional — se omitido traz todos os meses)
 router.get('/cashflow', async (req, res) => {
-  const empresa = (req.query.empresa || 'CONSOLIDADO').toUpperCase()
+  const empresa = normalizeEmpresaFilter(req.query.empresa)
   const ano     = parseInt(req.query.ano || new Date().getFullYear())
   const mes     = req.query.mes ? parseInt(req.query.mes) : null
 
   try {
-    // Busca todas as linhas hierárquicas
-    const { rows: linhas } = await query(
+    // Busca todas as linhas hierárquicas já importadas do Excel.
+    const { rows: linhasImportadas } = await query(
       `SELECT id, row_idx, codigo, descricao, nivel, tipo
        FROM fin_cashflow_linhas ORDER BY row_idx`
     )
 
-    if (!linhas.length) {
-      return res.json({ ok: true, data: { linhas: [], colunas: [], empresa, ano } })
-    }
-
-    // Busca valores agrupados por mês ou para o mês específico
+    // Busca valores agrupados por mês ou para o mês específico.
     let valQuery, valParams
     if (mes) {
       valQuery = `
@@ -49,7 +180,7 @@ router.get('/cashflow', async (req, res) => {
 
     const { rows: valores } = await query(valQuery, valParams)
 
-    // Monta mapa linha_id -> { mes -> valor }
+    // Monta mapa linha_id -> { mes -> valor }.
     const valMap = {}
     const mesesSet = new Set()
     for (const v of valores) {
@@ -58,18 +189,44 @@ router.get('/cashflow', async (req, res) => {
       mesesSet.add(v.mes)
     }
 
+    // Regra de negócio:
+    // - parcelas abertas alimentam o Cash Flow futuro;
+    // - parcelas baixadas/pagas saem do futuro e entram no Movimento Bancário.
+    const cpFuturo = await getContasPagarFuturoAberto(empresa, ano, mes)
+    const crFuturo = await getContasReceberFuturoAberto(empresa, ano, mes)
+
+    const linhas = [...linhasImportadas]
+    const maxRowIdx = linhas.reduce((max, l) => Math.max(max, Number(l.row_idx || 0)), 0)
+
+    const addLinhaFutura = (id, rowIdx, codigo, descricao, valoresMes) => {
+      const total = mapTotal(valoresMes, mes)
+      if (total === 0) return
+      linhas.push({ id, row_idx: rowIdx, codigo, descricao, nivel: 1, tipo: 'total' })
+      valMap[id] = valoresMes
+      Object.entries(valoresMes).forEach(([m, v]) => {
+        if (Number(v) !== 0) mesesSet.add(Number(m))
+      })
+    }
+
+    addLinhaFutura(-9001, maxRowIdx + 1, 'FCP', 'Contas a Pagar Futuro em Aberto', cpFuturo)
+    addLinhaFutura(-9002, maxRowIdx + 2, 'FCR', 'Contas a Receber Futuro em Aberto', crFuturo)
+
+    if (!linhas.length) {
+      return res.json({ ok: true, data: { linhas: [], colunas: [], empresa, ano } })
+    }
+
     const MESES_NOME = ['', 'Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
     const colunas = mes
       ? [{ mes, label: MESES_NOME[mes] }]
       : [...mesesSet].sort((a, b) => a - b).map(m => ({ mes: m, label: MESES_NOME[m] }))
 
-    // Monta linhas com valores + total do ano
+    // Monta linhas com valores + total do ano.
     const data = linhas.map(l => {
       const vals = valMap[l.id] || {}
-      const total = Object.values(vals).reduce((s, v) => s + v, 0)
+      const total = Object.values(vals).reduce((s, v) => s + Number(v || 0), 0)
       return {
         ...l,
-        valores: vals,   // { 1: 5000, 2: 3200, ... }
+        valores: vals,
         total,
       }
     })
@@ -129,6 +286,22 @@ router.get('/cashflow/resumo', async (req, res) => {
       )
       result[item.key] = parseFloat(rows[0]?.total ?? 0)
     }
+
+    // Soma os lançamentos futuros em aberto no resumo.
+    // CP entra negativo; CR entra positivo. Ao baixar/pagar, estes valores saem daqui.
+    const cpFuturo = await getContasPagarFuturoAberto(empresa, ano, mes)
+    const crFuturo = await getContasReceberFuturoAberto(empresa, ano, mes)
+    const totalCpFuturo = mapTotal(cpFuturo, mes)
+    const totalCrFuturo = mapTotal(crFuturo, mes)
+    const impactoFuturo = totalCpFuturo + totalCrFuturo
+
+    result.receita_bruta = Number(result.receita_bruta || 0) + totalCrFuturo
+    result.receita_liquida = Number(result.receita_liquida || 0) + totalCrFuturo
+    result.despesas = Number(result.despesas || 0) + totalCpFuturo
+    result.geracao_caixa = Number(result.geracao_caixa || 0) + impactoFuturo
+    result.saldo_final = Number(result.saldo_final || 0) + impactoFuturo
+    result.contas_pagar_futuro_aberto = totalCpFuturo
+    result.contas_receber_futuro_aberto = totalCrFuturo
 
     return res.json({ ok: true, data: result })
   } catch (err) {

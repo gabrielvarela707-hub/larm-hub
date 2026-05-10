@@ -593,46 +593,72 @@ export default function PagarPage() {
 
       {/* Filtros */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4 py-3">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-3 items-center">
-          <div className="relative md:col-span-2 xl:col-span-2">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input value={fBusca} onChange={e => setFBusca(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && load()}
-              placeholder="Fornecedor, histórico ou documento…"
-              className="pl-9 pr-4 py-2 w-full text-sm bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-blue-400" />
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-3 items-end">
+          <div className="md:col-span-2 xl:col-span-2">
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Busca</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input value={fBusca} onChange={e => setFBusca(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && load()}
+                placeholder="Fornecedor, histórico ou documento…"
+                className="pl-9 pr-4 py-2 w-full text-sm bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-blue-400" />
+            </div>
           </div>
-          <select value={fFornecedorFiltro} onChange={e => setFFornecedorFiltro(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
-            <option value="">Todos fornecedores</option>
-            {fornecedores
-              .filter(f => !fEmpresa || f.empresa === fEmpresa || f.empresa === 'TODOS')
-              .map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
-          </select>
-          <select value={fTipoDocFiltro} onChange={e => setFTipoDocFiltro(e.target.value)}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
-            <option value="">Todos tipos</option>
-            {tiposDocumento.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
-          </select>
-          <input value={fPeriodoInicio} onChange={e => setFPeriodoInicio(e.target.value)} type="date" title="Vencimento inicial"
-            className="text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700" />
-          <input value={fPeriodoFim} onChange={e => setFPeriodoFim(e.target.value)} type="date" title="Vencimento final"
-            className="text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700" />
-          <div className="flex gap-3 md:col-span-2 xl:col-span-1">
-            <select value={fEmpresa} onChange={e => setFEmpresa(e.target.value)}
-              className="min-w-0 flex-1 text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
-              <option value="">Todas empresas</option>
-              {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
+
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Fornecedor</label>
+            <select value={fFornecedorFiltro} onChange={e => setFFornecedorFiltro(e.target.value)}
+              className="w-full text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
+              <option value="">Todos fornecedores</option>
+              {fornecedores
+                .filter(f => !fEmpresa || f.empresa === fEmpresa || f.empresa === 'TODOS')
+                .map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
             </select>
-            <select value={fStatus} onChange={e => setFStatus(e.target.value)}
-              className="min-w-0 flex-1 text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
-              <option value="">Todos status</option>
-              <option value="pendente">Pendente</option>
-              <option value="pago">Pago</option>
-              <option value="vencido">Vencido</option>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Tipo de documento</label>
+            <select value={fTipoDocFiltro} onChange={e => setFTipoDocFiltro(e.target.value)}
+              className="w-full text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
+              <option value="">Todos tipos</option>
+              {tiposDocumento.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Vencimento de</label>
+            <input value={fPeriodoInicio} onChange={e => setFPeriodoInicio(e.target.value)} type="date"
+              className="w-full text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700" />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-medium text-slate-500 mb-1">Vencimento até</label>
+            <input value={fPeriodoFim} onChange={e => setFPeriodoFim(e.target.value)} type="date"
+              className="w-full text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 md:col-span-2 xl:col-span-1">
+            <div>
+              <label className="block text-[11px] font-medium text-slate-500 mb-1">Empresa</label>
+              <select value={fEmpresa} onChange={e => setFEmpresa(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
+                <option value="">Todas</option>
+                {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-slate-500 mb-1">Status</label>
+              <select value={fStatus} onChange={e => setFStatus(e.target.value)}
+                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
+                <option value="">Todos</option>
+                <option value="pendente">Pendente</option>
+                <option value="pago">Pago</option>
+                <option value="vencido">Vencido</option>
+              </select>
+            </div>
           </div>
         </div>
-        <p className="mt-2 text-[10px] text-slate-400">Período filtra pela data de vencimento.</p>
+        <p className="mt-2 text-[10px] text-slate-400">O período filtra pela data de vencimento das parcelas.</p>
       </div>
 
       {/* Tabela */}
