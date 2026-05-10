@@ -14,6 +14,8 @@ import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+type LancamentoTipo = 'saldo_inicial' | 'taxa' | 'rendimento' | 'aplicacao'
+
 interface BancoConta {
   id: number; empresa: string; banco_nome: string; codigo_banco: string | null
   agencia: string | null; conta: string | null; digito: string | null
@@ -22,8 +24,16 @@ interface BancoConta {
 }
 
 interface LancamentoBanco {
-  id: number; tipo: 'saldo_inicial' | 'taxa' | 'rendimento' | 'aplicacao'
+  id: number; tipo: LancamentoTipo
   descricao: string; valor: number; data: string; obs: string | null
+}
+
+interface LancamentoBancoForm {
+  tipo: LancamentoTipo
+  descricao: string
+  valor: number
+  data: string
+  obs: string
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -48,15 +58,21 @@ const EMPTY: Partial<BancoConta> = {
   data_saldo_inicial: '', ativo: true, obs: '',
 }
 
-const EMPTY_LANC = { tipo: 'saldo_inicial' as const, descricao: '', valor: 0, data: new Date().toISOString().split('T')[0], obs: '' }
+const EMPTY_LANC: LancamentoBancoForm = {
+  tipo: 'saldo_inicial',
+  descricao: '',
+  valor: 0,
+  data: new Date().toISOString().split('T')[0],
+  obs: '',
+}
 
-const TIPO_LANC_LABELS: Record<string, string> = {
+const TIPO_LANC_LABELS: Record<LancamentoTipo, string> = {
   saldo_inicial: 'Saldo Inicial',
   taxa:          'Taxa Bancária',
   rendimento:    'Rendimento de Conta',
   aplicacao:     'Rendimento de Aplicação',
 }
-const TIPO_LANC_COLORS: Record<string, string> = {
+const TIPO_LANC_COLORS: Record<LancamentoTipo, string> = {
   saldo_inicial: 'bg-blue-100 text-blue-700',
   taxa:          'bg-red-100 text-red-600',
   rendimento:    'bg-green-100 text-green-700',
@@ -450,7 +466,7 @@ export default function BancosPage() {
                   <div className="flex flex-col gap-1 col-span-2">
                     <label className="text-xs font-medium text-slate-600">Tipo *</label>
                     <select className={inp} value={lancForm.tipo}
-                      onChange={e => setLancForm(p => ({ ...p, tipo: e.target.value as typeof lancForm.tipo }))}>
+                      onChange={e => setLancForm(p => ({ ...p, tipo: e.target.value as LancamentoTipo }))}>
                       {Object.entries(TIPO_LANC_LABELS).map(([v, l]) => (
                         <option key={v} value={v}>{l}</option>
                       ))}
