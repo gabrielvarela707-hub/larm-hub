@@ -76,13 +76,14 @@ function fmtMoeda(v: number) {
 }
 
 // ─── MaskedInput ─────────────────────────────────────────────────────────────
-// Usa estado LOCAL para não causar re-render do modal a cada tecla.
-// Sincroniza com o pai apenas no onBlur ou quando o callback onChange é chamado.
+// TOTALMENTE NÃO-CONTROLADO: nunca passa value= para o <input>.
+// Usa ref para ler/escrever o DOM diretamente — zero re-render durante a digitação.
+// Quando o valor externo muda (ex: BrasilAPI preenche), atualiza o DOM via ref.
 function MaskedInput({
-  value, onChange, onComplete, mask, placeholder, className, inputMode, icon,
+  externalValue, onCommit, onComplete, mask, placeholder, className, inputMode, icon,
 }: {
-  value: string
-  onChange: (v: string) => void
+  externalValue: string          // valor vindo do pai (para sync externo)
+  onCommit: (v: string) => void  // notifica o pai do novo valor
   onComplete?: (v: string) => void
   mask: (v: string) => string
   placeholder?: string
@@ -90,25 +91,36 @@ function MaskedInput({
   inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode']
   icon?: React.ReactNode
 }) {
-  const [local, setLocal] = useState(value)
-  // Sync when external value changes (e.g. BrasilAPI populates)
-  useEffect(() => { setLocal(value) }, [value])
+  const ref = useRef<HTMLInputElement>(null)
+
+  // Aplica valor externo no DOM (BrasilAPI / ViaCEP preenche os campos)
+  // Só atualiza se diferente do que está no input para não travar o cursor
+  useEffect(() => {
+    if (ref.current && mask(ref.current.value) !== mask(externalValue)) {
+      ref.current.value = mask(externalValue)
+    }
+  }, [externalValue, mask])
 
   return (
     <div className="relative">
       <input
+        ref={ref}
+        defaultValue={mask(externalValue)}
         className={cn(className, icon && 'pr-8')}
-        value={local}
         inputMode={inputMode}
         placeholder={placeholder}
         onChange={e => {
-          const masked = mask(e.target.value)
-          setLocal(masked)
-          onChange(masked)
+          // Aplica máscara diretamente no DOM — sem setState, sem re-render
+          const pos   = e.target.selectionStart ?? 0
+          const raw   = e.target.value
+          const masked = mask(raw)
+          e.target.value = masked
+          // Tenta preservar posição do cursor
+          try { e.target.setSelectionRange(pos, pos) } catch {}
+          // Notifica o pai (cause re-render do pai, mas não deste input)
+          onCommit(masked)
           const digits = masked.replace(/\D/g, '')
-          if (onComplete && digits.length >= (inputMode === 'numeric' && placeholder?.includes('/') ? 14 : 8)) {
-            onComplete(masked)
-          }
+          if (onComplete && digits.length >= 14) onComplete(masked)
         }}
       />
       {icon && <span className="absolute right-2.5 top-1/2 -translate-y-1/2">{icon}</span>}
@@ -456,9 +468,9 @@ export default function FornecedoresPage() {
                     {/* CNPJ/CPF — primeiro campo com lookup */}
                     <F label="CNPJ / CPF" name="cnpj_cpf">
                       <MaskedInput
-                        value={form.cnpj_cpf || ''}
+                        externalValue={form.cnpj_cpf || ''}
                         mask={v => form.tipo_pessoa === 'PF' ? maskCPF(v) : maskCNPJ(v)}
-                        onChange={v => { setForm(p => ({ ...p, cnpj_cpf: v })); setCnpjDupError('') }}
+                        onCommit={v => { setForm(p => ({ ...p, cnpj_cpf: v })); setCnpjDupError('') }}
                         onComplete={v => { if (form.tipo_pessoa !== 'PF') lookupCNPJ(onlyDigits(v)) }}
                         inputMode="numeric"
                         placeholder={form.tipo_pessoa === 'PF' ? '000.000.000-00' : '00.000.000/0000-00'}
@@ -518,9 +530,9 @@ export default function FornecedoresPage() {
 
                     <F label="Telefone" name="telefone">
                       <MaskedInput
-                        value={form.telefone || ''}
+                        externalValue={form.telefone || ''}
                         mask={maskPhone}
-                        onChange={v => set('telefone', v)}
+                        onCommit={v => set('telefone', v)}
                         inputMode="numeric"
                         placeholder="(11) 99999-9999"
                         className={inp}
@@ -536,9 +548,9 @@ export default function FornecedoresPage() {
                     <F label="CEP" name="cep">
                       <div className="relative">
                         <MaskedInput
-                          value={form.cep || ''}
+                          externalValue={form.cep || ''}
                           mask={maskCEP}
-                          onChange={v => set('cep', v)}
+                          onCommit={v => set('cep', v)}
                           onComplete={v => { if (onlyDigits(v).length === 8) lookupCEP(v) }}
                           inputMode="numeric"
                           placeholder="00000-000"
