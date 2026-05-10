@@ -1,6 +1,17 @@
 'use client'
 
+/**
+ * src/lib/tenant-config-store.ts
+ * Store de configuração do tenant — sincroniza com a API backend.
+ *
+ * Fluxo:
+ *   1. hydrate()      → GET /tenant-config  (carrega do banco ao montar o painel)
+ *   2. setConfig()    → atualiza estado local + sessionStorage (cache otimista)
+ *   3. persistConfig()→ PUT /tenant-config  (chamado explicitamente ao clicar "Salvar")
+ */
+
 import { create } from 'zustand'
+import { apiClient } from '@/lib/auth-store'
 
 export interface TenantConfig {
   // Brand / white-label
@@ -31,13 +42,21 @@ export interface TenantConfig {
   clicksignKey: string
   bankName: string
   bankApiKey: string
+  // CRM integrations (livre por provider)
+  crmConfig: Record<string, Record<string, string>>
 }
 
 interface TenantConfigState {
   config: TenantConfig
   hydrated: boolean
-  hydrate: () => void
+  loading: boolean
+  saving: boolean
+  /** Carrega configurações do backend (GET /tenant-config) */
+  hydrate: () => Promise<void>
+  /** Atualiza estado local + sessionStorage sem bater na API */
   setConfig: (partial: Partial<TenantConfig>) => void
+  /** Persiste no backend (PUT /tenant-config) — retorna mensagem de erro ou null */
+  persistConfig: (payload?: Partial<TenantConfig>) => Promise<string | null>
   getGoogleMapsKey: () => string
 }
 
@@ -55,7 +74,7 @@ const DEFAULT: TenantConfig = {
   snsRegion: 'sa-east-1',
   snsAccessKeyId: '',
   snsSecretAccessKey: '',
-  snsSenderId: 'SANTACLARA',
+  snsSenderId: 'LOTEAMENTO',
   snsSMSType: 'Transactional',
   snsMockMode: true,
   whatsappToken: '',
@@ -64,33 +83,82 @@ const DEFAULT: TenantConfig = {
   clicksignKey: '',
   bankName: '',
   bankApiKey: '',
+  crmConfig: {},
 }
 
 const STORAGE_KEY = 'tenant_config'
 
+function applyToStorage(cfg: TenantConfig) {
+  if (typeof window !== 'undefined') {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(cfg))
+  }
+}
+
+function readFromStorage(): Partial<TenantConfig> {
+  try {
+    const raw = typeof window !== 'undefined' ? sessionStorage.getItem(STORAGE_KEY) : null
+    return raw ? (JSON.parse(raw) as Partial<TenantConfig>) : {}
+  } catch {
+    return {}
+  }
+}
+
 export const useTenantConfig = create<TenantConfigState>((set, get) => ({
   config: { ...DEFAULT },
   hydrated: false,
+  loading: false,
+  saving: false,
 
-  hydrate: () => {
+  hydrate: async () => {
     if (get().hydrated) return
+
+    // Mostra cache do sessionStorage imediatamente (evita flash de defaults)
+    const cached = readFromStorage()
+    if (Object.keys(cached).length) {
+      set({ config: { ...DEFAULT, ...cached } })
+    }
+
+    set({ loading: true })
     try {
-      const raw = typeof window !== 'undefined' ? sessionStorage.getItem(STORAGE_KEY) : null
-      const stored = raw ? (JSON.parse(raw) as Partial<TenantConfig>) : {}
-      set({ config: { ...DEFAULT, ...stored }, hydrated: true })
+      const { data } = await apiClient.get<{ ok: boolean; data: Partial<TenantConfig> }>('/tenant-config')
+      if (data.ok && data.data) {
+        const next = { ...DEFAULT, ...data.data }
+        applyToStorage(next)
+        set({ config: next, hydrated: true })
+      } else {
+        set({ hydrated: true })
+      }
     } catch {
+      // Se a API falhar, continua com o cache local
       set({ hydrated: true })
+    } finally {
+      set({ loading: false })
     }
   },
 
   setConfig: (partial) => {
     set((state) => {
       const next = { ...state.config, ...partial }
-      if (typeof window !== 'undefined') {
-        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-      }
+      applyToStorage(next)
       return { config: next }
     })
+  },
+
+  persistConfig: async (payload) => {
+    set({ saving: true })
+    try {
+      const toSave = payload ?? get().config
+      const { data } = await apiClient.put<{ ok: boolean; message?: string }>('/tenant-config', toSave)
+      if (!data.ok) return data.message ?? 'Erro ao salvar'
+      // Sincroniza cache com o que foi salvo
+      applyToStorage(get().config)
+      return null
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { message?: string } } }
+      return axiosErr?.response?.data?.message ?? 'Erro ao conectar com o servidor'
+    } finally {
+      set({ saving: false })
+    }
   },
 
   getGoogleMapsKey: () => {
