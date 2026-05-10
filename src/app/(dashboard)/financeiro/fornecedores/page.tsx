@@ -129,6 +129,27 @@ function MaskedInput({
 }
 
 
+
+// ─── Field Wrapper (FORA do componente — identidade estável, evita perda de foco) ──
+function Field({
+  label, name, required, children, errors, col2,
+}: {
+  label: string; name: string; required?: boolean
+  children: React.ReactNode
+  errors: Record<string, string>
+  col2?: boolean
+}) {
+  return (
+    <div className={cn('flex flex-col gap-1', col2 && 'col-span-2')}>
+      <label className="text-xs font-medium text-slate-600">
+        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+      </label>
+      {children}
+      {errors[name] && <p className="text-[10px] text-red-500 mt-0.5">{errors[name]}</p>}
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function FornecedoresPage() {
   const [lista,    setLista]    = useState<Fornecedor[]>([])
@@ -304,17 +325,7 @@ export default function FornecedoresPage() {
   }
 
   // ── Helpers UI ─────────────────────────────────────────────────────────────
-  const F = ({ label, name, required, children, col2 }: {
-    label: string; name: string; required?: boolean; children: React.ReactNode; col2?: boolean
-  }) => (
-    <div className={cn('flex flex-col gap-1', col2 && 'col-span-2')}>
-      <label className="text-xs font-medium text-slate-600">
-        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
-      </label>
-      {children}
-      {errors[name] && <p className="text-[10px] text-red-500 mt-0.5">{errors[name]}</p>}
-    </div>
-  )
+  // Field wrapper (defined at module level below to avoid re-render on focus loss)
 
   const inp = 'w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 transition-colors'
   const sel = inp
@@ -466,7 +477,8 @@ export default function FornecedoresPage() {
                   <div className="grid grid-cols-2 gap-3">
 
                     {/* CNPJ/CPF — primeiro campo com lookup */}
-                    <F label="CNPJ / CPF" name="cnpj_cpf">
+                    <Field label="CNPJ / CPF" name="cnpj_cpf"
+                        errors={errors}>
                       <MaskedInput
                         externalValue={form.cnpj_cpf || ''}
                         mask={v => form.tipo_pessoa === 'PF' ? maskCPF(v) : maskCNPJ(v)}
@@ -483,52 +495,59 @@ export default function FornecedoresPage() {
                         }
                       />
                       {cnpjDupError && <p className="text-[10px] text-red-500 mt-0.5">{cnpjDupError}</p>}
-                    </F>
+                    </Field>
 
-                    <F label="Tipo de Pessoa" name="tipo_pessoa" required>
+                    <Field label="Tipo de Pessoa" name="tipo_pessoa" required
+                        errors={errors}>
                       <select className={sel} value={form.tipo_pessoa || 'PJ'}
                         onChange={e => { set('tipo_pessoa', e.target.value); setCnpjStatus('idle') }}>
                         <option value="PJ">Pessoa Jurídica (CNPJ)</option>
                         <option value="PF">Pessoa Física (CPF)</option>
                       </select>
-                    </F>
+                    </Field>
 
-                    <F label="Razão Social" name="razao_social" required>
+                    <Field label="Razão Social" name="razao_social" required
+                        errors={errors}>
                       <input className={cn(inp, errors.razao_social && 'border-red-300')}
                         value={form.razao_social || ''}
                         onChange={e => set('razao_social', e.target.value)}
                         placeholder="Nome completo / razão social" />
-                    </F>
+                    </Field>
 
-                    <F label="Nome Fantasia" name="nome_fantasia">
+                    <Field label="Nome Fantasia" name="nome_fantasia"
+                        errors={errors}>
                       <input className={inp} value={form.nome_fantasia || ''}
                         onChange={e => set('nome_fantasia', e.target.value)}
                         placeholder="Nome fantasia" />
-                    </F>
+                    </Field>
 
-                    <F label="Categoria" name="categoria">
+                    <Field label="Categoria" name="categoria"
+                        errors={errors}>
                       <select className={sel} value={form.categoria || ''}
                         onChange={e => set('categoria', e.target.value)}>
                         <option value="">Selecione</option>
                         {CATEGORIAS.map(c => <option key={c}>{c}</option>)}
                       </select>
-                    </F>
+                    </Field>
 
-                    <F label="Empresa" name="empresa" required>
+                    <Field label="Empresa" name="empresa" required
+                        errors={errors}>
                       <select className={cn(sel, errors.empresa && 'border-red-300')}
                         value={form.empresa || 'TODOS'}
                         onChange={e => set('empresa', e.target.value)}>
                         {EMPRESAS.map(e => <option key={e}>{e}</option>)}
                       </select>
-                    </F>
+                    </Field>
 
-                    <F label="E-mail" name="email">
+                    <Field label="E-mail" name="email"
+                        errors={errors}>
                       <input className={inp} type="email" value={form.email || ''}
                         onChange={e => set('email', e.target.value)}
                         placeholder="email@fornecedor.com" />
-                    </F>
+                    </Field>
 
-                    <F label="Telefone" name="telefone">
+                    <Field label="Telefone" name="telefone"
+                        errors={errors}>
                       <MaskedInput
                         externalValue={form.telefone || ''}
                         mask={maskPhone}
@@ -537,7 +556,7 @@ export default function FornecedoresPage() {
                         placeholder="(11) 99999-9999"
                         className={inp}
                       />
-                    </F>
+                    </Field>
                   </div>
                 </div>
 
@@ -545,7 +564,8 @@ export default function FornecedoresPage() {
                 <div>
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Endereço</p>
                   <div className="grid grid-cols-2 gap-3">
-                    <F label="CEP" name="cep">
+                    <Field label="CEP" name="cep"
+                        errors={errors}>
                       <div className="relative">
                         <MaskedInput
                           externalValue={form.cep || ''}
@@ -558,19 +578,21 @@ export default function FornecedoresPage() {
                           icon={cepLoading ? <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" /> : undefined}
                         />
                       </div>
-                    </F>
+                    </Field>
 
-                    <F label="Cidade / UF" name="cidade_uf">
+                    <Field label="Cidade / UF" name="cidade_uf"
+                        errors={errors}>
                       <input className={inp} value={form.cidade_uf || ''}
                         onChange={e => set('cidade_uf', e.target.value)}
                         placeholder="São Paulo - SP" />
-                    </F>
+                    </Field>
 
-                    <F label="Endereço completo" name="endereco" col2>
+                    <Field label="Endereço completo" name="endereco" col2
+                        errors={errors}>
                       <input className={inp} value={form.endereco || ''}
                         onChange={e => set('endereco', e.target.value)}
                         placeholder="Rua, número, complemento, bairro" />
-                    </F>
+                    </Field>
                   </div>
                 </div>
 
@@ -578,46 +600,52 @@ export default function FornecedoresPage() {
                 <div>
                   <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Dados Bancários</p>
                   <div className="grid grid-cols-2 gap-3">
-                    <F label="Banco" name="banco_nome">
+                    <Field label="Banco" name="banco_nome"
+                        errors={errors}>
                       <select className={sel} value={form.banco_nome || ''}
                         onChange={e => set('banco_nome', e.target.value)}>
                         <option value="">Selecione</option>
                         {BANCOS_BR.map(b => <option key={b}>{b}</option>)}
                       </select>
-                    </F>
+                    </Field>
 
-                    <F label="Tipo de Conta" name="tipo_conta">
+                    <Field label="Tipo de Conta" name="tipo_conta"
+                        errors={errors}>
                       <select className={sel} value={form.tipo_conta || 'Corrente'}
                         onChange={e => set('tipo_conta', e.target.value)}>
                         <option>Corrente</option>
                         <option>Poupança</option>
                       </select>
-                    </F>
+                    </Field>
 
-                    <F label="Agência" name="agencia">
+                    <Field label="Agência" name="agencia"
+                        errors={errors}>
                       <input className={inp} value={form.agencia || ''}
                         onChange={e => set('agencia', e.target.value.replace(/\D/g,''))}
                         inputMode="numeric" placeholder="0000" />
-                    </F>
+                    </Field>
 
-                    <F label="Conta / Dígito" name="conta">
+                    <Field label="Conta / Dígito" name="conta"
+                        errors={errors}>
                       <input className={inp} value={form.conta || ''}
                         onChange={e => set('conta', e.target.value)}
                         placeholder="00000-0" />
-                    </F>
+                    </Field>
 
-                    <F label="Chave PIX" name="chave_pix" col2>
+                    <Field label="Chave PIX" name="chave_pix" col2
+                        errors={errors}>
                       <input className={inp} value={form.chave_pix || ''}
                         onChange={e => set('chave_pix', e.target.value)}
                         placeholder="CPF, CNPJ, e-mail, telefone ou chave aleatória" />
-                    </F>
+                    </Field>
 
-                    <F label="Observações" name="obs" col2>
+                    <Field label="Observações" name="obs" col2
+                        errors={errors}>
                       <textarea className={cn(inp, 'min-h-[60px] resize-none')}
                         value={form.obs || ''}
                         onChange={e => set('obs', e.target.value)}
                         placeholder="Notas adicionais…" />
-                    </F>
+                    </Field>
                   </div>
                 </div>
               </div>

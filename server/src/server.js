@@ -12,10 +12,15 @@ const errorHandler      = require('./middleware/errorHandler')
 const rateLimiter       = require('./middleware/rateLimiter')
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
-const authRoutes        = require('./routes/auth')
-const healthRoutes      = require('./routes/health')
-const stratoRoutes      = require('./routes/strato')
-const financeiroRoutes  = require('./routes/financeiro')
+const authRoutes              = require('./routes/auth')
+const healthRoutes            = require('./routes/health')
+const stratoRoutes            = require('./routes/strato')
+const financeiroRoutes        = require('./routes/financeiro')
+const fornecedoresBancosRoutes = require('./routes/fornecedores_bancos')
+const usersRoutes             = require('./routes/users')
+const tenantConfigRoutes      = require('./routes/tenant-config')
+const profilesRoutes          = require('./routes/profiles')
+const tiposDocumentoRoutes    = require('./routes/tipos-documento')
 
 const app  = express()
 const PORT = process.env.PORT || 3001
@@ -58,6 +63,11 @@ app.use('/health', healthRoutes)
 app.use('/auth',   authRoutes)
 app.use('/strato',     stratoRoutes)
 app.use('/financeiro', financeiroRoutes)
+app.use('/financeiro', fornecedoresBancosRoutes)
+app.use('/',       usersRoutes)
+app.use('/',       tenantConfigRoutes)
+app.use('/',       profilesRoutes)
+app.use('/',       tiposDocumentoRoutes)
 
 // 404
 app.use((req, res) => {

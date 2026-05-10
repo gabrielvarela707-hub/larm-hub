@@ -32,7 +32,7 @@ async function authenticate(req, res, next) {
       name:     rows[0].name,
       email:    rows[0].email,
       role:     rows[0].role,
-      tenantId: rows[0].tenant_id,
+      tenant_id: rows[0].tenant_id,
     }
 
     next()

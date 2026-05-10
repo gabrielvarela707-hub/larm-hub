@@ -138,16 +138,18 @@ router.get('/cashflow/resumo', async (req, res) => {
 
 // ─── GET /financeiro/movimento ────────────────────────────────────────────────
 router.get('/movimento', async (req, res) => {
-  const page     = Math.max(1, parseInt(req.query.page  || '1'))
-  const limit    = Math.min(200, parseInt(req.query.limit || '50'))
-  const offset   = (page - 1) * limit
-  const empresa  = req.query.empresa  || ''
-  const banco    = req.query.banco    || ''
-  const natureza = req.query.natureza || ''
-  const busca    = req.query.busca    || ''
-  const ano      = req.query.ano      ? parseInt(req.query.ano) : null
-  const mes      = req.query.mes      ? parseInt(req.query.mes) : null
-  const tipo     = req.query.tipo     || '' // 'entrada' | 'saida'
+  const page            = Math.max(1, parseInt(req.query.page  || '1'))
+  const limit           = Math.min(200, parseInt(req.query.limit || '50'))
+  const offset          = (page - 1) * limit
+  const empresa         = req.query.empresa  || ''
+  const banco           = req.query.banco    || ''
+  const natureza        = req.query.natureza || ''
+  const busca           = req.query.busca    || ''
+  const ano             = req.query.ano      ? parseInt(req.query.ano) : null
+  const mes             = req.query.mes      ? parseInt(req.query.mes) : null
+  const tipo            = req.query.tipo     || ''  // 'entrada' | 'saida'
+  const tipo_lancamento = req.query.tipo_lancamento || '' // 'financeiro' | 'administrativo' | '' = todos
+  const ordenar         = req.query.ordenar || 'data_desc' // 'data_desc'|'data_asc'|'fornecedor_asc'|'valor_desc'
 
   const conditions = []
   const params     = []
@@ -162,12 +164,28 @@ router.get('/movimento', async (req, res) => {
   if (mes)      { params.push(mes);       conditions.push(`mes = $${params.length}`) }
   if (tipo === 'entrada') conditions.push(`entradas > 0`)
   if (tipo === 'saida')   conditions.push(`saidas > 0`)
+  if (tipo_lancamento) {
+    params.push(tipo_lancamento)
+    conditions.push(`tipo_lancamento = $${params.length}`)
+  }
   if (busca) {
     params.push(`%${busca}%`)
     conditions.push(`(fornecedor ILIKE $${params.length} OR historico ILIKE $${params.length} OR conta_contabil ILIKE $${params.length})`)
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+
+  // Ordenação
+  const ORDER_MAP = {
+    'data_desc':       'data DESC NULLS LAST, id DESC',
+    'data_asc':        'data ASC  NULLS LAST, id ASC',
+    'fornecedor_asc':  'fornecedor ASC NULLS LAST, data DESC',
+    'fornecedor_desc': 'fornecedor DESC NULLS LAST, data DESC',
+    'valor_desc':      'COALESCE(entradas, 0) + COALESCE(saidas, 0) DESC, data DESC',
+    'vencimento_asc':  'vencimento ASC NULLS LAST, data DESC',
+  }
+  const orderClause = ORDER_MAP[ordenar] || ORDER_MAP['data_desc']
+
   params.push(limit, offset)
 
   try {
@@ -178,10 +196,11 @@ router.get('/movimento', async (req, res) => {
         fornecedor, historico, nf_doc,
         conta_contabil, centro_custo, obra,
         natureza_financeira, n_cheque,
+        tipo_lancamento, vencimento,
         dia, mes, ano
       FROM fin_movimento
       ${where}
-      ORDER BY data DESC NULLS LAST, id DESC
+      ORDER BY ${orderClause}
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `, params)
 

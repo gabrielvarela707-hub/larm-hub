@@ -64,4 +64,39 @@ router.get('/me', authenticate, (req, res) => {
   return res.json({ ok: true, data: { user: req.user } })
 })
 
+
+// ── POST /auth/change-password ────────────────────────────────────────────────
+// Troca de senha — obrigatória no primeiro login com senha temporária
+router.post('/change-password', authenticate, async (req, res) => {
+  const { currentPassword, newPassword } = req.body
+  const { id: userId } = req.user
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ ok: false, message: 'Campos obrigatórios' })
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ ok: false, message: 'Nova senha deve ter ao menos 8 caracteres' })
+  }
+
+  const { query }  = require('../config/database')
+  const bcrypt     = require('bcryptjs')
+  const logger     = require('../config/logger')
+
+  const { rows } = await query('SELECT password_hash FROM hub_users WHERE id = $1', [userId])
+  if (!rows.length) return res.status(404).json({ ok: false, message: 'Usuário não encontrado' })
+
+  const ok = await bcrypt.compare(currentPassword, rows[0].password_hash)
+  if (!ok) return res.status(401).json({ ok: false, message: 'Senha atual incorreta' })
+
+  const newHash = await bcrypt.hash(newPassword, 12)
+  await query(
+    'UPDATE hub_users SET password_hash=$1, must_change_password=false, updated_at=NOW() WHERE id=$2',
+    [newHash, userId]
+  )
+
+  logger.info(`Senha alterada: user=${userId}`)
+  return res.json({ ok: true, message: 'Senha alterada com sucesso' })
+})
+
+
 module.exports = router

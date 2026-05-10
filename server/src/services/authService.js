@@ -98,6 +98,7 @@ async function login(email, password, ip, userAgent) {
         tenantName: user.tenant_name,
         tenantSlug: user.tenant_slug,
         hubType:    user.hub_type,     // 'santa_clara' | 'larm'
+        mustChangePassword: user.must_change_password || false,
       },
     },
   }
