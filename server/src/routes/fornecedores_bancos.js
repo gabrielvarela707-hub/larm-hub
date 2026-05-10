@@ -6,6 +6,7 @@
 const express          = require('express')
 const { query }        = require('../config/database')
 const { authenticate } = require('../middleware/authenticate')
+const logger           = require('../config/logger')
 
 const router = express.Router()
 router.use(authenticate)
@@ -119,6 +120,77 @@ function splitDateParts(dateValue) {
     mes: dt.getUTCMonth() + 1,
     ano: dt.getUTCFullYear(),
   }
+}
+
+
+function bancoLancamentoLabel(tipo) {
+  const labels = {
+    saldo_inicial: 'Saldo Inicial',
+    taxa: 'Taxa Bancária',
+    rendimento: 'Rendimento',
+    aplicacao: 'Aplicação',
+  }
+  return labels[tipo] || 'Lançamento Bancário'
+}
+
+async function inserirMovimentoBanco(client, { conta, tipo, descricao, valor, data, movimentoId = null }) {
+  const valorNum = parseMoney(valor)
+  const partesData = splitDateParts(data)
+  const saida = tipo === 'taxa' || valorNum < 0
+  const valorAbs = Math.abs(valorNum)
+  const entradas = saida ? 0 : valorAbs
+  const saidas = saida ? valorAbs : 0
+  const label = bancoLancamentoLabel(tipo)
+  const contaLabel = [conta?.banco_nome, conta?.agencia, conta?.conta].filter(Boolean).join(' / ')
+  const historico = `${label}: ${descricao || contaLabel || ''}`.trim()
+
+  const payload = [
+    data,
+    conta?.empresa || null,
+    conta?.banco_nome || null,
+    entradas,
+    saidas,
+    null,
+    historico,
+    null,
+    label,
+    null,
+    null,
+    null,
+    null,
+    partesData.dia,
+    partesData.mes,
+    partesData.ano,
+    null,
+    'financeiro',
+    null,
+    null,
+    conta?.id || null,
+  ]
+
+  if (movimentoId) {
+    await client.query(
+      `UPDATE fin_movimento
+       SET data=$1, empresa=$2, banco=$3, entradas=$4, saidas=$5, fornecedor=$6,
+           historico=$7, nf_doc=$8, conta_contabil=$9, centro_custo=$10, obra=$11,
+           natureza_financeira=$12, n_cheque=$13, dia=$14, mes=$15, ano=$16,
+           saldo=$17, tipo_lancamento=$18, vencimento=$19, fornecedor_id=$20, banco_conta_id=$21
+       WHERE id=$22`,
+      [...payload, movimentoId]
+    )
+    return movimentoId
+  }
+
+  const { rows } = await client.query(
+    `INSERT INTO fin_movimento
+      (data, empresa, banco, entradas, saidas, fornecedor, historico, nf_doc,
+       conta_contabil, centro_custo, obra, natureza_financeira, n_cheque,
+       dia, mes, ano, saldo, tipo_lancamento, vencimento, fornecedor_id, banco_conta_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+     RETURNING id`,
+    payload
+  )
+  return rows[0]?.id || null
 }
 
 async function analyzeWithOpenAI({ apiKey, documento_nome, documento_mime, documento_base64 }) {
@@ -379,6 +451,7 @@ router.get('/bancos/:id', async (req, res) => {
 
 // POST /bancos
 router.post('/bancos', async (req, res) => {
+  const { tenant_id } = req.user
   const {
     empresa, banco_nome, codigo_banco, agencia, conta, digito,
     tipo_conta = 'Corrente', saldo_inicial = 0, data_saldo_inicial, obs
@@ -387,17 +460,43 @@ router.post('/bancos', async (req, res) => {
   if (!empresa)    return res.status(400).json({ ok: false, message: 'empresa obrigatória' })
   if (!banco_nome) return res.status(400).json({ ok: false, message: 'banco_nome obrigatório' })
 
+  const client = await require('../config/database').pool.connect()
   try {
-    const { rows } = await query(
+    await client.query('BEGIN')
+
+    const { rows } = await client.query(
       `INSERT INTO fin_bancos_contas
          (empresa, banco_nome, codigo_banco, agencia, conta, digito, tipo_conta, saldo_inicial, data_saldo_inicial, obs)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [empresa.toUpperCase(), banco_nome, codigo_banco, agencia, conta, digito,
-       tipo_conta, saldo_inicial, data_saldo_inicial || null, obs]
+       tipo_conta, saldo_inicial || 0, data_saldo_inicial || null, obs]
     )
-    return res.status(201).json({ ok: true, data: rows[0] })
+
+    const banco = rows[0]
+    const saldoNum = parseMoney(saldo_inicial)
+    if (saldoNum !== 0) {
+      const dataMov = data_saldo_inicial || new Date().toISOString().split('T')[0]
+      const movimentoId = await inserirMovimentoBanco(client, {
+        conta: banco,
+        tipo: 'saldo_inicial',
+        descricao: 'Saldo inicial da conta',
+        valor: saldoNum,
+        data: dataMov,
+      })
+      await client.query(
+        `INSERT INTO fin_bancos_lancamentos (tenant_id, conta_id, tipo, descricao, valor, data, obs, movimento_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [tenant_id, banco.id, 'saldo_inicial', 'Saldo inicial da conta', saldoNum, dataMov, obs || null, movimentoId]
+      )
+    }
+
+    await client.query('COMMIT')
+    return res.status(201).json({ ok: true, data: banco })
   } catch (err) {
+    await client.query('ROLLBACK')
     return res.status(500).json({ ok: false, message: err.message })
+  } finally {
+    client.release()
   }
 })
 
@@ -930,56 +1029,92 @@ router.post('/financeiro/bancos/:id/lancamentos', async (req, res) => {
     return res.status(400).json({ ok: false, message: 'Tipo inválido' })
   }
   if (!descricao?.trim()) return res.status(400).json({ ok: false, message: 'Descrição obrigatória' })
-  if (!valor || isNaN(valor)) return res.status(400).json({ ok: false, message: 'Valor obrigatório' })
+  if (valor === undefined || valor === null || valor === '' || Number.isNaN(Number(valor))) {
+    return res.status(400).json({ ok: false, message: 'Valor obrigatório' })
+  }
   if (!data) return res.status(400).json({ ok: false, message: 'Data obrigatória' })
 
+  const client = await require('../config/database').pool.connect()
   try {
-    // Insere o lançamento
-    const { rows: [lanc] } = await query(
-      `INSERT INTO fin_bancos_lancamentos (tenant_id, conta_id, tipo, descricao, valor, data, obs)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [tenant_id, req.params.id, tipo, descricao.trim(), valor, data, obs || null]
+    await client.query('BEGIN')
+
+    const { rows: [contaBanco] } = await client.query(
+      `SELECT * FROM fin_bancos_contas WHERE id = $1 FOR UPDATE`,
+      [req.params.id]
+    )
+    if (!contaBanco) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ ok: false, message: 'Conta bancária não encontrada' })
+    }
+
+    const valorNum = parseMoney(valor)
+    const movimentoId = await inserirMovimentoBanco(client, {
+      conta: contaBanco,
+      tipo,
+      descricao: descricao.trim(),
+      valor: valorNum,
+      data,
+    })
+
+    const { rows: [lanc] } = await client.query(
+      `INSERT INTO fin_bancos_lancamentos (tenant_id, conta_id, tipo, descricao, valor, data, obs, movimento_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [tenant_id, req.params.id, tipo, descricao.trim(), valorNum, data, obs || null, movimentoId]
     )
 
-    // Atualiza saldo_inicial da conta somando o lançamento
-    await query(
+    await client.query(
       `UPDATE fin_bancos_contas
-       SET saldo_inicial = saldo_inicial + $1, updated_at = NOW()
-       WHERE id = $2 AND tenant_id = $3`,
-      [parseFloat(valor), req.params.id, tenant_id]
+       SET saldo_inicial = COALESCE(saldo_inicial, 0) + $1, updated_at = NOW()
+       WHERE id = $2`,
+      [valorNum, req.params.id]
     )
 
-    logger.info(`Lançamento bancário: conta=${req.params.id} tipo=${tipo} valor=${valor}`)
+    await client.query('COMMIT')
+    logger.info(`Lançamento bancário: conta=${req.params.id} tipo=${tipo} valor=${valorNum}`)
     return res.status(201).json({ ok: true, data: lanc })
   } catch (err) {
+    await client.query('ROLLBACK')
     return res.status(500).json({ ok: false, message: err.message })
+  } finally {
+    client.release()
   }
 })
 
 // ── DELETE /financeiro/bancos/:id/lancamentos/:lancId ─────────────────────
 router.delete('/financeiro/bancos/:id/lancamentos/:lancId', async (req, res) => {
   const { tenant_id } = req.user
+  const client = await require('../config/database').pool.connect()
   try {
-    // Busca o valor para reverter o saldo
-    const { rows: [lanc] } = await query(
-      'SELECT valor FROM fin_bancos_lancamentos WHERE id=$1 AND tenant_id=$2',
+    await client.query('BEGIN')
+
+    const { rows: [lanc] } = await client.query(
+      'SELECT valor, movimento_id FROM fin_bancos_lancamentos WHERE id=$1 AND tenant_id=$2',
       [req.params.lancId, tenant_id]
     )
-    if (!lanc) return res.status(404).json({ ok: false, message: 'Lançamento não encontrado' })
+    if (!lanc) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ ok: false, message: 'Lançamento não encontrado' })
+    }
 
-    await query('DELETE FROM fin_bancos_lancamentos WHERE id=$1', [req.params.lancId])
+    await client.query('DELETE FROM fin_bancos_lancamentos WHERE id=$1', [req.params.lancId])
+    if (lanc.movimento_id) {
+      await client.query('DELETE FROM fin_movimento WHERE id=$1', [lanc.movimento_id])
+    }
 
-    // Reverte o saldo
-    await query(
+    await client.query(
       `UPDATE fin_bancos_contas
-       SET saldo_inicial = saldo_inicial - $1, updated_at = NOW()
-       WHERE id = $2 AND tenant_id = $3`,
-      [parseFloat(lanc.valor), req.params.id, tenant_id]
+       SET saldo_inicial = COALESCE(saldo_inicial, 0) - $1, updated_at = NOW()
+       WHERE id = $2`,
+      [parseMoney(lanc.valor), req.params.id]
     )
 
+    await client.query('COMMIT')
     return res.json({ ok: true })
   } catch (err) {
+    await client.query('ROLLBACK')
     return res.status(500).json({ ok: false, message: err.message })
+  } finally {
+    client.release()
   }
 })
 

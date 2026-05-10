@@ -508,87 +508,194 @@ router.get('/movimento', async (req, res) => {
   const page            = Math.max(1, parseInt(req.query.page  || '1'))
   const limit           = Math.min(200, parseInt(req.query.limit || '50'))
   const offset          = (page - 1) * limit
-  const empresa         = req.query.empresa  || ''
-  const banco           = req.query.banco    || ''
-  const natureza        = req.query.natureza || ''
-  const busca           = req.query.busca    || ''
-  const ano             = req.query.ano      ? parseInt(req.query.ano) : null
-  const mes             = req.query.mes      ? parseInt(req.query.mes) : null
-  const tipo            = req.query.tipo     || ''  // 'entrada' | 'saida'
-  const tipo_lancamento = req.query.tipo_lancamento || '' // 'financeiro' | 'administrativo' | '' = todos
-  const ordenar         = req.query.ordenar || 'data_desc' // 'data_desc'|'data_asc'|'fornecedor_asc'|'valor_desc'
+  const empresa         = req.query.empresa || ''
+  const banco           = req.query.banco || ''
+  const contaId         = req.query.conta_id || ''
+  const fornecedorId    = req.query.fornecedor_id || ''
+  const tipoDocumentoId = req.query.tipo_documento_id || ''
+  const status          = req.query.status || ''
+  const dataDe          = req.query.data_de || ''
+  const dataAte         = req.query.data_ate || ''
+  const busca           = req.query.busca || ''
+  const tipo            = req.query.tipo || '' // entrada | saida
+  const ordenar         = req.query.ordenar || 'data_desc'
 
   const conditions = []
-  const params     = []
+  const params = []
 
-  if (empresa)  { params.push(empresa.toUpperCase());  conditions.push(`empresa = $${params.length}`) }
+  if (empresa) {
+    params.push(String(empresa).toUpperCase())
+    conditions.push(`fm.empresa = $${params.length}`)
+  }
   if (banco) {
     params.push(`%${banco}%`)
-    conditions.push(`banco ILIKE $${params.length}`)
+    conditions.push(`COALESCE(b.banco_nome, fm.banco, '') ILIKE $${params.length}`)
   }
-  if (natureza) { params.push(natureza);  conditions.push(`natureza_financeira = $${params.length}`) }
-  if (ano)      { params.push(ano);       conditions.push(`ano = $${params.length}`) }
-  if (mes)      { params.push(mes);       conditions.push(`mes = $${params.length}`) }
-  if (tipo === 'entrada') conditions.push(`entradas > 0`)
-  if (tipo === 'saida')   conditions.push(`saidas > 0`)
-  if (tipo_lancamento) {
-    params.push(tipo_lancamento)
-    conditions.push(`tipo_lancamento = $${params.length}`)
+  if (contaId) {
+    params.push(contaId)
+    conditions.push(`COALESCE(l.banco_conta_id, fm.banco_conta_id)::text = $${params.length}`)
   }
+  if (fornecedorId) {
+    params.push(fornecedorId)
+    conditions.push(`COALESCE(l.fornecedor_id, fm.fornecedor_id)::text = $${params.length}`)
+  }
+  if (tipoDocumentoId) {
+    params.push(tipoDocumentoId)
+    conditions.push(`l.tipo_documento_id::text = $${params.length}`)
+  }
+  if (status) {
+    params.push(String(status).toLowerCase())
+    conditions.push(`LOWER(COALESCE(p.status::text, 'realizado')) = $${params.length}`)
+  }
+  if (dataDe) {
+    params.push(dataDe)
+    conditions.push(`fm.data >= $${params.length}`)
+  }
+  if (dataAte) {
+    params.push(dataAte)
+    conditions.push(`fm.data <= $${params.length}`)
+  }
+  if (tipo === 'entrada') conditions.push(`COALESCE(fm.entradas, 0) > 0`)
+  if (tipo === 'saida')   conditions.push(`COALESCE(fm.saidas, 0) > 0`)
   if (busca) {
     params.push(`%${busca}%`)
-    conditions.push(`(fornecedor ILIKE $${params.length} OR historico ILIKE $${params.length} OR conta_contabil ILIKE $${params.length})`)
+    conditions.push(`(
+      COALESCE(f.razao_social, fm.fornecedor, '') ILIKE $${params.length}
+      OR COALESCE(fm.historico, '') ILIKE $${params.length}
+      OR COALESCE(l.nf_doc, fm.nf_doc, '') ILIKE $${params.length}
+      OR COALESCE(td.nome, '') ILIKE $${params.length}
+      OR COALESCE(b.banco_nome, fm.banco, '') ILIKE $${params.length}
+    )`)
   }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
 
-  // Ordenação
-  const ORDER_MAP = {
-    'data_desc':       'data DESC NULLS LAST, id DESC',
-    'data_asc':        'data ASC  NULLS LAST, id ASC',
-    'fornecedor_asc':  'fornecedor ASC NULLS LAST, data DESC',
-    'fornecedor_desc': 'fornecedor DESC NULLS LAST, data DESC',
-    'valor_desc':      'COALESCE(entradas, 0) + COALESCE(saidas, 0) DESC, data DESC',
-    'vencimento_asc':  'vencimento ASC NULLS LAST, data DESC',
-  }
-  const orderClause = ORDER_MAP[ordenar] || ORDER_MAP['data_desc']
+  const baseSelect = `
+    FROM fin_movimento fm
+    LEFT JOIN fin_parcelas_cp p ON p.movimento_id = fm.id
+    LEFT JOIN fin_lancamentos_cp l ON l.id = p.lancamento_id
+    LEFT JOIN fin_fornecedores f ON f.id = COALESCE(l.fornecedor_id, fm.fornecedor_id)
+    LEFT JOIN fin_bancos_contas b ON b.id = COALESCE(l.banco_conta_id, fm.banco_conta_id)
+    LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
+    ${where}
+  `
 
-  params.push(limit, offset)
+  const ORDER_MAP = {
+    data_asc: 'fm.data ASC NULLS LAST, fm.id ASC',
+    data_desc: 'fm.data DESC NULLS LAST, fm.id DESC',
+    empresa_asc: 'fm.empresa ASC NULLS LAST, fm.data DESC',
+    empresa_desc: 'fm.empresa DESC NULLS LAST, fm.data DESC',
+    origem_asc: 'origem ASC NULLS LAST, fm.data DESC',
+    origem_desc: 'origem DESC NULLS LAST, fm.data DESC',
+    banco_asc: 'banco ASC NULLS LAST, fm.data DESC',
+    banco_desc: 'banco DESC NULLS LAST, fm.data DESC',
+    agencia_asc: 'agencia ASC NULLS LAST, fm.data DESC',
+    agencia_desc: 'agencia DESC NULLS LAST, fm.data DESC',
+    conta_asc: 'conta ASC NULLS LAST, fm.data DESC',
+    conta_desc: 'conta DESC NULLS LAST, fm.data DESC',
+    fornecedor_asc: 'fornecedor ASC NULLS LAST, fm.data DESC',
+    fornecedor_desc: 'fornecedor DESC NULLS LAST, fm.data DESC',
+    documento_asc: 'documento ASC NULLS LAST, fm.data DESC',
+    documento_desc: 'documento DESC NULLS LAST, fm.data DESC',
+    parcela_asc: 'p.numero ASC NULLS LAST, fm.data DESC',
+    parcela_desc: 'p.numero DESC NULLS LAST, fm.data DESC',
+    vencimento_asc: 'vencimento ASC NULLS LAST, fm.data DESC',
+    vencimento_desc: 'vencimento DESC NULLS LAST, fm.data DESC',
+    valor_principal_asc: 'valor_principal ASC NULLS LAST, fm.data DESC',
+    valor_principal_desc: 'valor_principal DESC NULLS LAST, fm.data DESC',
+    multa_asc: 'multa ASC NULLS LAST, fm.data DESC',
+    multa_desc: 'multa DESC NULLS LAST, fm.data DESC',
+    juros_asc: 'juros ASC NULLS LAST, fm.data DESC',
+    juros_desc: 'juros DESC NULLS LAST, fm.data DESC',
+    desconto_asc: 'desconto ASC NULLS LAST, fm.data DESC',
+    desconto_desc: 'desconto DESC NULLS LAST, fm.data DESC',
+    valor_final_asc: 'valor_final ASC NULLS LAST, fm.data DESC',
+    valor_final_desc: 'valor_final DESC NULLS LAST, fm.data DESC',
+    saldo_asc: 'fm.saldo ASC NULLS LAST, fm.data DESC',
+    saldo_desc: 'fm.saldo DESC NULLS LAST, fm.data DESC',
+  }
+  const orderClause = ORDER_MAP[ordenar] || ORDER_MAP.data_desc
 
   try {
+    const dataParams = [...params, limit, offset]
     const { rows } = await query(`
       SELECT
-        id, data, empresa, banco,
-        entradas, saidas, saldo,
-        fornecedor, historico, nf_doc,
-        conta_contabil, centro_custo, obra,
-        natureza_financeira, n_cheque,
-        tipo_lancamento, vencimento,
-        dia, mes, ano
-      FROM fin_movimento
-      ${where}
+        fm.id,
+        fm.data,
+        fm.empresa,
+        CASE
+          WHEN p.id IS NOT NULL THEN 'Contas a Pagar'
+          WHEN COALESCE(fm.historico, '') ILIKE 'Saldo inicial%' THEN 'Saldo Inicial'
+          WHEN COALESCE(fm.historico, '') ILIKE 'Taxa bancária%' THEN 'Taxa Bancária'
+          WHEN COALESCE(fm.historico, '') ILIKE 'Rendimento%' THEN 'Rendimento'
+          WHEN COALESCE(fm.historico, '') ILIKE 'Aplicação%' THEN 'Aplicação'
+          WHEN COALESCE(fm.entradas, 0) > 0 THEN 'Entrada'
+          WHEN COALESCE(fm.saidas, 0) > 0 THEN 'Saída'
+          ELSE 'Movimento'
+        END AS origem,
+        COALESCE(b.banco_nome, fm.banco) AS banco,
+        b.agencia AS agencia,
+        NULLIF(CONCAT_WS('-', b.conta, NULLIF(b.digito, '')), '') AS conta,
+        COALESCE(f.razao_social, fm.fornecedor) AS fornecedor,
+        td.nome AS tipo_documento,
+        COALESCE(l.nf_doc, fm.nf_doc) AS documento,
+        CASE
+          WHEN p.id IS NOT NULL THEN CONCAT(p.numero, '/', COALESCE(NULLIF(l.qtd_parcelas, 0), p.numero))
+          ELSE NULL
+        END AS parcela,
+        COALESCE(p.vencimento, fm.vencimento) AS vencimento,
+        CASE
+          WHEN COALESCE(fm.saidas, 0) > 0 THEN -ABS(COALESCE(p.valor, fm.saidas, 0))
+          ELSE ABS(COALESCE(fm.entradas, 0))
+        END AS valor_principal,
+        COALESCE(p.multa, 0) AS multa,
+        COALESCE(p.juros, 0) AS juros,
+        COALESCE(p.desconto, 0) AS desconto,
+        CASE
+          WHEN COALESCE(fm.saidas, 0) > 0 THEN -ABS(COALESCE(p.valor_final, fm.saidas, 0))
+          ELSE ABS(COALESCE(p.valor_final, fm.entradas, 0))
+        END AS valor_final,
+        fm.saldo,
+        COALESCE(p.status, 'realizado') AS status,
+        COALESCE(fm.entradas, 0) AS entradas,
+        COALESCE(fm.saidas, 0) AS saidas,
+        fm.mes
+      ${baseSelect}
       ORDER BY ${orderClause}
-      LIMIT $${params.length - 1} OFFSET $${params.length}
-    `, params)
+      LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}
+    `, dataParams)
 
-    const countParams = params.slice(0, params.length - 2)
-    const { rows: ct } = await query(
-      `SELECT COUNT(*), COALESCE(SUM(entradas),0) AS total_entradas, COALESCE(SUM(saidas),0) AS total_saidas
-       FROM fin_movimento ${where}`, countParams
-    )
+    const { rows: ct } = await query(`
+      SELECT
+        COUNT(*) AS count,
+        COALESCE(SUM(fm.entradas), 0) AS total_entradas,
+        COALESCE(SUM(fm.saidas), 0) AS total_saidas
+      ${baseSelect}
+    `, params)
 
     return res.json({
       ok: true,
-      data: rows,
+      data: rows.map(r => ({
+        ...r,
+        valor_principal: parseFloat(r.valor_principal || 0),
+        multa: parseFloat(r.multa || 0),
+        juros: parseFloat(r.juros || 0),
+        desconto: parseFloat(r.desconto || 0),
+        valor_final: parseFloat(r.valor_final || 0),
+        saldo: r.saldo === null ? null : parseFloat(r.saldo || 0),
+        entradas: parseFloat(r.entradas || 0),
+        saidas: parseFloat(r.saidas || 0),
+      })),
       summary: {
         total_entradas: parseFloat(ct[0].total_entradas),
-        total_saidas:   parseFloat(ct[0].total_saidas),
-        saldo_periodo:  parseFloat(ct[0].total_entradas) - parseFloat(ct[0].total_saidas),
+        total_saidas: parseFloat(ct[0].total_saidas),
+        saldo_periodo: parseFloat(ct[0].total_entradas) - parseFloat(ct[0].total_saidas),
       },
       pagination: {
-        page, limit,
+        page,
+        limit,
         total: parseInt(ct[0].count),
-        pages: Math.ceil(ct[0].count / limit),
+        pages: Math.ceil(parseInt(ct[0].count) / limit),
       },
     })
   } catch (err) {
@@ -597,23 +704,51 @@ router.get('/movimento', async (req, res) => {
 })
 
 // ─── GET /financeiro/movimento/filtros ────────────────────────────────────────
-// Retorna listas de valores únicos para os dropdowns
 router.get('/movimento/filtros', async (req, res) => {
   try {
-    const [empresas, bancos, contas, anos] = await Promise.all([
-      query(`SELECT DISTINCT empresa FROM fin_movimento WHERE empresa IS NOT NULL ORDER BY empresa`),
-      query(`SELECT DISTINCT banco    FROM fin_movimento WHERE banco IS NOT NULL ORDER BY banco`),
-      query(`SELECT DISTINCT conta_contabil, natureza_financeira FROM fin_movimento WHERE conta_contabil IS NOT NULL ORDER BY conta_contabil`),
+    const [empresas, bancos, contas, fornecedores, tiposDocumento, anos, status] = await Promise.all([
+      query(`
+        SELECT DISTINCT empresa FROM (
+          SELECT empresa FROM fin_movimento WHERE empresa IS NOT NULL
+          UNION
+          SELECT empresa FROM fin_bancos_contas WHERE empresa IS NOT NULL
+        ) x ORDER BY empresa
+      `),
+      query(`
+        SELECT DISTINCT banco FROM (
+          SELECT banco FROM fin_movimento WHERE banco IS NOT NULL
+          UNION
+          SELECT banco_nome AS banco FROM fin_bancos_contas WHERE banco_nome IS NOT NULL
+        ) x ORDER BY banco
+      `),
+      query(`
+        SELECT id,
+               CONCAT_WS(' | ', empresa, banco_nome, NULLIF(agencia, ''), NULLIF(CONCAT_WS('-', conta, NULLIF(digito, '')), '')) AS label
+          FROM fin_bancos_contas
+         WHERE ativo = true
+         ORDER BY empresa, banco_nome, agencia, conta
+      `),
+      query(`SELECT id, COALESCE(nome_fantasia, razao_social) AS nome FROM fin_fornecedores WHERE ativo = true ORDER BY nome`),
+      query(`SELECT id, nome FROM fin_tipos_documento WHERE ativo = true ORDER BY nome`),
       query(`SELECT DISTINCT ano FROM fin_movimento WHERE ano IS NOT NULL ORDER BY ano DESC`),
+      query(`
+        SELECT DISTINCT status FROM (
+          SELECT COALESCE(status, 'realizado') AS status FROM fin_parcelas_cp
+          UNION SELECT 'realizado' AS status
+        ) s ORDER BY status
+      `),
     ])
 
     return res.json({
       ok: true,
       data: {
         empresas: empresas.rows.map(r => r.empresa),
-        bancos:   bancos.rows.map(r => r.banco),
-        contas:   contas.rows,
-        anos:     anos.rows.map(r => r.ano),
+        bancos: bancos.rows.map(r => r.banco),
+        contas: contas.rows,
+        fornecedores: fornecedores.rows,
+        tipos_documento: tiposDocumento.rows,
+        anos: anos.rows.map(r => r.ano),
+        status: status.rows.map(r => r.status),
       },
     })
   } catch (err) {
@@ -625,11 +760,13 @@ router.get('/movimento/filtros', async (req, res) => {
 router.get('/movimento/resumo', async (req, res) => {
   const empresa = req.query.empresa ? req.query.empresa.toUpperCase() : null
   const ano     = req.query.ano ? parseInt(req.query.ano) : new Date().getFullYear()
+  const mes     = req.query.mes ? parseInt(req.query.mes) : null
 
   const conditions = ['ano = $1']
   const params     = [ano]
 
   if (empresa) { params.push(empresa); conditions.push(`empresa = $${params.length}`) }
+  if (mes) { params.push(mes); conditions.push(`mes = $${params.length}`) }
 
   const where = `WHERE ${conditions.join(' AND ')}`
 

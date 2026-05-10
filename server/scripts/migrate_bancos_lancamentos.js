@@ -20,11 +20,16 @@ async function migrate() {
         valor       NUMERIC(15,2) NOT NULL,
         data        DATE        NOT NULL,
         obs         TEXT,
+        movimento_id BIGINT REFERENCES fin_movimento(id) ON DELETE SET NULL,
         created_at  TIMESTAMP   DEFAULT NOW()
       )
     `)
     await pool.query('CREATE INDEX IF NOT EXISTS idx_bancos_lanc_conta ON fin_bancos_lancamentos(conta_id)')
     await pool.query('CREATE INDEX IF NOT EXISTS idx_bancos_lanc_tenant ON fin_bancos_lancamentos(tenant_id)')
+
+
+    await pool.query(`ALTER TABLE fin_bancos_lancamentos ADD COLUMN IF NOT EXISTS movimento_id BIGINT REFERENCES fin_movimento(id) ON DELETE SET NULL`)
+    await pool.query(`ALTER TABLE fin_bancos_contas ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`)
 
     // Garante que saldo_inicial não é obrigatório na tabela de contas
     await pool.query(`ALTER TABLE fin_bancos_contas ALTER COLUMN saldo_inicial SET DEFAULT 0`)
