@@ -10,7 +10,7 @@ import { apiClient } from '@/lib/auth-store'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type Empresa = 'LARM' | 'LM' | 'HOLDING' | 'RM' | 'CONSOLIDADO'
+export type Empresa = 'LARM' | 'LARM FILIAL' | 'MANTIQUEIRA' | 'RM' | 'LM' | 'HOLDING' | 'CONSOLIDADO'
 
 export interface PlanoContas {
   id: number
@@ -256,14 +256,19 @@ export const getMovimentoResumo = (empresa?: Empresa, ano?: number) =>
 
 // ─── Cash Flow ────────────────────────────────────────────────────────────────
 
-export const getCashflow = (empresa: Empresa = 'CONSOLIDADO', ano?: number) =>
+export interface CashflowParams {
+  visao?: 'mensal' | 'diaria'
+  mes?: number
+}
+
+export const getCashflow = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: CashflowParams) =>
   apiClient.get<{ ok: boolean; data: any }>(
-    '/financeiro/cashflow', { params: { empresa, ano } }
+    '/financeiro/cashflow', { params: { empresa, ano, ...params } }
   ).then(data)
 
-export const getCashflowResumo = (empresa: Empresa = 'CONSOLIDADO', ano?: number) =>
+export const getCashflowResumo = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: Pick<CashflowParams, 'mes'>) =>
   apiClient.get<{ ok: boolean; data: any }>(
-    '/financeiro/cashflow/resumo', { params: { empresa, ano } }
+    '/financeiro/cashflow/resumo', { params: { empresa, ano, ...params } }
   ).then(data)
 
 export const getCashflowEmpresas = () =>

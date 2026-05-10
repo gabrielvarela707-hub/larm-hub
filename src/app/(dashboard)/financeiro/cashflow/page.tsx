@@ -1,27 +1,65 @@
 'use client'
 /**
- * src/app/financeiro/cashflow/page.tsx
- * Relatório de Cash Flow — espelha estrutura do Excel
+ * src/app/(dashboard)/financeiro/cashflow/page.tsx
+ * Relatório de Cash Flow — visão consolidada, por empresa, mensal e diária.
  */
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { Download, Printer } from 'lucide-react'
-import { getCashflow, getCashflowResumo, type Empresa } from '@/lib/api/financeiro'
+import { getCashflow, getCashflowResumo, getCashflowEmpresas, type Empresa } from '@/lib/api/financeiro'
 
 const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
+const MESES_LONGOS = [
+  'Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+  'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro',
+]
+const EMPRESAS_PADRAO = ['CONSOLIDADO', 'LARM', 'LARM FILIAL', 'MANTIQUEIRA', 'RM'] as const
+
+type VisaoCashflow = 'mensal' | 'diaria'
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)))
+}
+
+function uniqueNumbers(values: number[]) {
+  return Array.from(new Set(values.filter(v => Number.isFinite(v)))).sort((a, b) => b - a)
+}
 
 export default function CashFlowPage() {
   const [empresa, setEmpresa] = useState<Empresa>('CONSOLIDADO')
-  const [ano, setAno]         = useState(2026)
-  const [data, setData]       = useState<any>(null)
-  const [resumo, setResumo]   = useState<any>(null)
+  const [ano, setAno] = useState(2026)
+  const [visao, setVisao] = useState<VisaoCashflow>('mensal')
+  const [mes, setMes] = useState(new Date().getMonth() + 1)
+  const [empresas, setEmpresas] = useState<string[]>([...EMPRESAS_PADRAO])
+  const [anos, setAnos] = useState<number[]>([2026, 2025, 2024])
+  const [data, setData] = useState<any>(null)
+  const [resumo, setResumo] = useState<any>(null)
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    getCashflowEmpresas()
+      .then(rows => {
+        const empresasApi = rows.map(r => String(r.empresa || '').toUpperCase())
+        const anosApi = rows.map(r => Number(r.ano))
+
+        const listaEmpresas = uniqueStrings(['CONSOLIDADO', ...empresasApi, ...EMPRESAS_PADRAO])
+        const listaAnos = uniqueNumbers([...anosApi, 2026, 2025, 2024])
+
+        setEmpresas(listaEmpresas)
+        setAnos(listaAnos.length ? listaAnos : [2026, 2025, 2024])
+      })
+      .catch(() => {
+        setEmpresas([...EMPRESAS_PADRAO])
+        setAnos([2026, 2025, 2024])
+      })
+  }, [])
 
   const load = async () => {
     setLoading(true)
     try {
+      const params = visao === 'diaria' ? { visao, mes } : { visao }
       const [cf, res] = await Promise.all([
-        getCashflow(empresa, ano),
-        getCashflowResumo(empresa, ano),
+        getCashflow(empresa, ano, params),
+        getCashflowResumo(empresa, ano, visao === 'diaria' ? { mes } : undefined),
       ])
       setData(cf)
       setResumo(res)
@@ -30,43 +68,76 @@ export default function CashFlowPage() {
     }
   }
 
-  useEffect(() => { load() }, [empresa, ano])
+  useEffect(() => { load() }, [empresa, ano, visao, mes])
 
   const fmtBRL = (v: number) => {
-    if (v === 0) return '–'
-    const abs = Math.abs(v)
+    if (!v) return '–'
+    const abs = Math.abs(Number(v))
     const s = abs >= 1_000_000
       ? (abs / 1_000_000).toFixed(2) + 'M'
       : abs >= 1_000
       ? (abs / 1_000).toFixed(0) + 'K'
       : abs.toFixed(0)
-    return (v < 0 ? '-' : '') + 'R$ ' + s
+    return (Number(v) < 0 ? '-' : '') + 'R$ ' + s
   }
 
   const getRowStyle = (tipo: string) => {
     if (tipo === 'header') return 'bg-amber-50/60 dark:bg-amber-900/20 font-semibold text-amber-700 dark:text-amber-400'
-    if (tipo === 'total')  return 'bg-zinc-100 dark:bg-zinc-800 font-semibold'
+    if (tipo === 'total') return 'bg-zinc-100 dark:bg-zinc-800 font-semibold'
     return ''
   }
+
+  const getColKey = (coluna: any) => String(coluna.key ?? coluna.dia ?? coluna.mes ?? coluna.label)
+  const getValorColuna = (linha: any, coluna: any) => {
+    const key = getColKey(coluna)
+    return linha?.valores?.[key] ?? linha?.valores?.[Number(key)] ?? 0
+  }
+
+  const tituloTabela = visao === 'diaria'
+    ? `Cash Flow Diário — ${empresa} ${MESES_LONGOS[mes - 1]} / ${ano}`
+    : `Cash Flow — ${empresa} ${ano}`
 
   return (
     <div className="p-6 space-y-4">
       {/* Controles */}
-      <div className="flex gap-2 items-center flex-wrap">
-        <select className={iCls} value={`${ano}-${empresa}`} onChange={e => {
-          const [a, emp] = e.target.value.split('-')
-          setAno(parseInt(a)); setEmpresa(emp as Empresa)
-        }}>
-          {[2026, 2025, 2024].map(a =>
-            ['CONSOLIDADO','LARM','LM','HOLDING','RM'].map(emp => (
-              <option key={`${a}-${emp}`} value={`${a}-${emp}`}>{a} — {emp}</option>
-            ))
-          )}
-        </select>
-        <select className={iCls}>
-          <option>Visão Mensal</option>
-          <option>Visão Diária</option>
-        </select>
+      <div className="flex gap-3 items-end flex-wrap">
+        <div className="min-w-[180px]">
+          <label className="block text-[11px] font-medium text-zinc-500 mb-1">Empresa</label>
+          <select className={iCls} value={empresa} onChange={e => setEmpresa(e.target.value as Empresa)}>
+            {empresas.map(emp => (
+              <option key={emp} value={emp}>{emp}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="min-w-[120px]">
+          <label className="block text-[11px] font-medium text-zinc-500 mb-1">Ano</label>
+          <select className={iCls} value={ano} onChange={e => setAno(parseInt(e.target.value, 10))}>
+            {anos.map(a => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="min-w-[160px]">
+          <label className="block text-[11px] font-medium text-zinc-500 mb-1">Visão</label>
+          <select className={iCls} value={visao} onChange={e => setVisao(e.target.value as VisaoCashflow)}>
+            <option value="mensal">Visão Mensal</option>
+            <option value="diaria">Visão Diária</option>
+          </select>
+        </div>
+
+        {visao === 'diaria' && (
+          <div className="min-w-[150px]">
+            <label className="block text-[11px] font-medium text-zinc-500 mb-1">Mês</label>
+            <select className={iCls} value={mes} onChange={e => setMes(parseInt(e.target.value, 10))}>
+              {MESES_LONGOS.map((nome, idx) => (
+                <option key={nome} value={idx + 1}>{nome}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <div className="flex-1" />
         <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50">
           <Download className="h-3.5 w-3.5" /> Exportar XLSX
@@ -78,7 +149,7 @@ export default function CashFlowPage() {
 
       {/* Cards resumo */}
       {resumo && (
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           {[
             { label: 'Saldo Inicial', value: fmtBRL(resumo.saldo_inicial), color: 'text-amber-600' },
             { label: 'Receita Bruta', value: fmtBRL(resumo.receita_bruta), color: 'text-green-600' },
@@ -96,8 +167,10 @@ export default function CashFlowPage() {
       {/* Tabela Cash Flow */}
       <div className="bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 dark:border-zinc-700">
-          <h3 className="text-sm font-semibold">Cash Flow — {empresa} {ano}</h3>
-          <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">Orçado</span>
+          <h3 className="text-sm font-semibold">{tituloTabela}</h3>
+          <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">
+            {visao === 'diaria' ? 'Diário' : 'Orçado'}
+          </span>
         </div>
         <div className="overflow-x-auto">
           {loading ? (
@@ -114,7 +187,7 @@ export default function CashFlowPage() {
                   <th className="px-3 py-2.5 text-left w-6">#</th>
                   <th className="px-3 py-2.5 text-left min-w-[220px]">Descrição</th>
                   {data.colunas.map((c: any) => (
-                    <th key={c.mes} className="px-2 py-2.5 text-right min-w-[70px]">{c.label}</th>
+                    <th key={getColKey(c)} className="px-2 py-2.5 text-right min-w-[70px]">{c.label}</th>
                   ))}
                   <th className="px-3 py-2.5 text-right font-semibold min-w-[80px]">Total</th>
                 </tr>
@@ -130,9 +203,9 @@ export default function CashFlowPage() {
                         {linha.descricao}
                       </td>
                       {data.colunas.map((c: any) => {
-                        const v = linha.valores[c.mes] ?? 0
+                        const v = Number(getValorColuna(linha, c) || 0)
                         return (
-                          <td key={c.mes} className={`px-2 py-1.5 text-right font-mono ${v === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(v) ? 'text-red-500' : 'text-green-600'}`}>
+                          <td key={getColKey(c)} className={`px-2 py-1.5 text-right font-mono ${v === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(v) ? 'text-red-500' : 'text-green-600'}`}>
                             {v === 0 ? '–' : fmtBRL(v)}
                           </td>
                         )
@@ -152,4 +225,4 @@ export default function CashFlowPage() {
   )
 }
 
-const iCls = 'px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent'
+const iCls = 'w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-sm outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent'

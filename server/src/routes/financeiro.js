@@ -45,6 +45,14 @@ function emptyMonthMap() {
   return Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, 0]))
 }
 
+function daysInMonth(ano, mes) {
+  return new Date(ano, mes, 0).getDate()
+}
+
+function emptyDayMap(ano, mes) {
+  return Object.fromEntries(Array.from({ length: daysInMonth(ano, mes) }, (_, i) => [i + 1, 0]))
+}
+
 function normalizeEmpresaFilter(empresa) {
   return String(empresa || 'CONSOLIDADO').toUpperCase()
 }
@@ -140,6 +148,164 @@ async function getContasReceberFuturoAberto(empresa, ano, mes = null) {
   return valores
 }
 
+
+async function getContasPagarFuturoAbertoDiario(empresa, ano, mes) {
+  const empresaFiltro = normalizeEmpresaFilter(empresa)
+  const valores = emptyDayMap(ano, mes)
+  const params = [ano, mes, STATUS_ABERTO_CP]
+  const conditions = [
+    `p.vencimento IS NOT NULL`,
+    `EXTRACT(YEAR FROM p.vencimento)::int = $1`,
+    `EXTRACT(MONTH FROM p.vencimento)::int = $2`,
+    `LOWER(COALESCE(p.status::text, 'pendente')) = ANY($3)`,
+  ]
+
+  if (empresaFiltro !== 'CONSOLIDADO') {
+    params.push(empresaFiltro)
+    conditions.push(`l.empresa = $${params.length}`)
+  }
+
+  const { rows } = await query(
+    `SELECT EXTRACT(DAY FROM p.vencimento)::int AS dia,
+            COALESCE(SUM(p.valor), 0) AS total
+       FROM fin_parcelas_cp p
+       JOIN fin_lancamentos_cp l ON l.id = p.lancamento_id
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY 1
+      ORDER BY 1`,
+    params
+  )
+
+  for (const r of rows) valores[Number(r.dia)] = -Math.abs(parseFloat(r.total || 0))
+  return valores
+}
+
+async function getContasReceberFuturoAbertoDiario(empresa, ano, mes) {
+  const hasParc = await tableExists('fin_parcelas_cr')
+  const hasLanc = await tableExists('fin_lancamentos_cr')
+  const valores = emptyDayMap(ano, mes)
+  if (!hasParc || !hasLanc) return valores
+
+  const pCols = await getTableColumns('fin_parcelas_cr')
+  const lCols = await getTableColumns('fin_lancamentos_cr')
+  const vencCol = pickColumn(pCols, ['vencimento', 'data_vencimento', 'dt_vencimento'])
+  const valorCol = pickColumn(pCols, ['valor', 'valor_parcela', 'valor_total'])
+  const statusCol = pickColumn(pCols, ['status', 'parcela_status'])
+  const lancCol = pickColumn(pCols, ['lancamento_id', 'conta_receber_id', 'receber_id'])
+  const empCol = pickColumn(lCols, ['empresa'])
+
+  if (!vencCol || !valorCol || !lancCol || !empCol) return valores
+
+  const empresaFiltro = normalizeEmpresaFilter(empresa)
+  const params = [ano, mes]
+  const conditions = [
+    `p.${vencCol} IS NOT NULL`,
+    `EXTRACT(YEAR FROM p.${vencCol})::int = $1`,
+    `EXTRACT(MONTH FROM p.${vencCol})::int = $2`,
+  ]
+
+  if (statusCol) {
+    params.push([...STATUS_PAGO_CR, ...STATUS_CANCELADO])
+    conditions.push(`LOWER(COALESCE(p.${statusCol}::text, 'aberta')) <> ALL($${params.length})`)
+  }
+
+  if (empresaFiltro !== 'CONSOLIDADO') {
+    params.push(empresaFiltro)
+    conditions.push(`l.${empCol} = $${params.length}`)
+  }
+
+  const { rows } = await query(
+    `SELECT EXTRACT(DAY FROM p.${vencCol})::int AS dia,
+            COALESCE(SUM(p.${valorCol}), 0) AS total
+       FROM fin_parcelas_cr p
+       JOIN fin_lancamentos_cr l ON l.id = p.${lancCol}
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY 1
+      ORDER BY 1`,
+    params
+  )
+
+  for (const r of rows) valores[Number(r.dia)] = Math.abs(parseFloat(r.total || 0))
+  return valores
+}
+
+async function getMovimentoRealizadoDiario(empresa, ano, mes) {
+  const empresaFiltro = normalizeEmpresaFilter(empresa)
+  const receitas = emptyDayMap(ano, mes)
+  const despesas = emptyDayMap(ano, mes)
+  const params = [ano, mes]
+  const conditions = [
+    `data IS NOT NULL`,
+    `EXTRACT(YEAR FROM data)::int = $1`,
+    `EXTRACT(MONTH FROM data)::int = $2`,
+  ]
+
+  if (empresaFiltro !== 'CONSOLIDADO') {
+    params.push(empresaFiltro)
+    conditions.push(`empresa = $${params.length}`)
+  }
+
+  const { rows } = await query(
+    `SELECT EXTRACT(DAY FROM data)::int AS dia,
+            COALESCE(SUM(entradas), 0) AS entradas,
+            COALESCE(SUM(saidas), 0) AS saidas
+       FROM fin_movimento
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY 1
+      ORDER BY 1`,
+    params
+  )
+
+  for (const r of rows) {
+    const dia = Number(r.dia)
+    receitas[dia] = Math.abs(parseFloat(r.entradas || 0))
+    despesas[dia] = -Math.abs(parseFloat(r.saidas || 0))
+  }
+
+  return { receitas, despesas }
+}
+
+function sumMaps(...maps) {
+  const result = {}
+  for (const m of maps) {
+    for (const [key, value] of Object.entries(m || {})) {
+      result[key] = Number(result[key] || 0) + Number(value || 0)
+    }
+  }
+  return result
+}
+
+function buildDailyColumns(ano, mes) {
+  return Array.from({ length: daysInMonth(ano, mes) }, (_, i) => {
+    const dia = i + 1
+    return { mes: dia, dia, key: String(dia), label: String(dia).padStart(2, '0') }
+  })
+}
+
+async function buildCashflowDiario(empresa, ano, mes) {
+  const movimento = await getMovimentoRealizadoDiario(empresa, ano, mes)
+  const cpFuturo = await getContasPagarFuturoAbertoDiario(empresa, ano, mes)
+  const crFuturo = await getContasReceberFuturoAbertoDiario(empresa, ano, mes)
+  const saldoDia = sumMaps(movimento.receitas, movimento.despesas, cpFuturo, crFuturo)
+
+  const linhas = [
+    { id: -8001, row_idx: 1, codigo: '1', descricao: 'Receitas Realizadas', nivel: 1, tipo: 'total', valores: movimento.receitas, total: mapTotal(movimento.receitas) },
+    { id: -8002, row_idx: 2, codigo: '2', descricao: 'Despesas Realizadas', nivel: 1, tipo: 'total', valores: movimento.despesas, total: mapTotal(movimento.despesas) },
+    { id: -8003, row_idx: 3, codigo: '3', descricao: 'Contas a Pagar Futuro em Aberto', nivel: 1, tipo: 'total', valores: cpFuturo, total: mapTotal(cpFuturo) },
+    { id: -8004, row_idx: 4, codigo: '4', descricao: 'Contas a Receber Futuro em Aberto', nivel: 1, tipo: 'total', valores: crFuturo, total: mapTotal(crFuturo) },
+    { id: -8005, row_idx: 5, codigo: '5', descricao: 'Saldo do Dia', nivel: 1, tipo: 'header', valores: saldoDia, total: mapTotal(saldoDia) },
+  ]
+
+  return {
+    linhas,
+    colunas: buildDailyColumns(ano, mes),
+    empresa,
+    ano,
+    mes,
+    visao: 'diaria',
+  }
+}
+
 function mapTotal(valores, mes = null) {
   if (mes) return Number(valores[mes] || 0)
   return Object.values(valores).reduce((s, v) => s + Number(v || 0), 0)
@@ -150,9 +316,16 @@ function mapTotal(valores, mes = null) {
 router.get('/cashflow', async (req, res) => {
   const empresa = normalizeEmpresaFilter(req.query.empresa)
   const ano     = parseInt(req.query.ano || new Date().getFullYear())
+  const visao   = String(req.query.visao || 'mensal').toLowerCase()
   const mes     = req.query.mes ? parseInt(req.query.mes) : null
 
   try {
+    if (visao === 'diaria') {
+      const mesDiario = mes || (new Date().getMonth() + 1)
+      const dataDiaria = await buildCashflowDiario(empresa, ano, mesDiario)
+      return res.json({ ok: true, data: dataDiaria })
+    }
+
     // Busca todas as linhas hierárquicas já importadas do Excel.
     const { rows: linhasImportadas } = await query(
       `SELECT id, row_idx, codigo, descricao, nivel, tipo
@@ -240,11 +413,32 @@ router.get('/cashflow', async (req, res) => {
 // ─── GET /financeiro/cashflow/empresas ────────────────────────────────────────
 router.get('/cashflow/empresas', async (req, res) => {
   try {
-    const { rows } = await query(
+    const selects = [
       `SELECT DISTINCT empresa, ano
-       FROM fin_cashflow_valores
-       ORDER BY empresa, ano`
+         FROM fin_cashflow_valores
+        WHERE empresa IS NOT NULL AND ano IS NOT NULL`,
+    ]
+
+    if (await tableExists('fin_lancamentos_cp')) {
+      selects.push(
+        `SELECT DISTINCT empresa, EXTRACT(YEAR FROM COALESCE(dt_emissao::timestamp, created_at))::int AS ano
+           FROM fin_lancamentos_cp
+          WHERE empresa IS NOT NULL AND COALESCE(dt_emissao::timestamp, created_at) IS NOT NULL`
+      )
+    }
+
+    if (await tableExists('fin_movimento')) {
+      selects.push(
+        `SELECT DISTINCT empresa, ano
+           FROM fin_movimento
+          WHERE empresa IS NOT NULL AND ano IS NOT NULL`
+      )
+    }
+
+    const { rows } = await query(
+      `${selects.join(' UNION ')} ORDER BY ano DESC, empresa ASC`
     )
+
     return res.json({ ok: true, data: rows })
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message })
