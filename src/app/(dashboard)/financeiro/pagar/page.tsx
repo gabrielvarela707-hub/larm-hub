@@ -69,8 +69,18 @@ const R$ = (v: number | null | undefined) =>
 const todayISO = () => new Date().toISOString().split('T')[0]
 const moneyToNumber = (v: string | number | null | undefined) => {
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0
-  const normalized = String(v ?? '').replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, '')
-  const n = Number(normalized)
+
+  const raw = String(v ?? '').trim()
+  if (!raw) return 0
+
+  // Campo type=number normalmente envia decimal com ponto (500.00).
+  // Campo digitado em PT-BR pode vir com vírgula (500,00).
+  // Antes removíamos todo ponto, o que transformava 500.00 em 50000.
+  const normalized = raw.includes(',')
+    ? raw.replace(/\./g, '').replace(',', '.')
+    : raw
+
+  const n = Number(normalized.replace(/[^0-9.-]/g, ''))
   return Number.isFinite(n) ? n : 0
 }
 const fmtDate = (d: string | null | undefined) => {
@@ -129,6 +139,10 @@ export default function PagarPage() {
 
   // Filtros
   const [fEmpresa, setFEmpresa] = useState('')
+  const [fFornecedorFiltro, setFFornecedorFiltro] = useState('')
+  const [fTipoDocFiltro, setFTipoDocFiltro] = useState('')
+  const [fPeriodoInicio, setFPeriodoInicio] = useState('')
+  const [fPeriodoFim, setFPeriodoFim] = useState('')
   const [fStatus,  setFStatus]  = useState('')
   const [fBusca,   setFBusca]   = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('vencimento')
@@ -169,6 +183,10 @@ export default function PagarPage() {
     try {
       const params: Record<string, string> = {}
       if (fEmpresa) params.empresa = fEmpresa
+      if (fFornecedorFiltro) params.fornecedor_id = fFornecedorFiltro
+      if (fTipoDocFiltro) params.tipo_documento_id = fTipoDocFiltro
+      if (fPeriodoInicio) params.venc_inicio = fPeriodoInicio
+      if (fPeriodoFim) params.venc_fim = fPeriodoFim
       if (fStatus)  params.status  = fStatus
       if (fBusca)   params.busca   = fBusca
       const r = await apiClient.get('/financeiro/lancamentos-cp', { params })
@@ -177,7 +195,7 @@ export default function PagarPage() {
       setTotalVlr(r.data.total_valor)
     } catch { }
     finally { setLoading(false) }
-  }, [fEmpresa, fStatus, fBusca])
+  }, [fEmpresa, fFornecedorFiltro, fTipoDocFiltro, fPeriodoInicio, fPeriodoFim, fStatus, fBusca])
 
   useEffect(() => { load() }, [load])
 
@@ -565,7 +583,7 @@ export default function PagarPage() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-bold text-slate-800">Contas a Pagar</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{total} lançamentos · {R$(totalVlr)} em aberto</p>
+          <p className="text-sm text-slate-500 mt-0.5">{total} parcelas · {R$(totalVlr)} em aberto</p>
         </div>
         <button onClick={openNew}
           className="flex items-center gap-2 px-4 py-2 bg-[#1e3a5f] hover:bg-[#162d4a] text-white text-xs font-semibold rounded-lg transition-colors">
@@ -574,26 +592,47 @@ export default function PagarPage() {
       </div>
 
       {/* Filtros */}
-      <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4 py-3 flex flex-wrap gap-3 items-center">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input value={fBusca} onChange={e => setFBusca(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && load()}
-            placeholder="Fornecedor ou histórico…"
-            className="pl-9 pr-4 py-2 w-full text-sm bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-blue-400" />
+      <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4 py-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-3 items-center">
+          <div className="relative md:col-span-2 xl:col-span-2">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input value={fBusca} onChange={e => setFBusca(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && load()}
+              placeholder="Fornecedor, histórico ou documento…"
+              className="pl-9 pr-4 py-2 w-full text-sm bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-blue-400" />
+          </div>
+          <select value={fFornecedorFiltro} onChange={e => setFFornecedorFiltro(e.target.value)}
+            className="text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
+            <option value="">Todos fornecedores</option>
+            {fornecedores
+              .filter(f => !fEmpresa || f.empresa === fEmpresa || f.empresa === 'TODOS')
+              .map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
+          </select>
+          <select value={fTipoDocFiltro} onChange={e => setFTipoDocFiltro(e.target.value)}
+            className="text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
+            <option value="">Todos tipos</option>
+            {tiposDocumento.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
+          </select>
+          <input value={fPeriodoInicio} onChange={e => setFPeriodoInicio(e.target.value)} type="date" title="Vencimento inicial"
+            className="text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700" />
+          <input value={fPeriodoFim} onChange={e => setFPeriodoFim(e.target.value)} type="date" title="Vencimento final"
+            className="text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700" />
+          <div className="flex gap-3 md:col-span-2 xl:col-span-1">
+            <select value={fEmpresa} onChange={e => setFEmpresa(e.target.value)}
+              className="min-w-0 flex-1 text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
+              <option value="">Todas empresas</option>
+              {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
+            </select>
+            <select value={fStatus} onChange={e => setFStatus(e.target.value)}
+              className="min-w-0 flex-1 text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
+              <option value="">Todos status</option>
+              <option value="pendente">Pendente</option>
+              <option value="pago">Pago</option>
+              <option value="vencido">Vencido</option>
+            </select>
+          </div>
         </div>
-        <select value={fEmpresa} onChange={e => setFEmpresa(e.target.value)}
-          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700">
-          <option value="">Todas empresas</option>
-          {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
-        </select>
-        <select value={fStatus} onChange={e => setFStatus(e.target.value)}
-          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700">
-          <option value="">Todos status</option>
-          <option value="pendente">Pendente</option>
-          <option value="pago">Pago</option>
-          <option value="vencido">Vencido</option>
-        </select>
+        <p className="mt-2 text-[10px] text-slate-400">Período filtra pela data de vencimento.</p>
       </div>
 
       {/* Tabela */}

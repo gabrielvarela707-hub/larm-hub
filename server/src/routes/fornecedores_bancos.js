@@ -455,7 +455,7 @@ router.get('/plano-contas', async (req, res) => {
 
 // GET /lancamentos-cp — lista com filtros
 router.get('/lancamentos-cp', async (req, res) => {
-  const { empresa, status, fornecedor_id, busca, page = 1, limit = 50,
+  const { empresa, status, fornecedor_id, tipo_documento_id, busca, page = 1, limit = 50,
           dt_inicio, dt_fim, venc_inicio, venc_fim } = req.query
   const conditions = []
   const params = []
@@ -472,6 +472,10 @@ router.get('/lancamentos-cp', async (req, res) => {
     params.push(parseInt(fornecedor_id))
     conditions.push(`l.fornecedor_id = $${params.length}`)
   }
+  if (tipo_documento_id) {
+    params.push(parseInt(tipo_documento_id))
+    conditions.push(`l.tipo_documento_id = $${params.length}`)
+  }
   if (busca) {
     params.push(`%${busca}%`)
     conditions.push(`(f.razao_social ILIKE $${params.length} OR l.historico ILIKE $${params.length} OR l.nf_doc ILIKE $${params.length} OR td.nome ILIKE $${params.length})`)
@@ -483,6 +487,14 @@ router.get('/lancamentos-cp', async (req, res) => {
   if (dt_fim) {
     params.push(dt_fim)
     conditions.push(`l.dt_emissao <= $${params.length}`)
+  }
+  if (venc_inicio) {
+    params.push(venc_inicio)
+    conditions.push(`p.vencimento >= $${params.length}`)
+  }
+  if (venc_fim) {
+    params.push(venc_fim)
+    conditions.push(`p.vencimento <= $${params.length}`)
   }
 
   const where  = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
