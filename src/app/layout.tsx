@@ -4,14 +4,15 @@ import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
 import { Toaster } from 'react-hot-toast'
 import './globals.css'
+import DynamicTitle from '@/components/dynamic-title'
 
 export const metadata: Metadata = {
   icons: { icon: '/favicon.svg', shortcut: '/favicon.svg' },
   title: {
-    template: '%s | LoteMobile',
-    default: 'LoteMobile — Tecnologia para Loteamentos',
+    template: '%s | HUB',
+    default: 'HUB — Plataforma Integrada',
   },
-  description: 'Plataforma completa de gestão de loteamentos: CRM, contratos, financeiro, mapas interativos e automações.',
+  description: 'Plataforma completa de gestão: CRM, contratos, financeiro, mapas interativos e automações.',
 }
 
 export default function RootLayout({
@@ -22,6 +23,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body className={GeistSans.className}>
+        <DynamicTitle />
         {children}
         <Toaster
           position="top-right"
