@@ -242,12 +242,19 @@ export default function ConfiguracoesPage() {
   // Creds
   const [creds, setCreds] = useState({
     googleMapsKey: config.googleMapsKey || '',
-    // E-mail transacional via AWS SES
+    // AWS SES (sistema)
     sesRegion:          (config as unknown as Record<string,string>).sesRegion          || 'us-east-1',
     sesAccessKeyId:     (config as unknown as Record<string,string>).sesAccessKeyId     || '',
     sesSecretAccessKey: (config as unknown as Record<string,string>).sesSecretAccessKey || '',
     sesFromEmail:       (config as unknown as Record<string,string>).sesFromEmail       || '',
     sesFromName:        (config as unknown as Record<string,string>).sesFromName        || '',
+    // AWS SNS (sistema)
+    snsRegion:          (config as unknown as Record<string,string>).snsRegion          || 'sa-east-1',
+    snsAccessKeyId:     (config as unknown as Record<string,string>).snsAccessKeyId     || '',
+    snsSecretAccessKey: (config as unknown as Record<string,string>).snsSecretAccessKey || '',
+    snsSenderId:        (config as unknown as Record<string,string>).snsSenderId        || 'LOTEAMENTO',
+    snsSMSType:         (config as unknown as Record<string,string>).snsSMSType         || 'Transactional',
+    snsMockMode:        (config as unknown as Record<string,boolean>).snsMockMode       ?? true,
     whatsappToken: config.whatsappToken || '',
     whatsappPhoneId: config.whatsappPhoneId || '',
     whatsappBusinessId: config.whatsappBusinessId || '',
@@ -265,6 +272,49 @@ export default function ConfiguracoesPage() {
   const [usersLoading, setUsersLoading] = useState(false)
   const [selectedUser, setSelectedUser] = useState<AppUser | null>(null)
   const [perms, setPerms]       = useState<PermsMap>({})
+
+  // Convites pendentes
+  type Invite = { id: string; name: string; email: string; role: AppUser['role']; status: string; expires_at: string; created_at: string }
+  const [invites, setInvites]           = useState<Invite[]>([])
+  const [resendingId, setResendingId]   = useState<string | null>(null)
+
+  async function loadUsers() {
+    setUsersLoading(true)
+    try {
+      const [usersRes, invitesRes] = await Promise.all([
+        apiClient.get<{ ok: boolean; data: { id: string; name: string; email: string; role: AppUser['role']; is_active: boolean }[] }>('/users'),
+        apiClient.get<{ ok: boolean; data: Invite[] }>('/users/invites'),
+      ])
+      if (usersRes.data.ok) {
+        const loaded: AppUser[] = usersRes.data.data.map(u => ({
+          id: u.id, name: u.name, email: u.email, role: u.role, active: u.is_active,
+        }))
+        setUsers(loaded)
+        setPerms(Object.fromEntries(loaded.map(u => [u.id, defaultPerms(u.role)])))
+      }
+      if (invitesRes.data.ok) setInvites(invitesRes.data.data)
+    } catch {/* silencioso */} finally { setUsersLoading(false) }
+  }
+
+  async function resendInvite(invite: Invite) {
+    setResendingId(invite.id)
+    try {
+      // Cancela o convite antigo
+      await apiClient.delete(`/users/invite/${invite.id}`)
+      // Cria novo convite com os mesmos dados
+      const r = await apiClient.post('/users/invite', {
+        name: invite.name, email: invite.email, role: invite.role,
+        auto_activate: true, use_temp_password: false,
+      })
+      const rawUrl: string = r.data.data.invite_url || ''
+      const fixedUrl = rawUrl.startsWith('undefined')
+        ? `${window.location.origin}/convite/${rawUrl.split('/convite/')[1]}`
+        : rawUrl
+      setInvResult({ url: fixedUrl, temp_password: r.data.data.temp_password })
+      setShowInvite(true)
+      await loadUsers()
+    } catch { /* silencioso */ } finally { setResendingId(null) }
+  }
 
   // ── Convite ────────────────────────────────────────────────────────────────
   const [showInvite,      setShowInvite]      = useState(false)
@@ -334,15 +384,13 @@ export default function ConfiguracoesPage() {
         use_temp_password: invUseTempPw,
         custom_message:   invMsgMode === 'custom' ? invCustomMsg.trim() : null,
       })
-      setInvResult({ url: r.data.data.invite_url, temp_password: r.data.data.temp_password })
-      // Adiciona à lista local
-      setUsers(prev => [...prev, {
-        id: r.data.data.invite.id,
-        name: invName.trim(),
-        email: invEmail.trim().toLowerCase(),
-        role: invRole,
-        active: invAutoActivate && invUseTempPw,
-      }])
+      const rawUrl: string = r.data.data.invite_url || ''
+      const fixedUrl = rawUrl.startsWith('undefined')
+        ? `${window.location.origin}/convite/${rawUrl.split('/convite/')[1]}`
+        : rawUrl
+      setInvResult({ url: fixedUrl, temp_password: r.data.data.temp_password })
+      // Recarrega lista para mostrar status atualizado
+      await loadUsers()
     } catch (err: unknown) {
       const msg = (err instanceof Error ? err.message : 'Erro ao enviar convite')
       setInvErrors({ _geral: (err as {response?: {data?: {message?: string}}}).response?.data?.message || msg })
@@ -391,21 +439,7 @@ export default function ConfiguracoesPage() {
   }
 
   // Carrega usuários reais da API ao montar
-  useEffect(() => {
-    setUsersLoading(true)
-    apiClient.get<{ ok: boolean; data: { id: string; name: string; email: string; role: AppUser['role']; is_active: boolean }[] }>('/users')
-      .then(({ data }) => {
-        if (data.ok) {
-          const loaded: AppUser[] = data.data.map(u => ({
-            id: u.id, name: u.name, email: u.email, role: u.role, active: u.is_active,
-          }))
-          setUsers(loaded)
-          setPerms(Object.fromEntries(loaded.map(u => [u.id, defaultPerms(u.role)])))
-        }
-      })
-      .catch(() => {/* falha silenciosa — lista fica vazia */})
-      .finally(() => setUsersLoading(false))
-  }, [])
+  useEffect(() => { loadUsers() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   function save() {
     const payload = { logoUrl: logoPreview, logoText, primaryColor, sidebarColor, ...creds }
@@ -617,6 +651,46 @@ export default function ConfiguracoesPage() {
                   <UserPlus className="w-4 h-4" /> Convidar usuario
                 </button>
               </Section>
+
+              {/* ── Convites pendentes ── */}
+              {invites.length > 0 && (
+                <Section title="Convites pendentes" sub={`${invites.length} aguardando aceite`}>
+                  <div className="space-y-2">
+                    {invites.map(inv => {
+                      const expired = new Date(inv.expires_at) < new Date()
+                      return (
+                        <div key={inv.id} className="flex items-center gap-3 py-2.5 border-b border-slate-50 last:border-0">
+                          <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center flex-shrink-0">
+                            <span className="text-slate-500 text-xs font-semibold">
+                              {inv.name.split(' ').slice(0,2).map((n: string) => n[0]).join('')}
+                            </span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-slate-800">{inv.name}</p>
+                            <p className="text-xs text-slate-500">{inv.email}</p>
+                          </div>
+                          <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_COLORS[inv.role])}>
+                            {ROLE_LABELS[inv.role]}
+                          </span>
+                          <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium',
+                            expired ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700')}>
+                            {expired ? 'Expirado' : 'Pendente'}
+                          </span>
+                          <button
+                            onClick={() => resendInvite(inv)}
+                            disabled={resendingId === inv.id}
+                            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap">
+                            {resendingId === inv.id
+                              ? <Loader2 className="w-3 h-3 animate-spin" />
+                              : <RefreshCw className="w-3 h-3" />}
+                            Reenviar
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </Section>
+              )}
 
               {/* ── Modal de Convite ── */}
               {showInvite && (
@@ -1026,6 +1100,50 @@ export default function ConfiguracoesPage() {
               <Section title="Google Maps API" sub="Mapa interativo de lotes">
                 <Field label="API Key">
                   <SecretInput value={creds.googleMapsKey} onChange={v => setCreds(c => ({ ...c, googleMapsKey: v }))} placeholder="AIza..." />
+                </Field>
+              </Section>
+
+              <Section title="AWS SNS / SMS" sub="Envio de SMS para leads direto do painel">
+                <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                  O envio de mensagens do CRM fica concentrado em <strong>SMS via AWS SNS</strong>. Os fluxos de e-mail continuam no FluentCRM, RD Station ou HubSpot.
+                </div>
+                <Field label="Modo demonstracao" sub="Mantem o fluxo em mock para validacao visual com o cliente">
+                  <label className="inline-flex items-center gap-3 rounded-xl border border-slate-200 px-3 py-2 cursor-pointer">
+                    <input type="checkbox" checked={Boolean(creds.snsMockMode)}
+                      onChange={e => setCreds(c => ({ ...c, snsMockMode: e.target.checked }))}
+                      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                    <div>
+                      <p className="text-sm font-medium text-slate-800">Usar envio mockado</p>
+                      <p className="text-xs text-slate-500">Desative somente quando as credenciais e a conta SNS estiverem prontas.</p>
+                    </div>
+                  </label>
+                </Field>
+                <Field label="Regiao">
+                  <select value={creds.snsRegion} onChange={e => setCreds(c => ({ ...c, snsRegion: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                    <option value="sa-east-1">sa-east-1 (Sao Paulo)</option>
+                    <option value="us-east-1">us-east-1 (N. Virginia)</option>
+                    <option value="us-east-2">us-east-2 (Ohio)</option>
+                    <option value="us-west-2">us-west-2 (Oregon)</option>
+                  </select>
+                </Field>
+                <Field label="Access Key ID">
+                  <SecretInput value={creds.snsAccessKeyId} onChange={v => setCreds(c => ({ ...c, snsAccessKeyId: v }))} placeholder="AKIA..." />
+                </Field>
+                <Field label="Secret Access Key">
+                  <SecretInput value={creds.snsSecretAccessKey} onChange={v => setCreds(c => ({ ...c, snsSecretAccessKey: v }))} />
+                </Field>
+                <Field label="Sender ID" sub="Nome exibido quando o pais e a operadora suportam sender ID">
+                  <Input value={creds.snsSenderId}
+                    onChange={e => setCreds(c => ({ ...c, snsSenderId: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 11) }))}
+                    placeholder="LOTEAMENTO" maxLength={11} />
+                </Field>
+                <Field label="Tipo padrao">
+                  <select value={creds.snsSMSType} onChange={e => setCreds(c => ({ ...c, snsSMSType: e.target.value }))}
+                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none">
+                    <option value="Transactional">Transactional</option>
+                    <option value="Promotional">Promotional</option>
+                  </select>
                 </Field>
               </Section>
 
