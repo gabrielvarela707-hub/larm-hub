@@ -2,24 +2,17 @@
 
 /**
  * src/lib/tenant-config-store.ts
- * Store de configuração do tenant — sincroniza com a API backend.
- *
- * Fluxo:
- *   1. hydrate()      → GET /tenant-config  (carrega do banco ao montar o painel)
- *   2. setConfig()    → atualiza estado local + sessionStorage (cache otimista)
- *   3. persistConfig()→ PUT /tenant-config  (chamado explicitamente ao clicar "Salvar")
+ * → lotemobile2/src/lib/tenant-config-store.ts
  */
 
 import { create } from 'zustand'
 import { apiClient } from '@/lib/auth-store'
 
 export interface TenantConfig {
-  // Brand / white-label
   logoUrl: string
   logoText: string
   primaryColor: string
   sidebarColor: string
-  // Google Maps
   googleMapsKey: string
   // AWS SES
   sesRegion: string
@@ -34,13 +27,6 @@ export interface TenantConfig {
   snsSenderId: string
   snsSMSType: 'Transactional' | 'Promotional'
   snsMockMode: boolean
-  // AWS SNS / SMS
-  snsRegion: string
-  snsAccessKeyId: string
-  snsSecretAccessKey: string
-  snsSenderId: string
-  snsSMSType: 'Transactional' | 'Promotional'
-  snsMockMode: boolean
   // WhatsApp
   whatsappToken: string
   whatsappPhoneId: string
@@ -49,7 +35,6 @@ export interface TenantConfig {
   clicksignKey: string
   bankName: string
   bankApiKey: string
-  // CRM integrations (livre por provider)
   crmConfig: Record<string, Record<string, string>>
 }
 
@@ -58,11 +43,8 @@ interface TenantConfigState {
   hydrated: boolean
   loading: boolean
   saving: boolean
-  /** Carrega configurações do backend (GET /tenant-config) */
   hydrate: () => Promise<void>
-  /** Atualiza estado local + sessionStorage sem bater na API */
   setConfig: (partial: Partial<TenantConfig>) => void
-  /** Persiste no backend (PUT /tenant-config) — retorna mensagem de erro ou null */
   persistConfig: (payload?: Partial<TenantConfig>) => Promise<string | null>
   getGoogleMapsKey: () => string
 }
@@ -84,12 +66,6 @@ const DEFAULT: TenantConfig = {
   snsSenderId: 'LOTEAMENTO',
   snsSMSType: 'Transactional',
   snsMockMode: true,
-  snsRegion: 'sa-east-1',
-  snsAccessKeyId: '',
-  snsSecretAccessKey: '',
-  snsSenderId: 'LOTEAMENTO',
-  snsSMSType: 'Transactional',
-  snsMockMode: true,
   whatsappToken: '',
   whatsappPhoneId: '',
   whatsappBusinessId: '',
@@ -102,18 +78,14 @@ const DEFAULT: TenantConfig = {
 const STORAGE_KEY = 'tenant_config'
 
 function applyToStorage(cfg: TenantConfig) {
-  if (typeof window !== 'undefined') {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(cfg))
-  }
+  if (typeof window !== 'undefined') sessionStorage.setItem(STORAGE_KEY, JSON.stringify(cfg))
 }
 
 function readFromStorage(): Partial<TenantConfig> {
   try {
     const raw = typeof window !== 'undefined' ? sessionStorage.getItem(STORAGE_KEY) : null
     return raw ? (JSON.parse(raw) as Partial<TenantConfig>) : {}
-  } catch {
-    return {}
-  }
+  } catch { return {} }
 }
 
 export const useTenantConfig = create<TenantConfigState>((set, get) => ({
@@ -124,13 +96,8 @@ export const useTenantConfig = create<TenantConfigState>((set, get) => ({
 
   hydrate: async () => {
     if (get().hydrated) return
-
-    // Mostra cache do sessionStorage imediatamente (evita flash de defaults)
     const cached = readFromStorage()
-    if (Object.keys(cached).length) {
-      set({ config: { ...DEFAULT, ...cached } })
-    }
-
+    if (Object.keys(cached).length) set({ config: { ...DEFAULT, ...cached } })
     set({ loading: true })
     try {
       const { data } = await apiClient.get<{ ok: boolean; data: Partial<TenantConfig> }>('/tenant-config')
@@ -142,7 +109,6 @@ export const useTenantConfig = create<TenantConfigState>((set, get) => ({
         set({ hydrated: true })
       }
     } catch {
-      // Se a API falhar, continua com o cache local
       set({ hydrated: true })
     } finally {
       set({ loading: false })
@@ -163,7 +129,6 @@ export const useTenantConfig = create<TenantConfigState>((set, get) => ({
       const toSave = payload ?? get().config
       const { data } = await apiClient.put<{ ok: boolean; message?: string }>('/tenant-config', toSave)
       if (!data.ok) return data.message ?? 'Erro ao salvar'
-      // Sincroniza cache com o que foi salvo
       applyToStorage(get().config)
       return null
     } catch (err: unknown) {
@@ -176,7 +141,6 @@ export const useTenantConfig = create<TenantConfigState>((set, get) => ({
 
   getGoogleMapsKey: () => {
     const fromStore = get().config.googleMapsKey
-    if (fromStore) return fromStore
-    return process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY ?? ''
+    return fromStore || process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ''
   },
 }))
