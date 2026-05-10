@@ -154,7 +154,7 @@ const TABS = [
   { id: 'usuarios',     label: 'Usuarios',           icon: Users },
   { id: 'permissoes',   label: 'Permissoes',         icon: Shield },
   { id: 'crm_integ',    label: 'Integ. CRM',         icon: Link2 },
-  { id: 'email',        label: 'E-mail (SES)',        icon: Mail },
+  { id: 'email',        label: 'E-mail',        icon: Mail },
   { id: 'notificacoes', label: 'Notificacoes',       icon: Bell },
   { id: 'plano',        label: 'Plano',              icon: CreditCard },
 ]
@@ -221,9 +221,11 @@ function SecretInput({ value, onChange, placeholder }: {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ConfiguracoesPage() {
-  const hydrate   = useTenantConfig(s => s.hydrate)
-  const config    = useTenantConfig(s => s.config)
-  const setConfig = useTenantConfig(s => s.setConfig)
+  const hydrate       = useTenantConfig(s => s.hydrate)
+  const config        = useTenantConfig(s => s.config)
+  const setConfig     = useTenantConfig(s => s.setConfig)
+  const persistConfig = useTenantConfig(s => s.persistConfig)
+  const configSaving  = useTenantConfig(s => s.saving)
 
   useEffect(() => { hydrate() }, [hydrate])
 
@@ -240,17 +242,12 @@ export default function ConfiguracoesPage() {
   // Creds
   const [creds, setCreds] = useState({
     googleMapsKey: config.googleMapsKey || '',
-    sesAccessKeyId: config.sesAccessKeyId || '',
-    sesSecretAccessKey: config.sesSecretAccessKey || '',
-    sesRegion: config.sesRegion || 'us-east-1',
-    sesFromEmail: config.sesFromEmail || '',
-    sesFromName: config.sesFromName || '',
-    snsAccessKeyId: config.snsAccessKeyId || '',
-    snsSecretAccessKey: config.snsSecretAccessKey || '',
-    snsRegion: config.snsRegion || 'sa-east-1',
-    snsSenderId: config.snsSenderId || 'SANTACLARA',
-    snsSMSType: config.snsSMSType || 'Transactional',
-    snsMockMode: config.snsMockMode ?? true,
+    // E-mail transacional via AWS SES
+    sesRegion:          (config as unknown as Record<string,string>).sesRegion          || 'us-east-1',
+    sesAccessKeyId:     (config as unknown as Record<string,string>).sesAccessKeyId     || '',
+    sesSecretAccessKey: (config as unknown as Record<string,string>).sesSecretAccessKey || '',
+    sesFromEmail:       (config as unknown as Record<string,string>).sesFromEmail       || '',
+    sesFromName:        (config as unknown as Record<string,string>).sesFromName        || '',
     whatsappToken: config.whatsappToken || '',
     whatsappPhoneId: config.whatsappPhoneId || '',
     whatsappBusinessId: config.whatsappBusinessId || '',
@@ -264,11 +261,10 @@ export default function ConfiguracoesPage() {
   const [activeCrm, setActiveCrm] = useState<string>('')
 
   // Users & Permissions
-  const [users, setUsers]              = useState<AppUser[]>(INITIAL_USERS)
+  const [users, setUsers]              = useState<AppUser[]>([])
+  const [usersLoading, setUsersLoading] = useState(false)
   const [selectedUser, setSelectedUser] = useState<AppUser | null>(null)
-  const [perms, setPerms]       = useState<PermsMap>(() =>
-    Object.fromEntries(INITIAL_USERS.map(u => [u.id, defaultPerms(u.role)]))
-  )
+  const [perms, setPerms]       = useState<PermsMap>({})
 
   // ── Convite ────────────────────────────────────────────────────────────────
   const [showInvite,      setShowInvite]      = useState(false)
@@ -283,6 +279,28 @@ export default function ConfiguracoesPage() {
   const [invResult,       setInvResult]       = useState<{url: string; temp_password?: string} | null>(null)
   const [invErrors,       setInvErrors]       = useState<Record<string,string>>({})
   const [invCopied,       setInvCopied]       = useState<string>('')
+
+  // ── Teste SES ──────────────────────────────────────────────────────────────
+  const [sesTestOpen,    setSesTestOpen]    = useState(false)
+  const [sesTestEmail,   setSesTestEmail]   = useState('')
+  const [sesTestLoading, setSesTestLoading] = useState(false)
+  const [sesTestStatus,  setSesTestStatus]  = useState<{ ok: boolean; message: string } | null>(null)
+
+  async function sendSesTest() {
+    if (!sesTestEmail.trim()) return
+    setSesTestLoading(true)
+    setSesTestStatus(null)
+    try {
+      const r = await apiClient.post('/tenant-config/test-email', { to: sesTestEmail.trim() })
+      setSesTestStatus({ ok: true, message: r.data.message || 'E-mail enviado com sucesso!' })
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message
+        || 'Erro ao enviar — verifique as credenciais SES'
+      setSesTestStatus({ ok: false, message: msg })
+    } finally {
+      setSesTestLoading(false)
+    }
+  }
 
   function resetInvite() {
     setInvName(''); setInvEmail(''); setInvRole('broker')
@@ -372,10 +390,34 @@ export default function ConfiguracoesPage() {
     setPerms(prev => ({ ...prev, [userId]: defaultPerms(user.role) }))
   }
 
+  // Carrega usuários reais da API ao montar
+  useEffect(() => {
+    setUsersLoading(true)
+    apiClient.get<{ ok: boolean; data: { id: string; name: string; email: string; role: AppUser['role']; is_active: boolean }[] }>('/users')
+      .then(({ data }) => {
+        if (data.ok) {
+          const loaded: AppUser[] = data.data.map(u => ({
+            id: u.id, name: u.name, email: u.email, role: u.role, active: u.is_active,
+          }))
+          setUsers(loaded)
+          setPerms(Object.fromEntries(loaded.map(u => [u.id, defaultPerms(u.role)])))
+        }
+      })
+      .catch(() => {/* falha silenciosa — lista fica vazia */})
+      .finally(() => setUsersLoading(false))
+  }, [])
+
   function save() {
-    setConfig({ logoUrl: logoPreview, logoText, primaryColor, sidebarColor, ...creds })
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    const payload = { logoUrl: logoPreview, logoText, primaryColor, sidebarColor, ...creds }
+    setConfig(payload)
+    persistConfig(payload).then(err => {
+      if (!err) {
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2500)
+      } else {
+        alert(`Erro ao salvar: ${err}`)
+      }
+    })
   }
 
   const ROLE_LABELS = {
@@ -395,12 +437,13 @@ export default function ConfiguracoesPage() {
           <h1 className="text-xl font-semibold text-slate-900">Configuracoes</h1>
           <p className="text-sm text-slate-500 mt-0.5">White-label, credenciais, usuarios e permissoes</p>
         </div>
-        <button onClick={save}
+        <button onClick={save} disabled={configSaving}
           className={cn('flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-            saved ? 'bg-emerald-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'
+            saved ? 'bg-emerald-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white',
+            configSaving && 'opacity-60 cursor-not-allowed'
           )}>
-          {saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-          {saved ? 'Salvo!' : 'Salvar'}
+          {configSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+          {configSaving ? 'Salvando...' : saved ? 'Salvo!' : 'Salvar'}
         </button>
       </div>
 
@@ -539,9 +582,11 @@ export default function ConfiguracoesPage() {
           {/* ── Usuarios ── */}
           {tab === 'usuarios' && (
             <>
-              <Section title="Usuarios da conta" sub={`${users.filter(u => u.active).length} ativos`}>
+              <Section title="Usuarios da conta" sub={usersLoading ? 'Carregando...' : `${users.filter(u => u.active).length} ativos`}>
                 <div className="space-y-1">
-                  {users.map(u => (
+                  {usersLoading
+                    ? <p className="text-xs text-slate-400 animate-pulse py-4 text-center">Carregando usuários...</p>
+                    : users.map(u => (
                     <div key={u.id} className={cn('flex items-center gap-3 py-3 border-b border-slate-50 last:border-0', !u.active && 'opacity-50')}>
                       <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
                         <span className="text-blue-700 text-xs font-semibold">
@@ -790,7 +835,9 @@ export default function ConfiguracoesPage() {
               <div className="bg-white rounded-xl border border-slate-100 p-4 shadow-card">
                 <p className="text-xs font-semibold text-slate-500 mb-3">Selecione o usuario:</p>
                 <div className="flex gap-2 flex-wrap">
-                  {users.map(u => (
+                  {usersLoading
+                    ? <p className="text-xs text-slate-400 animate-pulse">Carregando usuários...</p>
+                    : users.map(u => (
                     <button key={u.id}
                       onClick={() => setSelectedUser(u)}
                       className={cn(
@@ -982,88 +1029,64 @@ export default function ConfiguracoesPage() {
                 </Field>
               </Section>
 
-              <Section title="AWS SNS / SMS" sub="Envio de SMS para leads direto do painel">
-                <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                  O envio de mensagens do CRM fica concentrado em <strong>SMS via AWS SNS</strong>. Os fluxos de e-mail continuam no FluentCRM, RD Station ou HubSpot.
-                </div>
-
-                <Field label="Modo demonstracao" sub="Mantem o fluxo em mock para validacao visual com o cliente">
-                  <label className="inline-flex items-center gap-3 rounded-xl border border-slate-200 px-3 py-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(creds.snsMockMode)}
-                      onChange={e => setCreds(c => ({ ...c, snsMockMode: e.target.checked }))}
-                      className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <div>
-                      <p className="text-sm font-medium text-slate-800">Usar envio mockado</p>
-                      <p className="text-xs text-slate-500">Desative somente quando as credenciais e a conta SNS estiverem prontas.</p>
-                    </div>
-                  </label>
-                </Field>
-
-                <Field label="Regiao">
-                  <select
-                    value={creds.snsRegion}
-                    onChange={e => setCreds(c => ({ ...c, snsRegion: e.target.value }))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  >
-                    <option value="sa-east-1">sa-east-1 (Sao Paulo)</option>
-                    <option value="us-east-1">us-east-1 (N. Virginia)</option>
-                    <option value="us-east-2">us-east-2 (Ohio)</option>
-                  </select>
-                </Field>
-
-                <Field label="Access Key ID">
-                  <SecretInput value={creds.snsAccessKeyId} onChange={v => setCreds(c => ({ ...c, snsAccessKeyId: v }))} placeholder="AKIA..." />
-                </Field>
-
-                <Field label="Secret Access Key">
-                  <SecretInput value={creds.snsSecretAccessKey} onChange={v => setCreds(c => ({ ...c, snsSecretAccessKey: v }))} />
-                </Field>
-
-                <Field label="Sender ID" sub="Nome exibido quando o pais e a operadora suportam sender ID">
-                  <Input
-                    value={creds.snsSenderId}
-                    onChange={e => setCreds(c => ({ ...c, snsSenderId: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 11) }))}
-                    placeholder="SANTACLARA"
-                    maxLength={11}
-                  />
-                </Field>
-
-                <Field label="Tipo padrao">
-                  <select
-                    value={creds.snsSMSType}
-                    onChange={e => setCreds(c => ({ ...c, snsSMSType: e.target.value as 'Transactional' | 'Promotional' }))}
-                    className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
-                  >
-                    <option value="Transactional">Transactional</option>
-                    <option value="Promotional">Promotional</option>
-                  </select>
-                </Field>
-
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500 leading-relaxed">
-                  Dica: para producao, grave essas credenciais no backend ou em secrets do ambiente. Hoje elas ficam na configuracao local do tenant para acelerar a validacao do fluxo visual.
-                </div>
               </Section>
 
-              <Section title="AWS SES" sub="E-mails transacionais do sistema">
+              <Section title="AWS SES" sub="E-mails transacionais do sistema — configuracao unica para todo o sistema">
                 <Field label="Regiao">
                   <select value={creds.sesRegion} onChange={e => setCreds(c => ({ ...c, sesRegion: e.target.value }))}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none">
                     <option value="us-east-1">us-east-1 (N. Virginia)</option>
+                    <option value="us-east-2">us-east-2 (Ohio)</option>
+                    <option value="us-west-2">us-west-2 (Oregon)</option>
                     <option value="sa-east-1">sa-east-1 (Sao Paulo)</option>
+                    <option value="eu-west-1">eu-west-1 (Irlanda)</option>
                   </select>
                 </Field>
                 <Field label="Access Key ID"><SecretInput value={creds.sesAccessKeyId} onChange={v => setCreds(c => ({ ...c, sesAccessKeyId: v }))} placeholder="AKIA..." /></Field>
-                <Field label="Secret Key"><SecretInput value={creds.sesSecretAccessKey} onChange={v => setCreds(c => ({ ...c, sesSecretAccessKey: v }))} /></Field>
+                <Field label="Secret Access Key"><SecretInput value={creds.sesSecretAccessKey} onChange={v => setCreds(c => ({ ...c, sesSecretAccessKey: v }))} /></Field>
                 <Field label="E-mail remetente"><Input value={creds.sesFromEmail} onChange={e => setCreds(c => ({ ...c, sesFromEmail: e.target.value }))} placeholder="noreply@suaempresa.com.br" /></Field>
                 <Field label="Nome remetente"><Input value={creds.sesFromName} onChange={e => setCreds(c => ({ ...c, sesFromName: e.target.value }))} placeholder="Residencial Santa Clara" /></Field>
+                {/* ── Testar envio ── */}
+                <div className="border-t border-slate-100 pt-4 mt-2">
+                  {!sesTestOpen ? (
+                    <button onClick={() => { setSesTestEmail(''); setSesTestStatus(null); setSesTestOpen(true) }}
+                      className="flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-2 rounded-lg transition-colors">
+                      <Send className="w-3.5 h-3.5" /> Testar envio de e-mail
+                    </button>
+                  ) : (
+                    <div className="space-y-3">
+                      <p className="text-xs font-semibold text-slate-600">Enviar e-mail de teste</p>
+                      <div className="flex gap-2">
+                        <Input type="email" placeholder="seu@email.com" value={sesTestEmail}
+                          onChange={e => setSesTestEmail(e.target.value)} className="flex-1" />
+                        <button onClick={sendSesTest} disabled={sesTestLoading || !sesTestEmail.trim()}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap">
+                          {sesTestLoading
+                            ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Enviando...</>
+                            : <><Send className="w-3.5 h-3.5" /> Enviar</>}
+                        </button>
+                        <button onClick={() => setSesTestOpen(false)} className="p-2 text-slate-400 hover:text-slate-600">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      {sesTestStatus && (
+                        <div className={cn('flex items-center gap-2 text-xs px-3 py-2 rounded-lg',
+                          sesTestStatus.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600')}>
+                          {sesTestStatus.ok
+                            ? <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                            : <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />}
+                          {sesTestStatus.message}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </Section>
 
-              <Section title="WhatsApp Business API">
+              <Section title="WhatsApp Business API" sub="Configurado por conta — cada cliente usa seu proprio numero">
                 <Field label="Token"><SecretInput value={creds.whatsappToken} onChange={v => setCreds(c => ({ ...c, whatsappToken: v }))} placeholder="EAAx..." /></Field>
                 <Field label="Phone Number ID"><Input value={creds.whatsappPhoneId} onChange={e => setCreds(c => ({ ...c, whatsappPhoneId: e.target.value }))} /></Field>
+                <Field label="Business Account ID"><Input value={creds.whatsappBusinessId} onChange={e => setCreds(c => ({ ...c, whatsappBusinessId: e.target.value }))} /></Field>
               </Section>
             </>
           )}
