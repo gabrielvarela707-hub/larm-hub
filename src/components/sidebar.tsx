@@ -114,17 +114,14 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             {logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={logoUrl} alt={logoText}
-                className="h-8 max-w-[140px] object-contain"
-                style={{ filter: 'brightness(0) invert(1)' }}
+                className="h-9 w-auto max-w-[44px] object-contain flex-shrink-0"
               />
             ) : (
-              <>
-                <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <MapPin className="w-4 h-4 text-white" />
-                </div>
-                <span className="text-white text-sm font-semibold truncate">{logoText}</span>
-              </>
+              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                <MapPin className="w-4 h-4 text-white" />
+              </div>
             )}
+            <span className="text-white text-base font-bold truncate leading-tight">{logoText}</span>
           </div>
         )}
         {collapsed && (

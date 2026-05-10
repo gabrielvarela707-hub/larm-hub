@@ -23,6 +23,7 @@ export interface AuthUser {
   tenantName: string
   tenantSlug: string
   hubType:    'santa_clara' | 'larm' | 'generic'
+  mustChangePassword: boolean
 }
 
 interface AuthState {

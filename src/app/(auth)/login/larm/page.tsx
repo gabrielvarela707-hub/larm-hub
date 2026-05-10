@@ -21,7 +21,11 @@ export default function LarmLoginPage() {
     setLoading(true)
     const result = await login(email.trim(), password)
     setLoading(false)
-    if (result.ok) router.push('/')
+    if (result.ok) {
+      const user = useAuthStore.getState().user
+      if (user?.mustChangePassword) router.push('/trocar-senha')
+      else router.push('/')
+    }
     else setError(result.error ?? 'E-mail ou senha incorretos')
   }
 
