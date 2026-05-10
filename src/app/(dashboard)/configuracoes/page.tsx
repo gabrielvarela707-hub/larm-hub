@@ -1029,8 +1029,6 @@ export default function ConfiguracoesPage() {
                 </Field>
               </Section>
 
-              </Section>
-
               <Section title="AWS SES" sub="E-mails transacionais do sistema — configuracao unica para todo o sistema">
                 <Field label="Regiao">
                   <select value={creds.sesRegion} onChange={e => setCreds(c => ({ ...c, sesRegion: e.target.value }))}
