@@ -5,7 +5,7 @@
  * → lotemobile2/src/app/(dashboard)/financeiro/fornecedores/page.tsx
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Plus, Search, Pencil, X, Check, Loader2,
   Building2, User, History, FileText,
