@@ -1165,7 +1165,31 @@ export default function ConfiguracoesPage() {
                       {/* Matriz de permissões */}
                       <div className="space-y-2">
                         <label className="text-xs font-medium text-slate-600">Permissões por módulo</label>
-                        <div className="rounded-xl border border-slate-200 overflow-hidden">
+                        {/* Selecionar tudo */}
+                      <div className="flex items-center gap-2 mb-3">
+                        <button onClick={() => {
+                          const allRead = allModIds.every(id => pfPerms[id]?.read)
+                          setPfPerms(Object.fromEntries(allModIds.map(id =>
+                            [id, allRead ? { read: false, write: false } : { read: true, write: true }]
+                          )))
+                        }}
+                          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          {allModIds.every(id => pfPerms[id]?.read) ? 'Remover todas' : 'Selecionar todas'}
+                        </button>
+                        <button onClick={() => {
+                          const allWrite = allModIds.every(id => pfPerms[id]?.write)
+                          setPfPerms(prev => Object.fromEntries(allModIds.map(id =>
+                            [id, allWrite ? { ...prev[id], write: false } : { read: true, write: true }]
+                          )))
+                        }}
+                          className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+                          <Pencil className="w-3.5 h-3.5" />
+                          {allModIds.every(id => pfPerms[id]?.write) ? 'Remover escrita total' : 'Escrita em tudo'}
+                        </button>
+                      </div>
+
+                      <div className="rounded-xl border border-slate-200 overflow-hidden">
                           <div className="grid grid-cols-[1fr_80px_80px] bg-slate-50 border-b border-slate-100 px-4 py-2.5">
                             <span className="text-xs font-semibold text-slate-500 uppercase">Módulo</span>
                             <span className="text-xs font-semibold text-slate-500 text-center">Leitura</span>
@@ -1175,16 +1199,32 @@ export default function ConfiguracoesPage() {
                             <div key={g.group}>
                               <div className="px-4 py-2 bg-slate-50/60 border-b border-slate-100 flex items-center justify-between">
                                 <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">{g.group}</p>
-                                <button onClick={() => {
-                                  const mods = g.modules.map(m => m.id)
-                                  const allRead = mods.every(id => pfPerms[id]?.read)
-                                  setPfPerms(prev => ({
-                                    ...prev,
-                                    ...Object.fromEntries(mods.map(id => [id, allRead ? { read: false, write: false } : { read: true, write: false }]))
-                                  }))
-                                }} className="text-[10px] text-slate-400 hover:text-blue-600">
-                                  {g.modules.every(m => pfPerms[m.id]?.read) ? 'Remover grupo' : 'Selecionar grupo'}
-                                </button>
+                                <div className="flex items-center gap-3">
+                                  <button onClick={() => {
+                                    const mods = g.modules.map(m => m.id)
+                                    const allRead = mods.every(id => pfPerms[id]?.read)
+                                    setPfPerms(prev => ({
+                                      ...prev,
+                                      ...Object.fromEntries(mods.map(id => [id, allRead
+                                        ? { read: false, write: false }
+                                        : { read: true, write: prev[id]?.write ?? false }]))
+                                    }))
+                                  }} className="text-[10px] text-slate-400 hover:text-blue-600 transition-colors">
+                                    {g.modules.every(m => pfPerms[m.id]?.read) ? '− leitura' : '+ leitura'}
+                                  </button>
+                                  <button onClick={() => {
+                                    const mods = g.modules.map(m => m.id)
+                                    const allWrite = mods.every(id => pfPerms[id]?.write)
+                                    setPfPerms(prev => ({
+                                      ...prev,
+                                      ...Object.fromEntries(mods.map(id => [id, allWrite
+                                        ? { ...prev[id], write: false }
+                                        : { read: true, write: true }]))
+                                    }))
+                                  }} className="text-[10px] text-slate-400 hover:text-emerald-600 transition-colors">
+                                    {g.modules.every(m => pfPerms[m.id]?.write) ? '− escrita' : '+ escrita'}
+                                  </button>
+                                </div>
                               </div>
                               {g.modules.map(mod => {
                                 const mp = pfPerms[mod.id] ?? { read: false, write: false }
