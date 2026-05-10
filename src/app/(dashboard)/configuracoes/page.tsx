@@ -1139,7 +1139,7 @@ export default function ConfiguracoesPage() {
                     placeholder="LOTEAMENTO" maxLength={11} />
                 </Field>
                 <Field label="Tipo padrao">
-                  <select value={creds.snsSMSType} onChange={e => setCreds(c => ({ ...c, snsSMSType: e.target.value }))}
+                  <select value={creds.snsSMSType} onChange={e => setCreds(c => ({ ...c, snsSMSType: e.target.value as 'Transactional' | 'Promotional' }))}
                     className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none">
                     <option value="Transactional">Transactional</option>
                     <option value="Promotional">Promotional</option>
