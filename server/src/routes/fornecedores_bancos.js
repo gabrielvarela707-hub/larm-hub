@@ -10,6 +10,160 @@ const { authenticate } = require('../middleware/authenticate')
 const router = express.Router()
 router.use(authenticate)
 
+
+const AI_JSON_SCHEMA_PROMPT = `
+Você é um extrator de dados financeiros para Contas a Pagar no Brasil.
+Leia o PDF/imagem anexado e retorne somente JSON válido, sem markdown e sem comentários.
+Quando não encontrar um dado, use null.
+
+Formato obrigatório:
+{
+  "fornecedor_nome": string|null,
+  "fornecedor_cnpj": string|null,
+  "tipo_documento": string|null,
+  "numero_documento": string|null,
+  "historico": string|null,
+  "data_emissao": "YYYY-MM-DD"|null,
+  "data_vencimento": "YYYY-MM-DD"|null,
+  "valor_total": number|null,
+  "parcelas": [
+    { "numero": number, "valor": number, "vencimento": "YYYY-MM-DD" }
+  ]
+}
+
+Regras:
+- valor_total deve ser número em reais, usando ponto decimal.
+- datas devem estar em ISO YYYY-MM-DD.
+- Se houver apenas um vencimento, retorne uma parcela número 1.
+- Não invente informações.
+`
+
+function extractTextFromOpenAIResponse(json) {
+  if (json.output_text) return json.output_text
+  const out = Array.isArray(json.output) ? json.output : []
+  return out.flatMap(item => Array.isArray(item.content) ? item.content : [])
+    .map(part => part.text || part.value || '')
+    .filter(Boolean)
+    .join('\n')
+}
+
+function extractTextFromGeminiResponse(json) {
+  const parts = json?.candidates?.[0]?.content?.parts || []
+  return parts.map(p => p.text || '').filter(Boolean).join('\n')
+}
+
+function parseAiJson(text) {
+  const cleaned = String(text || '').trim()
+  if (!cleaned) throw new Error('A IA não retornou conteúdo')
+
+  const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = fenced?.[1] || cleaned
+  try { return JSON.parse(candidate) } catch {}
+
+  const first = candidate.indexOf('{')
+  const last = candidate.lastIndexOf('}')
+  if (first >= 0 && last > first) return JSON.parse(candidate.slice(first, last + 1))
+
+  throw new Error('A IA não retornou um JSON válido')
+}
+
+function normalizeAiResult(raw) {
+  const toStringOrNull = (v) => v === undefined || v === null || v === '' ? null : String(v)
+  const toNumberOrNull = (v) => {
+    if (v === undefined || v === null || v === '') return null
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null
+    const n = Number(String(v).replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, ''))
+    return Number.isFinite(n) ? n : null
+  }
+  const isoDateOrNull = (v) => {
+    if (!v) return null
+    const s = String(v).trim()
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+    const br = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+    if (br) return `${br[3]}-${br[2]}-${br[1]}`
+    return null
+  }
+
+  const parcelas = Array.isArray(raw?.parcelas)
+    ? raw.parcelas.map((p, idx) => ({
+        numero: Number(p?.numero) || idx + 1,
+        valor: toNumberOrNull(p?.valor),
+        vencimento: isoDateOrNull(p?.vencimento),
+      })).filter(p => p.valor !== null && p.vencimento)
+    : []
+
+  return {
+    fornecedor_nome: toStringOrNull(raw?.fornecedor_nome),
+    fornecedor_cnpj: toStringOrNull(raw?.fornecedor_cnpj),
+    tipo_documento: toStringOrNull(raw?.tipo_documento),
+    numero_documento: toStringOrNull(raw?.numero_documento),
+    historico: toStringOrNull(raw?.historico),
+    data_emissao: isoDateOrNull(raw?.data_emissao),
+    data_vencimento: isoDateOrNull(raw?.data_vencimento),
+    valor_total: toNumberOrNull(raw?.valor_total),
+    parcelas,
+  }
+}
+
+async function analyzeWithOpenAI({ apiKey, documento_nome, documento_mime, documento_base64 }) {
+  const dataUrl = `data:${documento_mime};base64,${documento_base64}`
+  const filePart = documento_mime === 'application/pdf'
+    ? { type: 'input_file', filename: documento_nome || 'documento.pdf', file_data: dataUrl }
+    : { type: 'input_image', image_url: dataUrl }
+
+  const resp = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_VISION_MODEL || 'gpt-4.1-mini',
+      input: [{
+        role: 'user',
+        content: [
+          { type: 'input_text', text: AI_JSON_SCHEMA_PROMPT },
+          filePart,
+        ],
+      }],
+      temperature: 0.1,
+      max_output_tokens: 1200,
+    }),
+  })
+
+  const json = await resp.json().catch(() => ({}))
+  if (!resp.ok) throw new Error(json?.error?.message || 'Erro ao consultar OpenAI')
+  return parseAiJson(extractTextFromOpenAIResponse(json))
+}
+
+async function analyzeWithGemini({ apiKey, documento_mime, documento_base64 }) {
+  const model = process.env.GEMINI_VISION_MODEL || 'gemini-1.5-flash'
+  const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: AI_JSON_SCHEMA_PROMPT },
+          { inline_data: { mime_type: documento_mime, data: documento_base64 } },
+        ],
+      }],
+      generationConfig: {
+        temperature: 0.1,
+        response_mime_type: 'application/json',
+      },
+    }),
+  })
+
+  const json = await resp.json().catch(() => ({}))
+  if (!resp.ok) {
+    const msg = json?.error?.message || 'Erro ao consultar Gemini'
+    throw new Error(msg)
+  }
+  return parseAiJson(extractTextFromGeminiResponse(json))
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // FORNECEDORES
 // ══════════════════════════════════════════════════════════════════════════════
@@ -370,6 +524,57 @@ router.get('/lancamentos-cp/:id', async (req, res) => {
     return res.json({ ok: true, data: { ...lanc, parcelas } })
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+
+// POST /lancamentos-cp/analisar-documento — lê PDF/imagem com IA e sugere campos
+router.post('/lancamentos-cp/analisar-documento', async (req, res) => {
+  const { tenant_id } = req.user
+  const { documento_nome, documento_mime, documento_base64 } = req.body
+
+  if (!documento_base64 || !documento_mime) {
+    return res.status(400).json({ ok: false, message: 'Envie o documento em base64 e o mime type' })
+  }
+
+  const mimeOk = documento_mime === 'application/pdf' || String(documento_mime).startsWith('image/')
+  if (!mimeOk) {
+    return res.status(400).json({ ok: false, message: 'A IA aceita apenas PDF ou imagem' })
+  }
+
+  if (String(documento_base64).length > 7 * 1024 * 1024) {
+    return res.status(413).json({ ok: false, message: 'Arquivo muito grande para análise. Limite sugerido: 5MB' })
+  }
+
+  try {
+    const { rows } = await query(
+      `SELECT ai_provider, openai_api_key, gemini_api_key
+       FROM hub_tenant_configs
+       WHERE tenant_id = $1
+       LIMIT 1`,
+      [tenant_id]
+    )
+
+    const cfg = rows[0] || {}
+    const provider = ['openai', 'gemini'].includes(cfg.ai_provider) ? cfg.ai_provider : 'openai'
+    const apiKey = provider === 'gemini' ? cfg.gemini_api_key : cfg.openai_api_key
+
+    if (!apiKey) {
+      return res.status(422).json({
+        ok: false,
+        message: provider === 'gemini'
+          ? 'Configure a Gemini API Key em Configurações > Credenciais'
+          : 'Configure a OpenAI API Key em Configurações > Credenciais',
+      })
+    }
+
+    const raw = provider === 'gemini'
+      ? await analyzeWithGemini({ apiKey, documento_mime, documento_base64 })
+      : await analyzeWithOpenAI({ apiKey, documento_nome, documento_mime, documento_base64 })
+
+    return res.json({ ok: true, provider, data: normalizeAiResult(raw) })
+  } catch (err) {
+    return res.status(502).json({ ok: false, message: err.message || 'Erro ao analisar documento com IA' })
   }
 })
 

@@ -50,6 +50,10 @@ router.get('/tenant-config', async (req, res) => {
         whatsappToken:      c.whatsapp_token       || '',
         whatsappPhoneId:    c.whatsapp_phone_id    || '',
         whatsappBusinessId: c.whatsapp_business_id || '',
+        // IA
+        aiProvider:         c.ai_provider          || 'openai',
+        openaiApiKey:       c.openai_api_key       || '',
+        geminiApiKey:       c.gemini_api_key       || '',
         // Outros
         clicksignKey:       c.clicksign_key        || '',
         bankName:           c.bank_name            || '',
@@ -96,6 +100,10 @@ router.put('/tenant-config', async (req, res) => {
     whatsapp_token:        b.whatsappToken,
     whatsapp_phone_id:     b.whatsappPhoneId,
     whatsapp_business_id:  b.whatsappBusinessId,
+    // IA
+    ai_provider:           ['openai', 'gemini'].includes(b.aiProvider) ? b.aiProvider : undefined,
+    openai_api_key:        b.openaiApiKey,
+    gemini_api_key:        b.geminiApiKey,
     // Outros
     clicksign_key:         b.clicksignKey,
     bank_name:             b.bankName,

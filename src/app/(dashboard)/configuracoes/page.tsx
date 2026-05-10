@@ -9,7 +9,7 @@ import {
   UserPlus, Copy, RefreshCw, Send, ChevronDown, Loader2,
   Layers, Plus, Pencil, Trash2, Tags,
 } from 'lucide-react'
-import { apiClient } from '@/lib/auth-store'
+import { apiClient, useAuthStore } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 import { useTenantConfig } from '@/lib/tenant-config-store'
 
@@ -244,6 +244,8 @@ function SecretInput({ value, onChange, placeholder }: {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ConfiguracoesPage() {
+  const user          = useAuthStore(s => s.user)
+  const isAdmin       = ['admin', 'super_admin'].includes(user?.role || '')
   const hydrate       = useTenantConfig(s => s.hydrate)
   const config        = useTenantConfig(s => s.config)
   const setConfig     = useTenantConfig(s => s.setConfig)
@@ -286,6 +288,9 @@ export default function ConfiguracoesPage() {
       whatsappToken:      config.whatsappToken      || '',
       whatsappPhoneId:    config.whatsappPhoneId    || '',
       whatsappBusinessId: config.whatsappBusinessId || '',
+      aiProvider:         (config.aiProvider || 'openai') as 'openai' | 'gemini',
+      openaiApiKey:       config.openaiApiKey       || '',
+      geminiApiKey:       config.geminiApiKey       || '',
       clicksignKey:       config.clicksignKey       || '',
       bankName:           config.bankName           || '',
       bankApiKey:         config.bankApiKey         || '',
@@ -311,6 +316,9 @@ export default function ConfiguracoesPage() {
     whatsappToken: config.whatsappToken || '',
     whatsappPhoneId: config.whatsappPhoneId || '',
     whatsappBusinessId: config.whatsappBusinessId || '',
+    aiProvider: (config.aiProvider || 'openai') as 'openai' | 'gemini',
+    openaiApiKey: config.openaiApiKey || '',
+    geminiApiKey: config.geminiApiKey || '',
     clicksignKey: config.clicksignKey || '',
     bankName: config.bankName || '',
     bankApiKey: config.bankApiKey || '',
@@ -1499,6 +1507,45 @@ export default function ConfiguracoesPage() {
                   <SecretInput value={creds.googleMapsKey} onChange={v => setCreds(c => ({ ...c, googleMapsKey: v }))} placeholder="AIza..." />
                 </Field>
               </Section>
+
+              {isAdmin && (
+                <Section title="IA para Contas a Pagar" sub="Leitura de PDF ou imagem enviada no lançamento">
+                  <Field label="Provedor ativo" sub="Use somente uma IA por vez para a leitura dos documentos">
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        { id: 'openai', label: 'OpenAI API', sub: 'Usar chave da OpenAI' },
+                        { id: 'gemini', label: 'Gemini API', sub: 'Usar chave do Google Gemini' },
+                      ].map(opt => (
+                        <label key={opt.id} className={cn(
+                          'flex items-start gap-3 rounded-xl border px-3 py-3 cursor-pointer transition-colors',
+                          creds.aiProvider === opt.id ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50'
+                        )}>
+                          <input
+                            type="radio"
+                            name="aiProvider"
+                            checked={creds.aiProvider === opt.id}
+                            onChange={() => setCreds(c => ({ ...c, aiProvider: opt.id as 'openai' | 'gemini' }))}
+                            className="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span>
+                            <span className="block text-sm font-semibold text-slate-800">{opt.label}</span>
+                            <span className="block text-xs text-slate-500">{opt.sub}</span>
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </Field>
+                  <Field label="OpenAI API Key" sub={creds.aiProvider === 'openai' ? 'Chave usada atualmente na análise' : 'Fica salva, mas não será usada enquanto Gemini estiver ativo'}>
+                    <SecretInput value={creds.openaiApiKey} onChange={v => setCreds(c => ({ ...c, openaiApiKey: v }))} placeholder="sk-..." />
+                  </Field>
+                  <Field label="Gemini API Key" sub={creds.aiProvider === 'gemini' ? 'Chave usada atualmente na análise' : 'Fica salva, mas não será usada enquanto OpenAI estiver ativo'}>
+                    <SecretInput value={creds.geminiApiKey} onChange={v => setCreds(c => ({ ...c, geminiApiKey: v }))} placeholder="AIza..." />
+                  </Field>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+                    A IA será usada na tela de <strong>Contas a Pagar</strong> para tentar preencher fornecedor, documento, datas, valor e vencimentos a partir do PDF ou imagem anexada. O usuário ainda deve conferir os dados antes de salvar.
+                  </div>
+                </Section>
+              )}
 
               <Section title="AWS SNS / SMS" sub="Envio de SMS para leads direto do painel">
                 <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">

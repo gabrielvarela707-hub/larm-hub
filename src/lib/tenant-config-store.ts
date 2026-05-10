@@ -31,6 +31,10 @@ export interface TenantConfig {
   whatsappToken: string
   whatsappPhoneId: string
   whatsappBusinessId: string
+  // IA
+  aiProvider: 'openai' | 'gemini'
+  openaiApiKey: string
+  geminiApiKey: string
   // Outros
   clicksignKey: string
   bankName: string
@@ -69,6 +73,9 @@ const DEFAULT: TenantConfig = {
   whatsappToken: '',
   whatsappPhoneId: '',
   whatsappBusinessId: '',
+  aiProvider: 'openai',
+  openaiApiKey: '',
+  geminiApiKey: '',
   clicksignKey: '',
   bankName: '',
   bankApiKey: '',

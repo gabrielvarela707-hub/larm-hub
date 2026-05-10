@@ -1,15 +1,26 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, X, Check, FileText } from 'lucide-react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Plus, Search, X, Check, FileText, Loader2, Sparkles } from 'lucide-react'
 import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 
-interface Fornecedor { id: number; razao_social: string; empresa: string }
+interface Fornecedor { id: number; razao_social: string; empresa: string; cnpj_cpf?: string | null; nome_fantasia?: string | null }
 interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null }
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
 interface TipoDocumento { id: number; nome: string }
 interface Parcela     { id?: number; numero: number; valor: number; vencimento: string; status: string }
+interface AiContaPagarResult {
+  fornecedor_nome?: string | null
+  fornecedor_cnpj?: string | null
+  tipo_documento?: string | null
+  numero_documento?: string | null
+  historico?: string | null
+  data_emissao?: string | null
+  data_vencimento?: string | null
+  valor_total?: number | null
+  parcelas?: { numero: number; valor: number; vencimento: string }[]
+}
 
 interface Lancamento {
   id: number; empresa: string; historico: string; produto_servico: string | null
@@ -71,6 +82,9 @@ export default function PagarPage() {
   const [fDocumentoMime,   setFDocumentoMime]   = useState('')
   const [fDocumentoBase64, setFDocumentoBase64] = useState('')
   const [fDocumentoErro,   setFDocumentoErro]   = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiMessage, setAiMessage] = useState('')
+  const aiParcelasRef = useRef<Parcela[] | null>(null)
   const [parcelas, setParcelas] = useState<Parcela[]>([])
   const [errors,   setErrors]   = useState<Record<string, string>>({})
 
@@ -107,6 +121,12 @@ export default function PagarPage() {
 
   // Recalcula parcelas ao mudar valor ou nparcs
   useEffect(() => {
+    if (aiParcelasRef.current) {
+      setParcelas(aiParcelasRef.current)
+      aiParcelasRef.current = null
+      return
+    }
+
     const vlr = parseFloat(fValor) || 0
     const n   = fNParc || 1
     if (vlr <= 0) { setParcelas([]); return }
@@ -134,6 +154,7 @@ export default function PagarPage() {
     setFEmp(''); setFForn(''); setFBanco(''); setFConta(''); setFHistorico('')
     setFTipoDoc(''); setFNF(''); setFValor(''); setFNParc(1); setFCC(''); setFObs('')
     setFDocumentoNome(''); setFDocumentoMime(''); setFDocumentoBase64(''); setFDocumentoErro('')
+    setAiMessage(''); setAiLoading(false); aiParcelasRef.current = null
     setParcelas([]); setErrors({})
   }
 
@@ -148,6 +169,7 @@ export default function PagarPage() {
 
   function handleDocumentoChange(file: File | null) {
     setFDocumentoErro('')
+    setAiMessage('')
     setFDocumentoNome('')
     setFDocumentoMime('')
     setFDocumentoBase64('')
@@ -175,6 +197,88 @@ export default function PagarPage() {
     }
     reader.onerror = () => setFDocumentoErro('Não foi possível ler o arquivo')
     reader.readAsDataURL(file)
+  }
+
+  function findFornecedorByAi(data: AiContaPagarResult) {
+    const cnpjDigits = String(data.fornecedor_cnpj || '').replace(/\D/g, '')
+    if (cnpjDigits) {
+      const byDoc = fornecedores.find(f => String(f.cnpj_cpf || '').replace(/\D/g, '') === cnpjDigits)
+      if (byDoc) return byDoc
+    }
+
+    const nome = String(data.fornecedor_nome || '').trim().toLowerCase()
+    if (!nome) return null
+    return fornecedores.find(f => {
+      const razao = String(f.razao_social || '').toLowerCase().trim()
+      const fantasia = String(f.nome_fantasia || '').toLowerCase().trim()
+      return (razao.length > 2 && (razao.includes(nome) || nome.includes(razao)))
+        || (fantasia.length > 2 && (fantasia.includes(nome) || nome.includes(fantasia)))
+    }) || null
+  }
+
+  function applyAiResult(data: AiContaPagarResult) {
+    const fornecedor = findFornecedorByAi(data)
+    if (fornecedor) {
+      setFForn(String(fornecedor.id))
+      if (!fEmp && fornecedor.empresa) setFEmp(fornecedor.empresa)
+    }
+
+    if (data.tipo_documento) {
+      const tipo = tiposDocumento.find(t => {
+        const a = t.nome.toLowerCase()
+        const b = String(data.tipo_documento || '').toLowerCase()
+        return a.includes(b) || b.includes(a)
+      })
+      if (tipo) setFTipoDoc(String(tipo.id))
+    }
+
+    if (data.numero_documento) setFNF(data.numero_documento)
+    if (data.historico) setFHistorico(data.historico)
+    if (data.data_emissao) setFEmissao(data.data_emissao)
+
+    const valor = Number(data.valor_total || 0)
+    if (valor > 0) setFValor(valor.toFixed(2))
+
+    const aiParcelas = Array.isArray(data.parcelas) && data.parcelas.length
+      ? data.parcelas
+      : (data.data_vencimento && valor > 0 ? [{ numero: 1, valor, vencimento: data.data_vencimento }] : [])
+
+    if (aiParcelas.length) {
+      aiParcelasRef.current = aiParcelas.map((p, idx) => ({
+        numero: Number(p.numero) || idx + 1,
+        valor: Number(p.valor) || valor || 0,
+        vencimento: p.vencimento,
+        status: 'pendente',
+      }))
+      setFNParc(aiParcelasRef.current.length)
+    }
+  }
+
+  async function analisarDocumentoIA() {
+    if (!fDocumentoBase64 || !fDocumentoMime) {
+      setAiMessage('Selecione primeiro um PDF ou imagem da conta.')
+      return
+    }
+
+    setAiLoading(true)
+    setAiMessage('')
+    try {
+      const r = await apiClient.post<{ ok: boolean; data: AiContaPagarResult; provider?: string; message?: string }>('/financeiro/lancamentos-cp/analisar-documento', {
+        documento_nome: fDocumentoNome,
+        documento_mime: fDocumentoMime,
+        documento_base64: fDocumentoBase64,
+      })
+
+      applyAiResult(r.data.data || {})
+      const prov = r.data.provider === 'gemini' ? 'Gemini' : 'OpenAI'
+      setAiMessage(`Dados lidos com ${prov}. Confira antes de salvar.`)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message
+        || 'Não foi possível analisar o documento com IA.'
+      setAiMessage(msg)
+    } finally {
+      setAiLoading(false)
+    }
   }
 
   async function save() {
@@ -378,6 +482,18 @@ export default function PagarPage() {
                         onChange={e => handleDocumentoChange(e.target.files?.[0] || null)}
                       />
                     </label>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={analisarDocumentoIA}
+                        disabled={aiLoading || !fDocumentoBase64}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                        {aiLoading ? 'Lendo documento...' : 'Ler dados com IA'}
+                      </button>
+                      {aiMessage && <span className={cn('text-[10px]', aiMessage.includes('Confira') ? 'text-emerald-600' : 'text-amber-600')}>{aiMessage}</span>}
+                    </div>
                     {fDocumentoErro && <p className="text-[10px] text-red-500">{fDocumentoErro}</p>}
                   </F>
                   <F label="Plano de Contas" name="conta_contabil">
