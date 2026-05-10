@@ -39,6 +39,21 @@ interface Lancamento {
   fornecedor_nome: string | null; banco_nome: string | null; proximo_venc: string | null
   parcela_id?: number | null; parcela_numero?: number | null; parcela_valor?: number | null
   parcela_vencimento?: string | null; parcela_status?: string | null; parcela_dt_pagamento?: string | null
+  parcela_motivo_baixa?: string | null; parcela_acrescimo?: number | null; parcela_desconto?: number | null
+  parcela_juros?: number | null; parcela_multa?: number | null; parcela_valor_final?: number | null
+  parcela_forma_pagamento?: string | null
+}
+
+interface BaixaForm {
+  valor_parcela: string
+  motivo_baixa: string
+  acrescimo: string
+  desconto: string
+  juros: string
+  multa: string
+  valor_final: string
+  forma_pagamento: string
+  dt_pagamento: string
 }
 
 const EMPRESAS = ['LARM', 'LUCKY', 'LM', 'HOLDING', 'RM']
@@ -51,6 +66,13 @@ const STATUS_COLORS: Record<string, string> = {
 
 const R$ = (v: number | null | undefined) =>
   (v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+const todayISO = () => new Date().toISOString().split('T')[0]
+const moneyToNumber = (v: string | number | null | undefined) => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0
+  const normalized = String(v ?? '').replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, '')
+  const n = Number(normalized)
+  return Number.isFinite(n) ? n : 0
+}
 const fmtDate = (d: string | null | undefined) => {
   if (!d) return '—'
   try { return new Date(d).toLocaleDateString('pt-BR') } catch { return String(d) }
@@ -83,6 +105,21 @@ export default function PagarPage() {
   const [showFornecedorModal, setShowFornecedorModal] = useState(false)
   const [savingFornecedor, setSavingFornecedor] = useState(false)
   const [fornecedorErrors, setFornecedorErrors] = useState<Record<string, string>>({})
+  const [showBaixaModal, setShowBaixaModal] = useState(false)
+  const [savingBaixa, setSavingBaixa] = useState(false)
+  const [baixaErrors, setBaixaErrors] = useState<Record<string, string>>({})
+  const [baixaParcela, setBaixaParcela] = useState<Lancamento | null>(null)
+  const [baixaForm, setBaixaForm] = useState<BaixaForm>({
+    valor_parcela: '',
+    motivo_baixa: '',
+    acrescimo: '0',
+    desconto: '0',
+    juros: '0',
+    multa: '0',
+    valor_final: '',
+    forma_pagamento: '',
+    dt_pagamento: todayISO(),
+  })
 
   // Listas para selects
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([])
@@ -105,7 +142,7 @@ export default function PagarPage() {
   const [fHistorico, setFHistorico] = useState('')
   const [fTipoDoc, setFTipoDoc] = useState('')
   const [fNF,      setFNF]      = useState('')
-  const [fEmissao, setFEmissao] = useState(new Date().toISOString().split('T')[0])
+  const [fEmissao, setFEmissao] = useState(todayISO())
   const [fValor,   setFValor]   = useState('')
   const [fNParc,   setFNParc]   = useState(1)
   const [fCC,      setFCC]      = useState('')
@@ -256,6 +293,7 @@ export default function PagarPage() {
     setAiMessage(''); setAiLoading(false); aiParcelasRef.current = null
     setParcelas([]); setErrors({})
     setShowFornecedorModal(false); setFornecedorErrors({})
+    setShowBaixaModal(false); setBaixaParcela(null); setBaixaErrors({})
   }
 
   function validate() {
@@ -415,6 +453,84 @@ export default function PagarPage() {
     }
   }
 
+  function calculaValorFinalBaixa(form: BaixaForm) {
+    const valor = moneyToNumber(form.valor_parcela)
+    const acrescimo = moneyToNumber(form.acrescimo)
+    const juros = moneyToNumber(form.juros)
+    const multa = moneyToNumber(form.multa)
+    const desconto = moneyToNumber(form.desconto)
+    return Math.max(0, valor + acrescimo + juros + multa - desconto)
+  }
+
+  function openBaixaModal(l: Lancamento) {
+    if (!l.parcela_id) return
+    const valor = Number(l.parcela_valor ?? l.valor_total ?? 0)
+    const form: BaixaForm = {
+      valor_parcela: valor.toFixed(2),
+      motivo_baixa: l.parcela_motivo_baixa || '',
+      acrescimo: String(Number(l.parcela_acrescimo || 0)),
+      desconto: String(Number(l.parcela_desconto || 0)),
+      juros: String(Number(l.parcela_juros || 0)),
+      multa: String(Number(l.parcela_multa || 0)),
+      valor_final: String(Number(l.parcela_valor_final || valor).toFixed(2)),
+      forma_pagamento: l.parcela_forma_pagamento || '',
+      dt_pagamento: l.parcela_dt_pagamento || todayISO(),
+    }
+    form.valor_final = calculaValorFinalBaixa(form).toFixed(2)
+    setBaixaParcela(l)
+    setBaixaForm(form)
+    setBaixaErrors({})
+    setShowBaixaModal(true)
+  }
+
+  function updateBaixaForm<K extends keyof BaixaForm>(key: K, value: BaixaForm[K]) {
+    setBaixaForm(prev => {
+      const next = { ...prev, [key]: value }
+      if (['valor_parcela', 'acrescimo', 'desconto', 'juros', 'multa'].includes(key)) {
+        next.valor_final = calculaValorFinalBaixa(next).toFixed(2)
+      }
+      return next
+    })
+  }
+
+  function closeBaixaModal() {
+    if (savingBaixa) return
+    setShowBaixaModal(false)
+    setBaixaParcela(null)
+    setBaixaErrors({})
+  }
+
+  async function salvarBaixa() {
+    if (!baixaParcela?.id || !baixaParcela.parcela_id) return
+    const e: Record<string, string> = {}
+    if (!baixaForm.dt_pagamento) e.dt_pagamento = 'Obrigatório'
+    if (!baixaForm.forma_pagamento.trim()) e.forma_pagamento = 'Obrigatório'
+    setBaixaErrors(e)
+    if (Object.keys(e).length) return
+
+    setSavingBaixa(true)
+    try {
+      await apiClient.put(`/financeiro/lancamentos-cp/${baixaParcela.id}/parcelas/${baixaParcela.parcela_id}/pagar`, {
+        dt_pagamento: baixaForm.dt_pagamento,
+        valor_parcela: moneyToNumber(baixaForm.valor_parcela),
+        motivo_baixa: baixaForm.motivo_baixa.trim() || null,
+        acrescimo: moneyToNumber(baixaForm.acrescimo),
+        desconto: moneyToNumber(baixaForm.desconto),
+        juros: moneyToNumber(baixaForm.juros),
+        multa: moneyToNumber(baixaForm.multa),
+        valor_final: moneyToNumber(baixaForm.valor_final),
+        forma_pagamento: baixaForm.forma_pagamento.trim(),
+      })
+      closeBaixaModal()
+      load()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao dar baixa na parcela'
+      setBaixaErrors({ _geral: msg })
+    } finally {
+      setSavingBaixa(false)
+    }
+  }
+
   const inp = 'w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100'
   const F = useCallback(({ label, name, required, children, full }: { label: string; name: string; required?: boolean; children: React.ReactNode; full?: boolean }) => (
     <div className={cn('flex flex-col gap-1', full && 'col-span-2')}>
@@ -538,9 +654,20 @@ export default function PagarPage() {
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.parcela_vencimento || l.proximo_venc)}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.parcela_dt_pagamento)}</td>
                     <td className="px-3 py-2">
-                      <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', STATUS_COLORS[statusParcela] || STATUS_COLORS.cancelado)}>
-                        {statusParcela || '—'}
-                      </span>
+                      <div className="flex flex-col items-start gap-1.5">
+                        <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', STATUS_COLORS[statusParcela] || STATUS_COLORS.cancelado)}>
+                          {statusParcela || '—'}
+                        </span>
+                        {statusParcela !== 'pago' && statusParcela !== 'cancelado' && l.parcela_id && (
+                          <button
+                            type="button"
+                            onClick={() => openBaixaModal(l)}
+                            className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100"
+                          >
+                            Dar baixa
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )
@@ -726,6 +853,100 @@ export default function PagarPage() {
               <button onClick={save} disabled={saving}
                 className="flex items-center gap-2 px-5 py-2 text-xs font-semibold bg-[#1e3a5f] hover:bg-[#162d4a] text-white rounded-lg disabled:opacity-60">
                 {saving ? 'Salvando…' : <><Check className="w-3.5 h-3.5" /> Salvar Lançamento</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBaixaModal && baixaParcela && (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-start justify-center p-4 pt-10 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-bold text-slate-800">Baixa da Parcela</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {baixaParcela.fornecedor_nome || 'Fornecedor não informado'} · Parcela {baixaParcela.parcela_numero || '—'}/{baixaParcela.qtd_parcelas || 1}
+                </p>
+              </div>
+              <button type="button" onClick={closeBaixaModal} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              {baixaErrors._geral && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">{baixaErrors._geral}</div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Valor da parcela</label>
+                  <input className={inp} type="number" step="0.01" min="0"
+                    value={baixaForm.valor_parcela} onChange={e => updateBaixaForm('valor_parcela', e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Data de pagamento <span className="text-red-500">*</span></label>
+                  <input className={cn(inp, baixaErrors.dt_pagamento && 'border-red-300')} type="date"
+                    value={baixaForm.dt_pagamento} onChange={e => updateBaixaForm('dt_pagamento', e.target.value)} />
+                  {baixaErrors.dt_pagamento && <p className="text-[10px] text-red-500 mt-1">{baixaErrors.dt_pagamento}</p>}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Acréscimos</label>
+                  <input className={inp} type="number" step="0.01" min="0"
+                    value={baixaForm.acrescimo} onChange={e => updateBaixaForm('acrescimo', e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Descontos</label>
+                  <input className={inp} type="number" step="0.01" min="0"
+                    value={baixaForm.desconto} onChange={e => updateBaixaForm('desconto', e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Juros</label>
+                  <input className={inp} type="number" step="0.01" min="0"
+                    value={baixaForm.juros} onChange={e => updateBaixaForm('juros', e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Multa</label>
+                  <input className={inp} type="number" step="0.01" min="0"
+                    value={baixaForm.multa} onChange={e => updateBaixaForm('multa', e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Valor final</label>
+                  <input className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50 text-slate-700 focus:outline-none"
+                    type="number" step="0.01" value={baixaForm.valor_final} readOnly />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Forma de pagamento <span className="text-red-500">*</span></label>
+                  <select className={cn(inp, baixaErrors.forma_pagamento && 'border-red-300')}
+                    value={baixaForm.forma_pagamento} onChange={e => updateBaixaForm('forma_pagamento', e.target.value)}>
+                    <option value="">Selecione</option>
+                    <option value="Pix">Pix</option>
+                    <option value="Boleto">Boleto</option>
+                    <option value="Transferência">Transferência</option>
+                    <option value="Débito automático">Débito automático</option>
+                    <option value="Dinheiro">Dinheiro</option>
+                    <option value="Cartão">Cartão</option>
+                    <option value="Outro">Outro</option>
+                  </select>
+                  {baixaErrors.forma_pagamento && <p className="text-[10px] text-red-500 mt-1">{baixaErrors.forma_pagamento}</p>}
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs font-medium text-slate-600">Motivo da baixa</label>
+                  <textarea className={cn(inp, 'min-h-[58px] resize-none')}
+                    value={baixaForm.motivo_baixa} onChange={e => updateBaixaForm('motivo_baixa', e.target.value)}
+                    placeholder="Ex.: pagamento realizado conforme boleto / ajuste manual / negociação" />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
+              <button type="button" onClick={closeBaixaModal} className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
+                Cancelar
+              </button>
+              <button type="button" onClick={salvarBaixa} disabled={savingBaixa}
+                className="flex items-center gap-2 px-5 py-2 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg disabled:opacity-60">
+                {savingBaixa ? 'Baixando…' : <><Check className="w-3.5 h-3.5" /> Confirmar baixa</>}
               </button>
             </div>
           </div>

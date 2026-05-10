@@ -105,6 +105,22 @@ function normalizeAiResult(raw) {
   }
 }
 
+function parseMoney(value, fallback = 0) {
+  if (value === undefined || value === null || value === '') return fallback
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback
+  const n = Number(String(value).replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, ''))
+  return Number.isFinite(n) ? n : fallback
+}
+
+function splitDateParts(dateValue) {
+  const dt = new Date(`${dateValue}T00:00:00`)
+  return {
+    dia: dt.getUTCDate(),
+    mes: dt.getUTCMonth() + 1,
+    ano: dt.getUTCFullYear(),
+  }
+}
+
 async function analyzeWithOpenAI({ apiKey, documento_nome, documento_mime, documento_base64 }) {
   const dataUrl = `data:${documento_mime};base64,${documento_base64}`
   const filePart = documento_mime === 'application/pdf'
@@ -450,7 +466,7 @@ router.get('/lancamentos-cp', async (req, res) => {
   }
   if (status) {
     params.push(status)
-    conditions.push(`l.status = $${params.length}`)
+    conditions.push(`p.status = $${params.length}`)
   }
   if (fornecedor_id) {
     params.push(parseInt(fornecedor_id))
@@ -489,6 +505,13 @@ router.get('/lancamentos-cp', async (req, res) => {
          p.vencimento   AS parcela_vencimento,
          p.dt_pagamento AS parcela_dt_pagamento,
          p.status       AS parcela_status,
+         p.motivo_baixa AS parcela_motivo_baixa,
+         p.acrescimo    AS parcela_acrescimo,
+         p.desconto     AS parcela_desconto,
+         p.juros        AS parcela_juros,
+         p.multa        AS parcela_multa,
+         p.valor_final  AS parcela_valor_final,
+         p.forma_pagamento AS parcela_forma_pagamento,
          (SELECT MIN(px.vencimento) FROM fin_parcelas_cp px WHERE px.lancamento_id = l.id AND px.status = 'pendente') AS proximo_venc
        FROM fin_lancamentos_cp l
        LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
@@ -501,10 +524,11 @@ router.get('/lancamentos-cp', async (req, res) => {
       params
     )
     const ct = await query(
-      `SELECT COUNT(*), COALESCE(SUM(l.valor_total),0) AS total_valor
+      `SELECT COUNT(*), COALESCE(SUM(COALESCE(p.valor, l.valor_total)),0) AS total_valor
        FROM fin_lancamentos_cp l
        LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
        LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
+       LEFT JOIN fin_parcelas_cp p ON p.lancamento_id = l.id
        ${where}`,
       params.slice(0, -2)
     )
@@ -672,29 +696,125 @@ router.put('/lancamentos-cp/:id/status', async (req, res) => {
   }
 })
 
-// PUT /lancamentos-cp/:id/parcelas/:parcId/pagar — marca parcela paga
+// PUT /lancamentos-cp/:id/parcelas/:parcId/pagar — baixa parcela e gera movimento bancário
 router.put('/lancamentos-cp/:id/parcelas/:parcId/pagar', async (req, res) => {
-  const { dt_pagamento } = req.body
+  const {
+    dt_pagamento,
+    motivo_baixa,
+    acrescimo = 0,
+    desconto = 0,
+    juros = 0,
+    multa = 0,
+    valor_final,
+    forma_pagamento,
+  } = req.body
+
+  const dataPagamento = dt_pagamento || new Date().toISOString().split('T')[0]
+  if (!forma_pagamento) return res.status(400).json({ ok: false, message: 'forma_pagamento obrigatório' })
+
   const client = await require('../config/database').pool.connect()
   try {
     await client.query('BEGIN')
-    await client.query(
-      `UPDATE fin_parcelas_cp SET status='pago', dt_pagamento=$1 WHERE id=$2`,
-      [dt_pagamento || new Date().toISOString().split('T')[0], req.params.parcId]
+
+    const { rows } = await client.query(
+      `SELECT
+         p.*,
+         l.empresa, l.fornecedor_id, l.banco_conta_id, l.conta_contabil, l.descricao_conta,
+         l.historico, l.nf_doc, l.centro_custo, l.obra, l.n_cheque,
+         f.razao_social AS fornecedor_nome,
+         b.banco_nome   AS banco_nome
+       FROM fin_parcelas_cp p
+       JOIN fin_lancamentos_cp l ON l.id = p.lancamento_id
+       LEFT JOIN fin_fornecedores f ON f.id = l.fornecedor_id
+       LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
+       WHERE l.id = $1 AND p.id = $2
+       FOR UPDATE OF p`,
+      [req.params.id, req.params.parcId]
     )
-    // Se todas as parcelas estão pagas, marca o lançamento como pago
+
+    const parc = rows[0]
+    if (!parc) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ ok: false, message: 'Parcela não encontrada' })
+    }
+
+    const valorParcela = parseMoney(parc.valor)
+    const acrescimoNum = parseMoney(acrescimo)
+    const descontoNum = parseMoney(desconto)
+    const jurosNum = parseMoney(juros)
+    const multaNum = parseMoney(multa)
+    const valorFinalNum = parseMoney(valor_final, valorParcela + acrescimoNum + jurosNum + multaNum - descontoNum)
+    const partesData = splitDateParts(dataPagamento)
+
+    let movimentoId = parc.movimento_id || null
+    const movimentoPayload = [
+      dataPagamento,
+      parc.empresa,
+      parc.banco_nome || null,
+      0,
+      valorFinalNum,
+      parc.fornecedor_nome || null,
+      `Baixa CP ${parc.numero}/${parc.lancamento_id} - ${parc.historico || ''}`.trim(),
+      parc.nf_doc || null,
+      parc.descricao_conta || parc.conta_contabil || null,
+      parc.centro_custo || null,
+      parc.obra || null,
+      parc.conta_contabil || null,
+      parc.n_cheque || null,
+      partesData.dia,
+      partesData.mes,
+      partesData.ano,
+      'financeiro',
+      parc.vencimento,
+      parc.fornecedor_id || null,
+      parc.banco_conta_id || null,
+    ]
+
+    if (movimentoId) {
+      await client.query(
+        `UPDATE fin_movimento
+         SET data=$1, empresa=$2, banco=$3, entradas=$4, saidas=$5, fornecedor=$6,
+             historico=$7, nf_doc=$8, conta_contabil=$9, centro_custo=$10, obra=$11,
+             natureza_financeira=$12, n_cheque=$13, dia=$14, mes=$15, ano=$16,
+             tipo_lancamento=$17, vencimento=$18, fornecedor_id=$19, banco_conta_id=$20
+         WHERE id=$21`,
+        [...movimentoPayload, movimentoId]
+      )
+    } else {
+      const { rows: movRows } = await client.query(
+        `INSERT INTO fin_movimento
+          (data, empresa, banco, entradas, saidas, fornecedor, historico, nf_doc,
+           conta_contabil, centro_custo, obra, natureza_financeira, n_cheque,
+           dia, mes, ano, tipo_lancamento, vencimento, fornecedor_id, banco_conta_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+         RETURNING id`,
+        movimentoPayload
+      )
+      movimentoId = movRows[0]?.id || null
+    }
+
+    await client.query(
+      `UPDATE fin_parcelas_cp
+       SET status='pago', dt_pagamento=$1, motivo_baixa=$2,
+           acrescimo=$3, desconto=$4, juros=$5, multa=$6,
+           valor_final=$7, forma_pagamento=$8, movimento_id=$9
+       WHERE id=$10`,
+      [dataPagamento, motivo_baixa || null, acrescimoNum, descontoNum, jurosNum, multaNum,
+       valorFinalNum, forma_pagamento, movimentoId, req.params.parcId]
+    )
+
+    // Se todas as parcelas estão pagas, marca o lançamento como pago. Caso contrário, mantém pendente.
     const { rows: pend } = await client.query(
       `SELECT COUNT(*) FROM fin_parcelas_cp WHERE lancamento_id=$1 AND status != 'pago'`,
       [req.params.id]
     )
-    if (parseInt(pend[0].count) === 0) {
-      await client.query(
-        `UPDATE fin_lancamentos_cp SET status='pago', updated_at=NOW() WHERE id=$1`,
-        [req.params.id]
-      )
-    }
+    await client.query(
+      `UPDATE fin_lancamentos_cp SET status=$1, updated_at=NOW() WHERE id=$2`,
+      [parseInt(pend[0].count) === 0 ? 'pago' : 'pendente', req.params.id]
+    )
+
     await client.query('COMMIT')
-    return res.json({ ok: true })
+    return res.json({ ok: true, movimento_id: movimentoId })
   } catch (err) {
     await client.query('ROLLBACK')
     return res.status(500).json({ ok: false, message: err.message })

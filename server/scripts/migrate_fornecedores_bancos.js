@@ -142,12 +142,31 @@ CREATE TABLE IF NOT EXISTS fin_parcelas_cp (
   vencimento     DATE NOT NULL,
   status         VARCHAR(20) DEFAULT 'pendente',
   dt_pagamento   DATE,
+  motivo_baixa   TEXT,
+  acrescimo      NUMERIC(18,4) DEFAULT 0,
+  desconto       NUMERIC(18,4) DEFAULT 0,
+  juros          NUMERIC(18,4) DEFAULT 0,
+  multa          NUMERIC(18,4) DEFAULT 0,
+  valor_final    NUMERIC(18,4),
+  forma_pagamento VARCHAR(80),
+  movimento_id   BIGINT REFERENCES fin_movimento(id),
   created_at     TIMESTAMP DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_parc_lancamento ON fin_parcelas_cp(lancamento_id);
 CREATE INDEX IF NOT EXISTS idx_parc_vencimento ON fin_parcelas_cp(vencimento);
 CREATE INDEX IF NOT EXISTS idx_parc_status     ON fin_parcelas_cp(status);
+
+-- ─── Adiciona campos de baixa em parcelas existentes ─────────────────────────
+ALTER TABLE fin_parcelas_cp
+  ADD COLUMN IF NOT EXISTS motivo_baixa TEXT,
+  ADD COLUMN IF NOT EXISTS acrescimo NUMERIC(18,4) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS desconto NUMERIC(18,4) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS juros NUMERIC(18,4) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS multa NUMERIC(18,4) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS valor_final NUMERIC(18,4),
+  ADD COLUMN IF NOT EXISTS forma_pagamento VARCHAR(80),
+  ADD COLUMN IF NOT EXISTS movimento_id BIGINT REFERENCES fin_movimento(id);
 
 -- ─── Adiciona colunas novas ao fin_movimento (se não existirem) ───────────────
 ALTER TABLE fin_movimento
