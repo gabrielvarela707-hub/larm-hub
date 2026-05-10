@@ -27,6 +27,13 @@ export interface TenantConfig {
   sesSecretAccessKey: string
   sesFromEmail: string
   sesFromName: string
+  // AWS SNS
+  snsRegion: string
+  snsAccessKeyId: string
+  snsSecretAccessKey: string
+  snsSenderId: string
+  snsSMSType: 'Transactional' | 'Promotional'
+  snsMockMode: boolean
   // AWS SNS / SMS
   snsRegion: string
   snsAccessKeyId: string
@@ -71,6 +78,12 @@ const DEFAULT: TenantConfig = {
   sesSecretAccessKey: '',
   sesFromEmail: '',
   sesFromName: '',
+  snsRegion: 'sa-east-1',
+  snsAccessKeyId: '',
+  snsSecretAccessKey: '',
+  snsSenderId: 'LOTEAMENTO',
+  snsSMSType: 'Transactional',
+  snsMockMode: true,
   snsRegion: 'sa-east-1',
   snsAccessKeyId: '',
   snsSecretAccessKey: '',
