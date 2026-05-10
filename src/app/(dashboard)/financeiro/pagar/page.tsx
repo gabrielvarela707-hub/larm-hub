@@ -1,18 +1,20 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, Pencil, X, Check, ChevronLeft, ChevronRight, Calendar, DollarSign } from 'lucide-react'
+import { Plus, Search, X, Check, FileText } from 'lucide-react'
 import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 
 interface Fornecedor { id: number; razao_social: string; empresa: string }
 interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null }
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
+interface TipoDocumento { id: number; nome: string }
 interface Parcela     { id?: number; numero: number; valor: number; vencimento: string; status: string }
 
 interface Lancamento {
   id: number; empresa: string; historico: string; produto_servico: string | null
-  nf_doc: string | null; dt_emissao: string | null; valor_total: number
+  tipo_documento_id?: number | null; tipo_documento_nome?: string | null
+  nf_doc: string | null; documento_nome?: string | null; dt_emissao: string | null; valor_total: number
   qtd_parcelas: number; status: string; conta_contabil: string | null
   descricao_conta: string | null; centro_custo: string | null; obs: string | null
   fornecedor_nome: string | null; banco_nome: string | null; proximo_venc: string | null
@@ -45,6 +47,7 @@ export default function PagarPage() {
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([])
   const [bancos,       setBancos]       = useState<BancoConta[]>([])
   const [plano,        setPlano]        = useState<PlanoConta[]>([])
+  const [tiposDocumento, setTiposDocumento] = useState<TipoDocumento[]>([])
 
   // Filtros
   const [fEmpresa, setFEmpresa] = useState('')
@@ -57,13 +60,17 @@ export default function PagarPage() {
   const [fBanco,   setFBanco]   = useState('')
   const [fConta,   setFConta]   = useState('')
   const [fHistorico, setFHistorico] = useState('')
-  const [fProduto, setFProduto] = useState('')
+  const [fTipoDoc, setFTipoDoc] = useState('')
   const [fNF,      setFNF]      = useState('')
   const [fEmissao, setFEmissao] = useState(new Date().toISOString().split('T')[0])
   const [fValor,   setFValor]   = useState('')
   const [fNParc,   setFNParc]   = useState(1)
   const [fCC,      setFCC]      = useState('')
   const [fObs,     setFObs]     = useState('')
+  const [fDocumentoNome,   setFDocumentoNome]   = useState('')
+  const [fDocumentoMime,   setFDocumentoMime]   = useState('')
+  const [fDocumentoBase64, setFDocumentoBase64] = useState('')
+  const [fDocumentoErro,   setFDocumentoErro]   = useState('')
   const [parcelas, setParcelas] = useState<Parcela[]>([])
   const [errors,   setErrors]   = useState<Record<string, string>>({})
 
@@ -89,10 +96,12 @@ export default function PagarPage() {
       apiClient.get('/financeiro/fornecedores/select'),
       apiClient.get('/financeiro/bancos/select'),
       apiClient.get('/financeiro/plano-contas'),
-    ]).then(([f, b, p]) => {
+      apiClient.get('/financeiro/tipos-documento/ativos', { params: { modulo: 'pagar' } }),
+    ]).then(([f, b, p, td]) => {
       setFornecedores(f.data.data)
       setBancos(b.data.data)
       setPlano(p.data.data.filter((c: PlanoConta) => c.tipo === 'A'))
+      setTiposDocumento(td.data.data || [])
     }).catch(() => {})
   }, [])
 
@@ -123,7 +132,8 @@ export default function PagarPage() {
   function closeForm() {
     setShowForm(false)
     setFEmp(''); setFForn(''); setFBanco(''); setFConta(''); setFHistorico('')
-    setFProduto(''); setFNF(''); setFValor(''); setFNParc(1); setFCC(''); setFObs('')
+    setFTipoDoc(''); setFNF(''); setFValor(''); setFNParc(1); setFCC(''); setFObs('')
+    setFDocumentoNome(''); setFDocumentoMime(''); setFDocumentoBase64(''); setFDocumentoErro('')
     setParcelas([]); setErrors({})
   }
 
@@ -134,6 +144,37 @@ export default function PagarPage() {
     if (!fValor || parseFloat(fValor) <= 0) e.valor = 'Informe um valor válido'
     setErrors(e)
     return Object.keys(e).length === 0
+  }
+
+  function handleDocumentoChange(file: File | null) {
+    setFDocumentoErro('')
+    setFDocumentoNome('')
+    setFDocumentoMime('')
+    setFDocumentoBase64('')
+
+    if (!file) return
+
+    const permitido = file.type === 'application/pdf' || file.type.startsWith('image/')
+    if (!permitido) {
+      setFDocumentoErro('Envie apenas PDF ou imagem')
+      return
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setFDocumentoErro('Arquivo muito grande. Limite sugerido: 5MB')
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      const base64 = result.includes(',') ? result.split(',')[1] : result
+      setFDocumentoNome(file.name)
+      setFDocumentoMime(file.type)
+      setFDocumentoBase64(base64)
+    }
+    reader.onerror = () => setFDocumentoErro('Não foi possível ler o arquivo')
+    reader.readAsDataURL(file)
   }
 
   async function save() {
@@ -148,8 +189,12 @@ export default function PagarPage() {
         conta_contabil:  fConta  || null,
         descricao_conta: contaObj?.descricao || null,
         historico:       fHistorico,
-        produto_servico: fProduto || null,
+        tipo_documento_id: fTipoDoc || null,
+        produto_servico: null,
         nf_doc:          fNF      || null,
+        documento_nome:  fDocumentoNome   || null,
+        documento_mime:  fDocumentoMime   || null,
+        documento_base64:fDocumentoBase64 || null,
         dt_emissao:      fEmissao || null,
         valor_total:     parseFloat(fValor),
         qtd_parcelas:    fNParc,
@@ -167,13 +212,13 @@ export default function PagarPage() {
   }
 
   const inp = 'w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100'
-  const F = ({ label, name, required, children }: { label: string; name: string; required?: boolean; children: React.ReactNode }) => (
-    <div className="flex flex-col gap-1">
+  const F = useCallback(({ label, name, required, children, full }: { label: string; name: string; required?: boolean; children: React.ReactNode; full?: boolean }) => (
+    <div className={cn('flex flex-col gap-1', full && 'col-span-2')}>
       <label className="text-xs font-medium text-slate-600">{label}{required && <span className="text-red-500 ml-0.5">*</span>}</label>
       {children}
       {errors[name] && <p className="text-[10px] text-red-500">{errors[name]}</p>}
     </div>
-  )
+  ), [errors])
 
   return (
     <div className="space-y-4">
@@ -218,7 +263,7 @@ export default function PagarPage() {
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-[#0d1b2a] text-white">
-                {['Empresa','Fornecedor','Histórico / Produto','Conta','Valor Total','Parcelas','Próx. Venc.','Status'].map(h => (
+                {['Empresa','Fornecedor','Histórico / Documento','Conta','Valor Total','Parcelas','Próx. Venc.','Status'].map(h => (
                   <th key={h} className="text-left px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>
                 ))}
               </tr>
@@ -249,7 +294,8 @@ export default function PagarPage() {
                   </td>
                   <td className="px-3 py-2 max-w-[200px]">
                     <p className="text-slate-700 truncate">{l.historico}</p>
-                    {l.produto_servico && <p className="text-slate-400 text-[10px] truncate">{l.produto_servico}</p>}
+                    {(l.tipo_documento_nome || l.nf_doc) && <p className="text-slate-400 text-[10px] truncate">{[l.tipo_documento_nome, l.nf_doc].filter(Boolean).join(' · ')}</p>}
+                    {l.documento_nome && <p className="text-slate-400 text-[10px] truncate">Anexo: {l.documento_nome}</p>}
                   </td>
                   <td className="px-3 py-2 text-slate-500 text-[10px]">
                     {l.conta_contabil ? `${l.conta_contabil} – ${l.descricao_conta || ''}` : '—'}
@@ -312,12 +358,27 @@ export default function PagarPage() {
                         placeholder="Descrição do lançamento" />
                     </F>
                   </div>
-                  <F label="Produto / Serviço" name="produto_servico">
-                    <input className={inp} value={fProduto} onChange={e => setFProduto(e.target.value)}
-                      placeholder="Descrição do produto ou serviço" />
+                  <F label="Tipo de Documento" name="tipo_documento_id">
+                    <select className={inp} value={fTipoDoc} onChange={e => setFTipoDoc(e.target.value)}>
+                      <option value="">Selecione</option>
+                      {tiposDocumento.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
+                    </select>
                   </F>
-                  <F label="NF / Documento" name="nf_doc">
-                    <input className={inp} value={fNF} onChange={e => setFNF(e.target.value)} placeholder="Número da NF" />
+                  <F label="Número do Documento" name="nf_doc">
+                    <input className={inp} value={fNF} onChange={e => setFNF(e.target.value)} placeholder="Ex.: NF, boleto, recibo" />
+                  </F>
+                  <F label="Documento em PDF ou imagem" name="documento_arquivo" full>
+                    <label className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-600 cursor-pointer hover:bg-slate-100">
+                      <FileText className="w-3.5 h-3.5 text-slate-400" />
+                      <span className="truncate">{fDocumentoNome || 'Selecionar arquivo PDF ou imagem'}</span>
+                      <input
+                        type="file"
+                        accept="application/pdf,image/*"
+                        className="hidden"
+                        onChange={e => handleDocumentoChange(e.target.files?.[0] || null)}
+                      />
+                    </label>
+                    {fDocumentoErro && <p className="text-[10px] text-red-500">{fDocumentoErro}</p>}
                   </F>
                   <F label="Plano de Contas" name="conta_contabil">
                     <select className={inp} value={fConta} onChange={e => setFConta(e.target.value)}>

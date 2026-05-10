@@ -110,17 +110,15 @@ function MaskedInput({
         inputMode={inputMode}
         placeholder={placeholder}
         onChange={e => {
-          // Aplica máscara diretamente no DOM — sem setState, sem re-render
-          const pos   = e.target.selectionStart ?? 0
-          const raw   = e.target.value
-          const masked = mask(raw)
+          // Aplica máscara diretamente no DOM — sem setState, sem re-render.
+          // Mantém o cursor no final para evitar perder dígitos quando a máscara insere ./-
+          const masked = mask(e.target.value)
           e.target.value = masked
-          // Tenta preservar posição do cursor
-          try { e.target.setSelectionRange(pos, pos) } catch {}
+          try { e.target.setSelectionRange(masked.length, masked.length) } catch {}
           // Notifica o pai (cause re-render do pai, mas não deste input)
           onCommit(masked)
           const digits = masked.replace(/\D/g, '')
-          if (onComplete && digits.length >= 14) onComplete(masked)
+          if (onComplete && (digits.length === 14 || digits.length === 8)) onComplete(masked)
         }}
       />
       {icon && <span className="absolute right-2.5 top-1/2 -translate-y-1/2">{icon}</span>}

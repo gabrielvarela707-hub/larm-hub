@@ -112,7 +112,11 @@ CREATE TABLE IF NOT EXISTS fin_lancamentos_cp (
   descricao_conta  TEXT,          -- nome da conta (desnormalizado para performance)
   historico        TEXT NOT NULL,
   produto_servico  TEXT,
+  tipo_documento_id INTEGER,
   nf_doc           VARCHAR(100),
+  documento_nome   VARCHAR(255),
+  documento_mime   VARCHAR(120),
+  documento_base64 TEXT,
   dt_emissao       DATE,
   valor_total      NUMERIC(18,4) NOT NULL,
   qtd_parcelas     INTEGER DEFAULT 1,

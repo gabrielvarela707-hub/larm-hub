@@ -321,12 +321,14 @@ router.get('/lancamentos-cp', async (req, res) => {
          l.*,
          f.razao_social AS fornecedor_nome,
          f.cnpj_cpf     AS fornecedor_cnpj,
+         td.nome        AS tipo_documento_nome,
          b.banco_nome   AS banco_nome,
          b.agencia      AS banco_agencia,
          b.conta        AS banco_conta,
          (SELECT MIN(p.vencimento) FROM fin_parcelas_cp p WHERE p.lancamento_id = l.id AND p.status = 'pendente') AS proximo_venc
        FROM fin_lancamentos_cp l
        LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
+       LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
        LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
        ${where}
        ORDER BY l.created_at DESC
@@ -352,9 +354,10 @@ router.get('/lancamentos-cp', async (req, res) => {
 router.get('/lancamentos-cp/:id', async (req, res) => {
   try {
     const { rows: [lanc] } = await query(
-      `SELECT l.*, f.razao_social AS fornecedor_nome, b.banco_nome, b.agencia, b.conta
+      `SELECT l.*, f.razao_social AS fornecedor_nome, td.nome AS tipo_documento_nome, b.banco_nome, b.agencia, b.conta
        FROM fin_lancamentos_cp l
        LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
+       LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
        LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
        WHERE l.id = $1`, [req.params.id]
     )
@@ -374,7 +377,8 @@ router.get('/lancamentos-cp/:id', async (req, res) => {
 router.post('/lancamentos-cp', async (req, res) => {
   const {
     empresa, fornecedor_id, banco_conta_id, conta_contabil, descricao_conta,
-    historico, produto_servico, nf_doc, dt_emissao, valor_total, qtd_parcelas = 1,
+    historico, tipo_documento_id, produto_servico, nf_doc, documento_nome, documento_mime, documento_base64,
+    dt_emissao, valor_total, qtd_parcelas = 1,
     centro_custo, obra, n_cheque, obs,
     parcelas  // array [{ vencimento, valor }] — opcional, gera automaticamente se omitido
   } = req.body
@@ -391,12 +395,14 @@ router.post('/lancamentos-cp', async (req, res) => {
     const { rows: [lanc] } = await client.query(
       `INSERT INTO fin_lancamentos_cp
          (empresa, fornecedor_id, banco_conta_id, conta_contabil, descricao_conta,
-          historico, produto_servico, nf_doc, dt_emissao, valor_total, qtd_parcelas,
+          historico, tipo_documento_id, produto_servico, nf_doc, documento_nome, documento_mime, documento_base64,
+          dt_emissao, valor_total, qtd_parcelas,
           centro_custo, obra, n_cheque, obs)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
        RETURNING *`,
       [empresa.toUpperCase(), fornecedor_id || null, banco_conta_id || null,
-       conta_contabil, descricao_conta, historico, produto_servico, nf_doc,
+       conta_contabil, descricao_conta, historico, tipo_documento_id || null, produto_servico, nf_doc,
+       documento_nome || null, documento_mime || null, documento_base64 || null,
        dt_emissao || null, valor_total, qtd_parcelas,
        centro_custo, obra, n_cheque, obs]
     )

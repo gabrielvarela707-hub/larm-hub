@@ -37,10 +37,12 @@ async function migrate() {
     if (cpExists.length) {
       await pool.query(`
         ALTER TABLE fin_lancamentos_cp
-          ADD COLUMN IF NOT EXISTS tipo_documento_id INT
-          REFERENCES fin_tipos_documento(id) ON DELETE SET NULL
+          ADD COLUMN IF NOT EXISTS tipo_documento_id INT REFERENCES fin_tipos_documento(id) ON DELETE SET NULL,
+          ADD COLUMN IF NOT EXISTS documento_nome VARCHAR(255),
+          ADD COLUMN IF NOT EXISTS documento_mime VARCHAR(120),
+          ADD COLUMN IF NOT EXISTS documento_base64 TEXT
       `)
-      logger.info('  ✅  coluna tipo_documento_id em fin_lancamentos_cp')
+      logger.info('  ✅  colunas tipo_documento_id/documento_* em fin_lancamentos_cp')
     } else {
       logger.info('  ⏭  fin_lancamentos_cp não existe ainda — skip')
     }
