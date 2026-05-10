@@ -454,18 +454,9 @@ export default function ConfiguracoesPage() {
   async function resendInvite(invite: Invite) {
     setResendingId(invite.id)
     try {
-      // Cancela o convite antigo
-      await apiClient.delete(`/users/invite/${invite.id}`)
-      // Cria novo convite com os mesmos dados
-      const r = await apiClient.post('/users/invite', {
-        name: invite.name, email: invite.email, role: invite.role,
-        auto_activate: true, use_temp_password: false,
-      })
-      const rawUrl: string = r.data.data.invite_url || ''
-      const fixedUrl = rawUrl.startsWith('undefined')
-        ? `${window.location.origin}/convite/${rawUrl.split('/convite/')[1]}`
-        : rawUrl
-      setInvResult({ url: fixedUrl, temp_password: r.data.data.temp_password })
+      const r = await apiClient.post(`/users/invite/resend/${invite.id}`, {})
+      const rawUrl: string = r.data.data?.invite_url || ''
+      setInvResult({ url: rawUrl, temp_password: r.data.data?.temp_password })
       setShowInvite(true)
       await loadUsers()
     } catch { /* silencioso */ } finally { setResendingId(null) }

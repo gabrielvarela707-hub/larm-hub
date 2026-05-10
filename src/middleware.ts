@@ -15,6 +15,8 @@ const PUBLIC_PATHS = [
   '/login',
   '/login/santa-clara',
   '/login/larm',
+  '/convite',        // ← página de aceite de convite
+  '/trocar-senha',   // ← troca de senha no primeiro acesso
   '/api',
   '/_next',
   '/favicon.ico',
