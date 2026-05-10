@@ -439,7 +439,7 @@ router.get('/plano-contas', async (req, res) => {
 
 // GET /lancamentos-cp — lista com filtros
 router.get('/lancamentos-cp', async (req, res) => {
-  const { empresa, status, fornecedor_id, page = 1, limit = 50,
+  const { empresa, status, fornecedor_id, busca, page = 1, limit = 50,
           dt_inicio, dt_fim, venc_inicio, venc_fim } = req.query
   const conditions = []
   const params = []
@@ -455,6 +455,10 @@ router.get('/lancamentos-cp', async (req, res) => {
   if (fornecedor_id) {
     params.push(parseInt(fornecedor_id))
     conditions.push(`l.fornecedor_id = $${params.length}`)
+  }
+  if (busca) {
+    params.push(`%${busca}%`)
+    conditions.push(`(f.razao_social ILIKE $${params.length} OR l.historico ILIKE $${params.length} OR l.nf_doc ILIKE $${params.length} OR td.nome ILIKE $${params.length})`)
   }
   if (dt_inicio) {
     params.push(dt_inicio)
@@ -479,19 +483,29 @@ router.get('/lancamentos-cp', async (req, res) => {
          b.banco_nome   AS banco_nome,
          b.agencia      AS banco_agencia,
          b.conta        AS banco_conta,
-         (SELECT MIN(p.vencimento) FROM fin_parcelas_cp p WHERE p.lancamento_id = l.id AND p.status = 'pendente') AS proximo_venc
+         p.id           AS parcela_id,
+         p.numero       AS parcela_numero,
+         p.valor        AS parcela_valor,
+         p.vencimento   AS parcela_vencimento,
+         p.dt_pagamento AS parcela_dt_pagamento,
+         p.status       AS parcela_status,
+         (SELECT MIN(px.vencimento) FROM fin_parcelas_cp px WHERE px.lancamento_id = l.id AND px.status = 'pendente') AS proximo_venc
        FROM fin_lancamentos_cp l
        LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
        LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
        LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
+       LEFT JOIN fin_parcelas_cp p ON p.lancamento_id = l.id
        ${where}
-       ORDER BY l.created_at DESC
+       ORDER BY l.created_at DESC, p.numero ASC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     )
     const ct = await query(
-      `SELECT COUNT(*), COALESCE(SUM(valor_total),0) AS total_valor
-       FROM fin_lancamentos_cp l ${where}`,
+      `SELECT COUNT(*), COALESCE(SUM(l.valor_total),0) AS total_valor
+       FROM fin_lancamentos_cp l
+       LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
+       LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
+       ${where}`,
       params.slice(0, -2)
     )
     return res.json({
@@ -627,8 +641,8 @@ router.post('/lancamentos-cp', async (req, res) => {
 
     for (const p of parcs) {
       await client.query(
-        'INSERT INTO fin_parcelas_cp (lancamento_id, numero, valor, vencimento) VALUES ($1,$2,$3,$4)',
-        [lanc.id, p.numero || parcs.indexOf(p) + 1, p.valor, p.vencimento]
+        'INSERT INTO fin_parcelas_cp (lancamento_id, numero, valor, vencimento, status) VALUES ($1,$2,$3,$4,$5)',
+        [lanc.id, p.numero || parcs.indexOf(p) + 1, p.valor, p.vencimento, p.status || 'pendente']
       )
     }
 

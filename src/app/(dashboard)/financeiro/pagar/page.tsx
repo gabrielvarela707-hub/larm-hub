@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Plus, Search, X, Check, FileText, Loader2, Sparkles } from 'lucide-react'
 import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
@@ -10,6 +10,14 @@ interface BancoConta { id: number; empresa: string; banco_nome: string; agencia:
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
 interface TipoDocumento { id: number; nome: string }
 interface Parcela     { id?: number; numero: number; valor: number; vencimento: string; status: string }
+interface NovoFornecedorForm {
+  razao_social: string
+  nome_fantasia: string
+  cnpj_cpf: string
+  tipo_pessoa: 'PJ' | 'PF'
+  empresa: string
+}
+type SortKey = 'empresa' | 'fornecedor' | 'tipo_documento' | 'numero' | 'parcela' | 'valor' | 'emissao' | 'vencimento' | 'pagamento' | 'status'
 interface AiContaPagarResult {
   fornecedor_nome?: string | null
   fornecedor_cnpj?: string | null
@@ -29,6 +37,8 @@ interface Lancamento {
   qtd_parcelas: number; status: string; conta_contabil: string | null
   descricao_conta: string | null; centro_custo: string | null; obs: string | null
   fornecedor_nome: string | null; banco_nome: string | null; proximo_venc: string | null
+  parcela_id?: number | null; parcela_numero?: number | null; parcela_valor?: number | null
+  parcela_vencimento?: string | null; parcela_status?: string | null; parcela_dt_pagamento?: string | null
 }
 
 const EMPRESAS = ['LARM', 'LUCKY', 'LM', 'HOLDING', 'RM']
@@ -45,6 +55,23 @@ const fmtDate = (d: string | null | undefined) => {
   if (!d) return '—'
   try { return new Date(d).toLocaleDateString('pt-BR') } catch { return String(d) }
 }
+const sortText = (v: unknown) => String(v ?? '').toLocaleLowerCase('pt-BR')
+const sortDate = (v: string | null | undefined) => v ? (Date.parse(v) || 0) : 0
+const getSortValue = (l: Lancamento, key: SortKey): string | number => {
+  switch (key) {
+    case 'empresa': return sortText(l.empresa)
+    case 'fornecedor': return sortText(l.fornecedor_nome)
+    case 'tipo_documento': return sortText(l.tipo_documento_nome)
+    case 'numero': return sortText(l.nf_doc)
+    case 'parcela': return Number(l.parcela_numero || 0)
+    case 'valor': return Number(l.parcela_valor ?? l.valor_total ?? 0)
+    case 'emissao': return sortDate(l.dt_emissao)
+    case 'vencimento': return sortDate(l.parcela_vencimento || l.proximo_venc)
+    case 'pagamento': return sortDate(l.parcela_dt_pagamento)
+    case 'status': return sortText(l.parcela_status || l.status)
+    default: return ''
+  }
+}
 
 export default function PagarPage() {
   const [lista,     setLista]     = useState<Lancamento[]>([])
@@ -53,6 +80,9 @@ export default function PagarPage() {
   const [loading,   setLoading]   = useState(false)
   const [saving,    setSaving]    = useState(false)
   const [showForm,  setShowForm]  = useState(false)
+  const [showFornecedorModal, setShowFornecedorModal] = useState(false)
+  const [savingFornecedor, setSavingFornecedor] = useState(false)
+  const [fornecedorErrors, setFornecedorErrors] = useState<Record<string, string>>({})
 
   // Listas para selects
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([])
@@ -64,6 +94,8 @@ export default function PagarPage() {
   const [fEmpresa, setFEmpresa] = useState('')
   const [fStatus,  setFStatus]  = useState('')
   const [fBusca,   setFBusca]   = useState('')
+  const [sortKey, setSortKey] = useState<SortKey>('vencimento')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
   // Form state
   const [fEmp,     setFEmp]     = useState('')
@@ -78,6 +110,13 @@ export default function PagarPage() {
   const [fNParc,   setFNParc]   = useState(1)
   const [fCC,      setFCC]      = useState('')
   const [fObs,     setFObs]     = useState('')
+  const [novoFornecedor, setNovoFornecedor] = useState<NovoFornecedorForm>({
+    razao_social: '',
+    nome_fantasia: '',
+    cnpj_cpf: '',
+    tipo_pessoa: 'PJ',
+    empresa: '',
+  })
   const [fDocumentoNome,   setFDocumentoNome]   = useState('')
   const [fDocumentoMime,   setFDocumentoMime]   = useState('')
   const [fDocumentoBase64, setFDocumentoBase64] = useState('')
@@ -148,6 +187,66 @@ export default function PagarPage() {
     setParcelas(p => p.map((x, idx) => idx === i ? { ...x, [key]: val } : x))
   }
 
+  function sortBy(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+      return
+    }
+    setSortKey(key)
+    setSortDir(key === 'valor' ? 'desc' : 'asc')
+  }
+
+  function openFornecedorModal() {
+    setFornecedorErrors({})
+    setNovoFornecedor({
+      razao_social: '',
+      nome_fantasia: '',
+      cnpj_cpf: '',
+      tipo_pessoa: 'PJ',
+      empresa: fEmp || 'TODOS',
+    })
+    setShowFornecedorModal(true)
+  }
+
+  function closeFornecedorModal() {
+    if (savingFornecedor) return
+    setShowFornecedorModal(false)
+    setFornecedorErrors({})
+  }
+
+  async function saveFornecedorRapido() {
+    const e: Record<string, string> = {}
+    if (!novoFornecedor.razao_social.trim()) e.razao_social = 'Obrigatório'
+    if (!novoFornecedor.empresa) e.empresa = 'Obrigatório'
+    setFornecedorErrors(e)
+    if (Object.keys(e).length) return
+
+    setSavingFornecedor(true)
+    try {
+      const payload = {
+        razao_social: novoFornecedor.razao_social.trim(),
+        nome_fantasia: novoFornecedor.nome_fantasia.trim() || null,
+        cnpj_cpf: novoFornecedor.cnpj_cpf.trim() || null,
+        tipo_pessoa: novoFornecedor.tipo_pessoa,
+        empresa: novoFornecedor.empresa,
+        categoria: null,
+      }
+      const r = await apiClient.post('/financeiro/fornecedores', payload)
+      const criado = r.data.data as Fornecedor
+      const sel = await apiClient.get('/financeiro/fornecedores/select')
+      setFornecedores(sel.data.data || [])
+      setFForn(String(criado.id))
+      if (!fEmp && criado.empresa && criado.empresa !== 'TODOS') setFEmp(criado.empresa)
+      setShowFornecedorModal(false)
+      setFornecedorErrors({})
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao cadastrar fornecedor'
+      setFornecedorErrors({ _geral: msg })
+    } finally {
+      setSavingFornecedor(false)
+    }
+  }
+
   function openNew() { setShowForm(true); setErrors({}) }
   function closeForm() {
     setShowForm(false)
@@ -156,6 +255,7 @@ export default function PagarPage() {
     setFDocumentoNome(''); setFDocumentoMime(''); setFDocumentoBase64(''); setFDocumentoErro('')
     setAiMessage(''); setAiLoading(false); aiParcelasRef.current = null
     setParcelas([]); setErrors({})
+    setShowFornecedorModal(false); setFornecedorErrors({})
   }
 
   function validate() {
@@ -324,6 +424,25 @@ export default function PagarPage() {
     </div>
   ), [errors])
 
+  const sortedLista = useMemo(() => {
+    const dir = sortDir === 'asc' ? 1 : -1
+    return [...lista].sort((a, b) => {
+      const av = getSortValue(a, sortKey)
+      const bv = getSortValue(b, sortKey)
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir
+      return String(av).localeCompare(String(bv), 'pt-BR', { numeric: true, sensitivity: 'base' }) * dir
+    })
+  }, [lista, sortKey, sortDir])
+
+  const TH = ({ label, k, align = 'left' }: { label: string; k: SortKey; align?: 'left' | 'right' | 'center' }) => (
+    <th className={cn('px-3 py-2.5 font-semibold whitespace-nowrap', align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left')}>
+      <button type="button" onClick={() => sortBy(k)} className={cn('inline-flex items-center gap-1 hover:text-blue-100', align === 'right' && 'justify-end w-full', align === 'center' && 'justify-center w-full')}>
+        {label}
+        <span className="text-[10px] opacity-70">{sortKey === k ? (sortDir === 'asc' ? '▲' : '▼') : '↕'}</span>
+      </button>
+    </th>
+  )
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -367,15 +486,22 @@ export default function PagarPage() {
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-[#0d1b2a] text-white">
-                {['Empresa','Fornecedor','Histórico / Documento','Conta','Valor Total','Parcelas','Próx. Venc.','Status'].map(h => (
-                  <th key={h} className="text-left px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>
-                ))}
+                <TH label="Empresa" k="empresa" />
+                <TH label="Fornecedor" k="fornecedor" />
+                <TH label="Tipo de documento" k="tipo_documento" />
+                <TH label="Número" k="numero" />
+                <TH label="Parcela" k="parcela" align="center" />
+                <TH label="Valor" k="valor" align="right" />
+                <TH label="Emissão" k="emissao" />
+                <TH label="Vencimento" k="vencimento" />
+                <TH label="Pagamento" k="pagamento" />
+                <TH label="Status" k="status" />
               </tr>
             </thead>
             <tbody>
               {loading && [...Array(6)].map((_,i) => (
                 <tr key={i} className="border-b border-slate-50">
-                  {[...Array(8)].map((_,j) => (
+                  {[...Array(10)].map((_,j) => (
                     <td key={j} className="px-3 py-2.5">
                       <div className="h-3 bg-slate-100 rounded animate-pulse" style={{ width: `${50+((i*11+j*9)%40)}%` }} />
                     </td>
@@ -383,37 +509,42 @@ export default function PagarPage() {
                 </tr>
               ))}
               {!loading && lista.length === 0 && (
-                <tr><td colSpan={8} className="text-center text-slate-400 py-12 text-sm">
+                <tr><td colSpan={10} className="text-center text-slate-400 py-12 text-sm">
                   Nenhum lançamento encontrado
                 </td></tr>
               )}
-              {!loading && lista.map(l => (
-                <tr key={l.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                  <td className="px-3 py-2.5">
-                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 font-medium">{l.empresa}</span>
-                  </td>
-                  <td className="px-3 py-2 max-w-[160px]">
-                    <p className="font-medium text-slate-700 truncate">{l.fornecedor_nome || '—'}</p>
-                    {l.banco_nome && <p className="text-slate-400 text-[10px]">{l.banco_nome}</p>}
-                  </td>
-                  <td className="px-3 py-2 max-w-[200px]">
-                    <p className="text-slate-700 truncate">{l.historico}</p>
-                    {(l.tipo_documento_nome || l.nf_doc) && <p className="text-slate-400 text-[10px] truncate">{[l.tipo_documento_nome, l.nf_doc].filter(Boolean).join(' · ')}</p>}
-                    {l.documento_nome && <p className="text-slate-400 text-[10px] truncate">Anexo: {l.documento_nome}</p>}
-                  </td>
-                  <td className="px-3 py-2 text-slate-500 text-[10px]">
-                    {l.conta_contabil ? `${l.conta_contabil} – ${l.descricao_conta || ''}` : '—'}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-800">{R$(l.valor_total)}</td>
-                  <td className="px-3 py-2 text-center text-slate-500">{l.qtd_parcelas}x</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.proximo_venc)}</td>
-                  <td className="px-3 py-2">
-                    <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', STATUS_COLORS[l.status] || STATUS_COLORS.cancelado)}>
-                      {l.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {!loading && sortedLista.map(l => {
+                const statusParcela = l.parcela_status || l.status
+                const valorParcela = Number(l.parcela_valor ?? l.valor_total ?? 0)
+                return (
+                  <tr key={`${l.id}-${l.parcela_id || l.parcela_numero || 'sem-parcela'}`} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                    <td className="px-3 py-2.5">
+                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 font-medium">{l.empresa}</span>
+                    </td>
+                    <td className="px-3 py-2 max-w-[180px]">
+                      <p className="font-medium text-slate-700 truncate">{l.fornecedor_nome || '—'}</p>
+                      {l.banco_nome && <p className="text-slate-400 text-[10px] truncate">{l.banco_nome}</p>}
+                    </td>
+                    <td className="px-3 py-2 max-w-[150px] text-slate-600 truncate">{l.tipo_documento_nome || '—'}</td>
+                    <td className="px-3 py-2 max-w-[130px] text-slate-600 truncate">
+                      <p className="truncate">{l.nf_doc || '—'}</p>
+                      {l.documento_nome && <p className="text-slate-400 text-[10px] truncate">Anexo: {l.documento_nome}</p>}
+                    </td>
+                    <td className="px-3 py-2 text-center text-slate-600 whitespace-nowrap">
+                      {l.parcela_numero ? `${l.parcela_numero}/${l.qtd_parcelas || 1}` : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-800 whitespace-nowrap">{R$(valorParcela)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.dt_emissao)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.parcela_vencimento || l.proximo_venc)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.parcela_dt_pagamento)}</td>
+                    <td className="px-3 py-2">
+                      <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', STATUS_COLORS[statusParcela] || STATUS_COLORS.cancelado)}>
+                        {statusParcela || '—'}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -448,14 +579,20 @@ export default function PagarPage() {
                       {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
                     </select>
                   </F>
-                  <F label="Fornecedor" name="fornecedor_id">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-medium text-slate-600">Fornecedor</label>
+                      <button type="button" onClick={openFornecedorModal} className="text-[10px] font-semibold text-blue-700 hover:text-blue-900">
+                        + Novo fornecedor
+                      </button>
+                    </div>
                     <select className={inp} value={fForn} onChange={e => setFForn(e.target.value)}>
                       <option value="">Selecione (opcional)</option>
                       {fornecedores
                         .filter(f => !fEmp || f.empresa === fEmp || f.empresa === 'TODOS')
                         .map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
                     </select>
-                  </F>
+                  </div>
                   <div className="col-span-2">
                     <F label="Histórico" name="historico" required>
                       <input className={inp} value={fHistorico} onChange={e => setFHistorico(e.target.value)}
@@ -541,17 +678,32 @@ export default function PagarPage() {
                     <p className="text-xs font-medium text-slate-600 mb-2">Parcelas e Vencimentos</p>
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                       {parcelas.map((p, i) => (
-                        <div key={i} className="flex items-center gap-3 bg-slate-50 rounded-lg px-3 py-2">
-                          <span className="text-[10px] font-semibold text-slate-500 w-14">{i+1}/{parcelas.length}</span>
-                          <div className="flex-1">
+                        <div key={i} className="grid grid-cols-[76px_1fr_120px_120px] items-end gap-3 bg-slate-50 rounded-lg px-3 py-2">
+                          <div>
+                            <label className="block text-[10px] text-slate-500 mb-1">Parcela</label>
+                            <div className="text-xs font-semibold text-slate-600">{p.numero || i + 1}/{parcelas.length}</div>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-500 mb-1">Vencimento</label>
                             <input type="date" value={p.vencimento}
                               onChange={e => updateParcela(i, 'vencimento', e.target.value)}
                               className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full" />
                           </div>
-                          <div className="w-28">
+                          <div>
+                            <label className="block text-[10px] text-slate-500 mb-1">Valor</label>
                             <input type="number" step="0.01" value={p.valor}
-                              onChange={e => updateParcela(i, 'valor', parseFloat(e.target.value))}
+                              onChange={e => updateParcela(i, 'valor', parseFloat(e.target.value) || 0)}
                               className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-500 mb-1">Status</label>
+                            <select value={p.status || 'pendente'} onChange={e => updateParcela(i, 'status', e.target.value)}
+                              className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full">
+                              <option value="pendente">Pendente</option>
+                              <option value="pago">Pago</option>
+                              <option value="vencido">Vencido</option>
+                              <option value="cancelado">Cancelado</option>
+                            </select>
                           </div>
                         </div>
                       ))}
@@ -579,6 +731,73 @@ export default function PagarPage() {
           </div>
         </div>
       )}
+
+      {showFornecedorModal && (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-start justify-center p-4 pt-10 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-bold text-slate-800">Novo Fornecedor</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Cadastro rápido para usar neste lançamento</p>
+              </div>
+              <button type="button" onClick={closeFornecedorModal} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-5 py-4 space-y-3">
+              {fornecedorErrors._geral && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">{fornecedorErrors._geral}</div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className="text-xs font-medium text-slate-600">Razão Social <span className="text-red-500">*</span></label>
+                  <input className={cn(inp, fornecedorErrors.razao_social && 'border-red-300')} value={novoFornecedor.razao_social}
+                    onChange={e => setNovoFornecedor(v => ({ ...v, razao_social: e.target.value }))} placeholder="Nome completo / razão social" />
+                  {fornecedorErrors.razao_social && <p className="text-[10px] text-red-500 mt-1">{fornecedorErrors.razao_social}</p>}
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Nome Fantasia</label>
+                  <input className={inp} value={novoFornecedor.nome_fantasia}
+                    onChange={e => setNovoFornecedor(v => ({ ...v, nome_fantasia: e.target.value }))} placeholder="Opcional" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">CNPJ / CPF</label>
+                  <input className={inp} value={novoFornecedor.cnpj_cpf}
+                    onChange={e => setNovoFornecedor(v => ({ ...v, cnpj_cpf: e.target.value }))} placeholder="Opcional" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Tipo de Pessoa</label>
+                  <select className={inp} value={novoFornecedor.tipo_pessoa} onChange={e => setNovoFornecedor(v => ({ ...v, tipo_pessoa: e.target.value as 'PJ' | 'PF' }))}>
+                    <option value="PJ">Pessoa Jurídica</option>
+                    <option value="PF">Pessoa Física</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-600">Empresa <span className="text-red-500">*</span></label>
+                  <select className={cn(inp, fornecedorErrors.empresa && 'border-red-300')} value={novoFornecedor.empresa} onChange={e => setNovoFornecedor(v => ({ ...v, empresa: e.target.value }))}>
+                    <option value="">Selecione</option>
+                    <option value="TODOS">Todas</option>
+                    {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
+                  </select>
+                  {fornecedorErrors.empresa && <p className="text-[10px] text-red-500 mt-1">{fornecedorErrors.empresa}</p>}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
+              <button type="button" onClick={closeFornecedorModal} className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
+                Cancelar
+              </button>
+              <button type="button" onClick={saveFornecedorRapido} disabled={savingFornecedor}
+                className="flex items-center gap-2 px-5 py-2 text-xs font-semibold bg-[#1e3a5f] hover:bg-[#162d4a] text-white rounded-lg disabled:opacity-60">
+                {savingFornecedor ? 'Salvando…' : <><Check className="w-3.5 h-3.5" /> Salvar Fornecedor</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
