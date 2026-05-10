@@ -5,7 +5,7 @@
  * → lotemobile2/src/app/(dashboard)/financeiro/fornecedores/page.tsx
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Plus, Search, Pencil, X, Check, Loader2,
   Building2, User, History, FileText,
@@ -75,6 +75,48 @@ function fmtMoeda(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
+
+// ─── MaskedInput ─────────────────────────────────────────────────────────────
+// Usa estado LOCAL para não causar re-render do modal a cada tecla.
+// Sincroniza com o pai apenas no onBlur ou quando o callback onChange é chamado.
+function MaskedInput({
+  value, onChange, onComplete, mask, placeholder, className, inputMode, icon,
+}: {
+  value: string
+  onChange: (v: string) => void
+  onComplete?: (v: string) => void
+  mask: (v: string) => string
+  placeholder?: string
+  className?: string
+  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode']
+  icon?: React.ReactNode
+}) {
+  const [local, setLocal] = useState(value)
+  // Sync when external value changes (e.g. BrasilAPI populates)
+  useEffect(() => { setLocal(value) }, [value])
+
+  return (
+    <div className="relative">
+      <input
+        className={cn(className, icon && 'pr-8')}
+        value={local}
+        inputMode={inputMode}
+        placeholder={placeholder}
+        onChange={e => {
+          const masked = mask(e.target.value)
+          setLocal(masked)
+          onChange(masked)
+          const digits = masked.replace(/\D/g, '')
+          if (onComplete && digits.length >= (inputMode === 'numeric' && placeholder?.includes('/') ? 14 : 8)) {
+            onComplete(masked)
+          }
+        }}
+      />
+      {icon && <span className="absolute right-2.5 top-1/2 -translate-y-1/2">{icon}</span>}
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function FornecedoresPage() {
   const [lista,    setLista]    = useState<Fornecedor[]>([])
@@ -103,9 +145,6 @@ export default function FornecedoresPage() {
   const [fCategoria,setFCategoria]= useState('')
 
   // Prevent re-render on every keystroke: use uncontrolled input + ref pattern for masks
-  const cnpjRef  = useRef<HTMLInputElement>(null)
-  const cepRef   = useRef<HTMLInputElement>(null)
-  const phoneRef = useRef<HTMLInputElement>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -416,30 +455,21 @@ export default function FornecedoresPage() {
 
                     {/* CNPJ/CPF — primeiro campo com lookup */}
                     <F label="CNPJ / CPF" name="cnpj_cpf">
-                      <div className="relative">
-                        <input
-                          ref={cnpjRef}
-                          className={cn(inp, errors.cnpj_cpf && 'border-red-300', 'pr-8')}
-                          defaultValue={form.cnpj_cpf || ''}
-                          inputMode="numeric"
-                          placeholder={form.tipo_pessoa === 'PF' ? '000.000.000-00' : '00.000.000/0000-00'}
-                          onChange={e => {
-                            const digits = onlyDigits(e.target.value)
-                            const masked = form.tipo_pessoa === 'PF' ? maskCPF(e.target.value) : maskCNPJ(e.target.value)
-                            e.target.value = masked
-                            setForm(p => ({ ...p, cnpj_cpf: masked }))
-                            setCnpjDupError('')
-                            if (digits.length === 14 && form.tipo_pessoa !== 'PF') {
-                              lookupCNPJ(digits)
-                            }
-                          }}
-                        />
-                        <span className="absolute right-2.5 top-1/2 -translate-y-1/2">
-                          {cnpjLoading && <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />}
-                          {!cnpjLoading && cnpjStatus === 'ok' && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
-                          {!cnpjLoading && (cnpjStatus === 'err' || cnpjDupError) && <AlertTriangle className="w-3.5 h-3.5 text-red-500" />}
-                        </span>
-                      </div>
+                      <MaskedInput
+                        value={form.cnpj_cpf || ''}
+                        mask={v => form.tipo_pessoa === 'PF' ? maskCPF(v) : maskCNPJ(v)}
+                        onChange={v => { setForm(p => ({ ...p, cnpj_cpf: v })); setCnpjDupError('') }}
+                        onComplete={v => { if (form.tipo_pessoa !== 'PF') lookupCNPJ(onlyDigits(v)) }}
+                        inputMode="numeric"
+                        placeholder={form.tipo_pessoa === 'PF' ? '000.000.000-00' : '00.000.000/0000-00'}
+                        className={cn(inp, errors.cnpj_cpf && 'border-red-300')}
+                        icon={
+                          cnpjLoading ? <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+                          : cnpjStatus === 'ok' ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                          : (cnpjStatus === 'err' || cnpjDupError) ? <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                          : undefined
+                        }
+                      />
                       {cnpjDupError && <p className="text-[10px] text-red-500 mt-0.5">{cnpjDupError}</p>}
                     </F>
 
@@ -487,17 +517,13 @@ export default function FornecedoresPage() {
                     </F>
 
                     <F label="Telefone" name="telefone">
-                      <input
-                        ref={phoneRef}
-                        className={inp}
-                        defaultValue={form.telefone || ''}
+                      <MaskedInput
+                        value={form.telefone || ''}
+                        mask={maskPhone}
+                        onChange={v => set('telefone', v)}
                         inputMode="numeric"
                         placeholder="(11) 99999-9999"
-                        onChange={e => {
-                          const masked = maskPhone(e.target.value)
-                          e.target.value = masked
-                          setForm(p => ({ ...p, telefone: masked }))
-                        }}
+                        className={inp}
                       />
                     </F>
                   </div>
@@ -509,22 +535,16 @@ export default function FornecedoresPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <F label="CEP" name="cep">
                       <div className="relative">
-                        <input
-                          ref={cepRef}
-                          className={inp}
-                          defaultValue={form.cep || ''}
+                        <MaskedInput
+                          value={form.cep || ''}
+                          mask={maskCEP}
+                          onChange={v => set('cep', v)}
+                          onComplete={v => { if (onlyDigits(v).length === 8) lookupCEP(v) }}
                           inputMode="numeric"
                           placeholder="00000-000"
-                          onChange={e => {
-                            const masked = maskCEP(e.target.value)
-                            e.target.value = masked
-                            setForm(p => ({ ...p, cep: masked }))
-                            if (onlyDigits(masked).length === 8) lookupCEP(masked)
-                          }}
+                          className={inp}
+                          icon={cepLoading ? <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" /> : undefined}
                         />
-                        {cepLoading && (
-                          <Loader2 className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-blue-500 animate-spin" />
-                        )}
                       </div>
                     </F>
 

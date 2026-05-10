@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Map, Users, FileText, DollarSign,
   BarChart3, Building2, Bot, Settings, MapPin,
   Globe, HardHat, ChevronDown, ChevronRight,
-  TrendingUp, ChevronLeft, LogOut, HelpCircle, Receipt,
+  TrendingUp, ChevronLeft, LogOut, HelpCircle, Receipt, Tag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTenantConfig } from '@/lib/tenant-config-store'
@@ -51,7 +51,13 @@ const NAV: NavItem[] = [
       { label: 'SPED e DIMOB',      href: '/financeiro/sped' },
     ],
   },
-  { label: 'Obras',             href: '/obras',          icon: HardHat },
+  { label: "Obras",             href: "/obras",          icon: HardHat },
+  {
+    label: "Cadastros Auxiliares", icon: Tag,
+    children: [
+      { label: "Tipo de Documento", href: "/cadastros/tipo-documento" },
+    ],
+  },
   { label: 'Relatorios',        href: '/relatorios',     icon: BarChart3,
     children: [
        { label: 'Mapa de Vendas', href: '/relatorios/mapa-vendas' },
@@ -114,14 +120,17 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             {logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={logoUrl} alt={logoText}
-                className="h-8 w-auto max-w-[120px] object-contain flex-shrink-0"
+                className="h-8 max-w-[140px] object-contain"
+                style={{ filter: 'brightness(0) invert(1)' }}
               />
             ) : (
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                <MapPin className="w-4 h-4 text-white" />
-              </div>
+              <>
+                <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <MapPin className="w-4 h-4 text-white" />
+                </div>
+                <span className="text-white text-sm font-semibold truncate">{logoText}</span>
+              </>
             )}
-            {!logoUrl && <span className="text-white text-base font-bold truncate leading-tight">{logoText}</span>}
           </div>
         )}
         {collapsed && (
