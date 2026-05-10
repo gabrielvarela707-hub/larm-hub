@@ -239,6 +239,36 @@ export default function ConfiguracoesPage() {
   const [sidebarColor, setSidebar]   = useState(config.sidebarColor || '#0D1B2A')
   const [logoPreview,  setLogoPreview] = useState(config.logoUrl || '')
 
+  // Sincroniza campos visuais e creds quando o store hidratar do backend
+  const hydrated = useTenantConfig(s => s.hydrated)
+  useEffect(() => {
+    if (!hydrated) return
+    setLogoText(config.logoText || 'LoteMobile')
+    setLogoPreview(config.logoUrl || '')
+    setPrimary(config.primaryColor || '#2563EB')
+    setSidebar(config.sidebarColor || '#0D1B2A')
+    setCreds({
+      googleMapsKey:      config.googleMapsKey      || '',
+      sesRegion:          config.sesRegion          || 'us-east-1',
+      sesAccessKeyId:     config.sesAccessKeyId     || '',
+      sesSecretAccessKey: config.sesSecretAccessKey || '',
+      sesFromEmail:       config.sesFromEmail       || '',
+      sesFromName:        config.sesFromName        || '',
+      snsRegion:          config.snsRegion          || 'sa-east-1',
+      snsAccessKeyId:     config.snsAccessKeyId     || '',
+      snsSecretAccessKey: config.snsSecretAccessKey || '',
+      snsSenderId:        config.snsSenderId        || 'LOTEAMENTO',
+      snsSMSType:         config.snsSMSType         || 'Transactional' as 'Transactional' | 'Promotional',
+      snsMockMode:        config.snsMockMode        ?? true,
+      whatsappToken:      config.whatsappToken      || '',
+      whatsappPhoneId:    config.whatsappPhoneId    || '',
+      whatsappBusinessId: config.whatsappBusinessId || '',
+      clicksignKey:       config.clicksignKey       || '',
+      bankName:           config.bankName           || '',
+      bankApiKey:         config.bankApiKey         || '',
+    })
+  }, [hydrated]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Creds
   const [creds, setCreds] = useState({
     googleMapsKey: config.googleMapsKey || '',
