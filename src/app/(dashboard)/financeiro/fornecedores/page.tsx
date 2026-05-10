@@ -75,7 +75,6 @@ function fmtMoeda(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
-
 // ─── MaskedInput ─────────────────────────────────────────────────────────────
 // Usa estado LOCAL para não causar re-render do modal a cada tecla.
 // Sincroniza com o pai apenas no onBlur ou quando o callback onChange é chamado.
@@ -116,6 +115,7 @@ function MaskedInput({
     </div>
   )
 }
+
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function FornecedoresPage() {
