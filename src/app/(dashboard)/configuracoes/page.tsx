@@ -221,9 +221,11 @@ function SecretInput({ value, onChange, placeholder }: {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ConfiguracoesPage() {
-  const hydrate   = useTenantConfig(s => s.hydrate)
-  const config    = useTenantConfig(s => s.config)
-  const setConfig = useTenantConfig(s => s.setConfig)
+  const hydrate       = useTenantConfig(s => s.hydrate)
+  const config        = useTenantConfig(s => s.config)
+  const setConfig     = useTenantConfig(s => s.setConfig)
+  const persistConfig = useTenantConfig(s => s.persistConfig)
+  const configSaving  = useTenantConfig(s => s.saving)
 
   useEffect(() => { hydrate() }, [hydrate])
 
@@ -264,11 +266,10 @@ export default function ConfiguracoesPage() {
   const [activeCrm, setActiveCrm] = useState<string>('')
 
   // Users & Permissions
-  const [users, setUsers]              = useState<AppUser[]>(INITIAL_USERS)
+  const [users, setUsers]              = useState<AppUser[]>([])
+  const [usersLoading, setUsersLoading] = useState(false)
   const [selectedUser, setSelectedUser] = useState<AppUser | null>(null)
-  const [perms, setPerms]       = useState<PermsMap>(() =>
-    Object.fromEntries(INITIAL_USERS.map(u => [u.id, defaultPerms(u.role)]))
-  )
+  const [perms, setPerms]       = useState<PermsMap>({})
 
   // ── Convite ────────────────────────────────────────────────────────────────
   const [showInvite,      setShowInvite]      = useState(false)
@@ -372,10 +373,34 @@ export default function ConfiguracoesPage() {
     setPerms(prev => ({ ...prev, [userId]: defaultPerms(user.role) }))
   }
 
+  // Carrega usuários reais da API ao montar
+  useEffect(() => {
+    setUsersLoading(true)
+    apiClient.get<{ ok: boolean; data: { id: string; name: string; email: string; role: AppUser['role']; is_active: boolean }[] }>('/users')
+      .then(({ data }) => {
+        if (data.ok) {
+          const loaded: AppUser[] = data.data.map(u => ({
+            id: u.id, name: u.name, email: u.email, role: u.role, active: u.is_active,
+          }))
+          setUsers(loaded)
+          setPerms(Object.fromEntries(loaded.map(u => [u.id, defaultPerms(u.role)])))
+        }
+      })
+      .catch(() => {/* falha silenciosa — lista fica vazia */})
+      .finally(() => setUsersLoading(false))
+  }, [])
+
   function save() {
-    setConfig({ logoUrl: logoPreview, logoText, primaryColor, sidebarColor, ...creds })
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    const payload = { logoUrl: logoPreview, logoText, primaryColor, sidebarColor, ...creds }
+    setConfig(payload)
+    persistConfig(payload).then(err => {
+      if (!err) {
+        setSaved(true)
+        setTimeout(() => setSaved(false), 2500)
+      } else {
+        alert(`Erro ao salvar: ${err}`)
+      }
+    })
   }
 
   const ROLE_LABELS = {
@@ -395,12 +420,13 @@ export default function ConfiguracoesPage() {
           <h1 className="text-xl font-semibold text-slate-900">Configuracoes</h1>
           <p className="text-sm text-slate-500 mt-0.5">White-label, credenciais, usuarios e permissoes</p>
         </div>
-        <button onClick={save}
+        <button onClick={save} disabled={configSaving}
           className={cn('flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-            saved ? 'bg-emerald-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'
+            saved ? 'bg-emerald-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white',
+            configSaving && 'opacity-60 cursor-not-allowed'
           )}>
-          {saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-          {saved ? 'Salvo!' : 'Salvar'}
+          {configSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+          {configSaving ? 'Salvando...' : saved ? 'Salvo!' : 'Salvar'}
         </button>
       </div>
 
@@ -539,9 +565,11 @@ export default function ConfiguracoesPage() {
           {/* ── Usuarios ── */}
           {tab === 'usuarios' && (
             <>
-              <Section title="Usuarios da conta" sub={`${users.filter(u => u.active).length} ativos`}>
+              <Section title="Usuarios da conta" sub={usersLoading ? 'Carregando...' : `${users.filter(u => u.active).length} ativos`}>
                 <div className="space-y-1">
-                  {users.map(u => (
+                  {usersLoading
+                    ? <p className="text-xs text-slate-400 animate-pulse py-4 text-center">Carregando usuários...</p>
+                    : users.map(u => (
                     <div key={u.id} className={cn('flex items-center gap-3 py-3 border-b border-slate-50 last:border-0', !u.active && 'opacity-50')}>
                       <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
                         <span className="text-blue-700 text-xs font-semibold">
@@ -790,7 +818,9 @@ export default function ConfiguracoesPage() {
               <div className="bg-white rounded-xl border border-slate-100 p-4 shadow-card">
                 <p className="text-xs font-semibold text-slate-500 mb-3">Selecione o usuario:</p>
                 <div className="flex gap-2 flex-wrap">
-                  {users.map(u => (
+                  {usersLoading
+                    ? <p className="text-xs text-slate-400 animate-pulse">Carregando usuários...</p>
+                    : users.map(u => (
                     <button key={u.id}
                       onClick={() => setSelectedUser(u)}
                       className={cn(
