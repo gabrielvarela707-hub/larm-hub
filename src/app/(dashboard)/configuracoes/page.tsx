@@ -7,6 +7,7 @@ import {
   CreditCard, Shield, Key, MapPin, Eye, EyeOff,
   AlertCircle, X, Link2, Zap, ExternalLink, CheckCircle,
   UserPlus, Copy, RefreshCw, Send, ChevronDown, Loader2,
+  Layers, Plus, Pencil, Trash2, Tags,
 } from 'lucide-react'
 import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
@@ -18,8 +19,17 @@ interface AppUser {
   id: string
   name: string
   email: string
-  role: 'admin' | 'manager' | 'broker' | 'accountant' | 'viewer'
+  role: 'admin' | 'manager' | 'broker' | 'accountant' | 'viewer' | 'assistant' | 'supplier' | 'client' | 'consultant'
   active: boolean
+}
+
+type Profile = {
+  id: string
+  name: string
+  description: string
+  color: string
+  permissions: Record<string, ModulePerms>
+  user_count?: number
 }
 
 interface ModulePerms {
@@ -89,6 +99,18 @@ function defaultPerms(role: AppUser['role']): Record<string, ModulePerms> {
     ['fin_receber','fin_pagar','fin_boletos','fin_sped','relatorios','contratos'].includes(id) ? ro :
     ['dashboard','empreendimentos'].includes(id) ? ro : no
   ]))
+  if (role === 'assistant')  return Object.fromEntries(allMods.map(id => [id,
+    ['crm','simulador','contratos','mapa','dashboard','empreendimentos','relatorios'].includes(id) ? ro : no
+  ]))
+  if (role === 'consultant') return Object.fromEntries(allMods.map(id => [id,
+    ['crm','simulador','mapa','dashboard','empreendimentos'].includes(id) ? ro : no
+  ]))
+  if (role === 'supplier')   return Object.fromEntries(allMods.map(id => [id,
+    ['dashboard'].includes(id) ? ro : no
+  ]))
+  if (role === 'client')     return Object.fromEntries(allMods.map(id => [id,
+    ['dashboard','contratos','mapa'].includes(id) ? ro : no
+  ]))
   // viewer
   return Object.fromEntries(allMods.map(id => [id,
     ['dashboard','empreendimentos','mapa','relatorios'].includes(id) ? ro : no
@@ -152,6 +174,7 @@ const TABS = [
   { id: 'dominio',      label: 'Dominio',            icon: Globe },
   { id: 'credenciais',  label: 'Credenciais',        icon: Key },
   { id: 'usuarios',     label: 'Usuarios',           icon: Users },
+  { id: 'perfis',       label: 'Perfis',             icon: Layers },
   { id: 'permissoes',   label: 'Permissoes',         icon: Shield },
   { id: 'crm_integ',    label: 'Integ. CRM',         icon: Link2 },
   { id: 'email',        label: 'E-mail',        icon: Mail },
@@ -307,6 +330,108 @@ export default function ConfiguracoesPage() {
   type Invite = { id: string; name: string; email: string; role: AppUser['role']; status: string; expires_at: string; created_at: string }
   const [invites, setInvites]           = useState<Invite[]>([])
   const [resendingId, setResendingId]   = useState<string | null>(null)
+
+  // ── Perfis ────────────────────────────────────────────────────────────────
+  const allModIds = MODULE_GROUPS.flatMap(g => g.modules.map(m => m.id))
+  const emptyPerms = () => Object.fromEntries(allModIds.map(id => [id, { read: false, write: false }]))
+
+  const [profiles,        setProfiles]        = useState<Profile[]>([])
+  const [profilesLoading, setProfilesLoading] = useState(false)
+  const [editingProfile,  setEditingProfile]  = useState<Profile | null>(null)
+  const [showProfileForm, setShowProfileForm] = useState(false)
+  const [profileSaving,   setProfileSaving]   = useState(false)
+  const [deletingId,      setDeletingId]      = useState<string | null>(null)
+
+  // Form de perfil
+  const [pfName,  setPfName]  = useState('')
+  const [pfDesc,  setPfDesc]  = useState('')
+  const [pfColor, setPfColor] = useState('#2563EB')
+  const [pfPerms, setPfPerms] = useState<Record<string, ModulePerms>>(emptyPerms)
+
+  const PROFILE_COLORS = [
+    '#2563EB','#7C3AED','#059669','#EA580C','#0891B2',
+    '#DB2777','#374151','#B45309','#1D4ED8','#6D28D9',
+  ]
+
+  async function loadProfiles() {
+    setProfilesLoading(true)
+    try {
+      const r = await apiClient.get<{ ok: boolean; data: Profile[] }>('/profiles')
+      if (r.data.ok) setProfiles(r.data.data)
+    } catch { /* silencioso */ } finally { setProfilesLoading(false) }
+  }
+
+  function openNewProfile() {
+    setEditingProfile(null)
+    setPfName(''); setPfDesc(''); setPfColor('#2563EB'); setPfPerms(emptyPerms())
+    setShowProfileForm(true)
+  }
+
+  function openEditProfile(p: Profile) {
+    setEditingProfile(p)
+    setPfName(p.name); setPfDesc(p.description); setPfColor(p.color)
+    setPfPerms({ ...emptyPerms(), ...p.permissions })
+    setShowProfileForm(true)
+  }
+
+  function togglePfPerm(modId: string, type: 'read' | 'write') {
+    setPfPerms(prev => {
+      const cur = prev[modId] ?? { read: false, write: false }
+      if (type === 'read') {
+        const next = !cur.read
+        return { ...prev, [modId]: { read: next, write: next ? cur.write : false } }
+      }
+      return { ...prev, [modId]: { ...cur, write: !cur.write } }
+    })
+  }
+
+  async function saveProfile() {
+    if (!pfName.trim()) return
+    setProfileSaving(true)
+    try {
+      if (editingProfile) {
+        await apiClient.put(`/profiles/${editingProfile.id}`, { name: pfName, description: pfDesc, color: pfColor, permissions: pfPerms })
+      } else {
+        await apiClient.post('/profiles', { name: pfName, description: pfDesc, color: pfColor, permissions: pfPerms })
+      }
+      setShowProfileForm(false)
+      await loadProfiles()
+    } catch { /* silencioso */ } finally { setProfileSaving(false) }
+  }
+
+  async function deleteProfile(id: string) {
+    setDeletingId(id)
+    try {
+      await apiClient.delete(`/profiles/${id}`)
+      await loadProfiles()
+    } catch { /* silencioso */ } finally { setDeletingId(null) }
+  }
+
+  // ── Perfis do usuário (Permissoes tab) ────────────────────────────────────
+  const [userProfiles,        setUserProfiles]        = useState<Record<string, string[]>>({}) // userId → profileIds[]
+  const [togglingProfile,     setTogglingProfile]     = useState<string | null>(null)
+
+  async function loadUserProfiles(userId: string) {
+    try {
+      const r = await apiClient.get<{ ok: boolean; data: string[] }>(`/users/${userId}/profiles`)
+      if (r.data.ok) setUserProfiles(prev => ({ ...prev, [userId]: r.data.data }))
+    } catch { /* silencioso */ }
+  }
+
+  async function toggleUserProfile(userId: string, profileId: string) {
+    const current = userProfiles[userId] ?? []
+    const has = current.includes(profileId)
+    setTogglingProfile(profileId)
+    try {
+      if (has) {
+        await apiClient.delete(`/users/${userId}/profiles/${profileId}`)
+        setUserProfiles(prev => ({ ...prev, [userId]: current.filter(p => p !== profileId) }))
+      } else {
+        await apiClient.post(`/users/${userId}/profiles`, { profileId })
+        setUserProfiles(prev => ({ ...prev, [userId]: [...current, profileId] }))
+      }
+    } catch { /* silencioso */ } finally { setTogglingProfile(null) }
+  }
 
   async function loadUsers() {
     setUsersLoading(true)
@@ -469,7 +594,7 @@ export default function ConfiguracoesPage() {
   }
 
   // Carrega usuários reais da API ao montar
-  useEffect(() => { loadUsers() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadUsers(); loadProfiles() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   function save() {
     const payload = { logoUrl: logoPreview, logoText, primaryColor, sidebarColor, ...creds }
@@ -487,11 +612,15 @@ export default function ConfiguracoesPage() {
   const ROLE_LABELS = {
     admin: 'Admin', manager: 'Gerente', broker: 'Corretor',
     accountant: 'Contador', viewer: 'Visualizador',
+    assistant: 'Assistente', supplier: 'Fornecedor',
+    client: 'Cliente', consultant: 'Consultor',
   }
   const ROLE_COLORS = {
     admin: 'bg-violet-100 text-violet-700', manager: 'bg-blue-100 text-blue-700',
     broker: 'bg-emerald-100 text-emerald-700', accountant: 'bg-amber-100 text-amber-700',
     viewer: 'bg-slate-100 text-slate-600',
+    assistant: 'bg-sky-100 text-sky-700', supplier: 'bg-orange-100 text-orange-700',
+    client: 'bg-teal-100 text-teal-700', consultant: 'bg-indigo-100 text-indigo-700',
   }
 
   return (
@@ -933,6 +1062,176 @@ export default function ConfiguracoesPage() {
           )}
 
           {/* ── Permissoes — SIMPLE READ/WRITE TOGGLES ── */}
+          {/* ── Perfis ── */}
+          {tab === 'perfis' && (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Perfis de acesso</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Crie perfis com permissões específicas e vincule a usuários</p>
+                </div>
+                <button onClick={openNewProfile}
+                  className="flex items-center gap-2 text-sm font-medium text-white bg-[#1e3a5f] hover:bg-[#162d4a] px-4 py-2 rounded-lg transition-colors">
+                  <Plus className="w-4 h-4" /> Novo perfil
+                </button>
+              </div>
+
+              {profilesLoading ? (
+                <p className="text-xs text-slate-400 animate-pulse py-6 text-center">Carregando perfis...</p>
+              ) : profiles.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-40 gap-2 text-slate-400 bg-white rounded-xl border border-dashed border-slate-200">
+                  <Layers className="w-8 h-8 text-slate-200" />
+                  <p className="text-sm">Nenhum perfil criado ainda</p>
+                  <button onClick={openNewProfile} className="text-xs text-blue-600 hover:underline">Criar primeiro perfil</button>
+                </div>
+              ) : (
+                <div className="grid gap-3">
+                  {profiles.map(p => (
+                    <div key={p.id} className="bg-white rounded-xl border border-slate-100 shadow-card p-4 flex items-center gap-4">
+                      <div className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center"
+                        style={{ background: p.color + '22', border: `2px solid ${p.color}44` }}>
+                        <div className="w-4 h-4 rounded-full" style={{ background: p.color }} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-800">{p.name}</p>
+                        {p.description && <p className="text-xs text-slate-500 truncate">{p.description}</p>}
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          {Object.values(p.permissions ?? {}).filter(v => v.read).length} módulos com acesso
+                          {p.user_count ? ` · ${p.user_count} usuario(s)` : ''}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => openEditProfile(p)}
+                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button onClick={() => deleteProfile(p.id)} disabled={deletingId === p.id}
+                          className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50">
+                          {deletingId === p.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* ── Modal de criação/edição de perfil ── */}
+              {showProfileForm && (
+                <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 pt-10 overflow-y-auto">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                      <div>
+                        <h2 className="text-base font-bold text-slate-800">
+                          {editingProfile ? `Editar perfil: ${editingProfile.name}` : 'Novo perfil'}
+                        </h2>
+                        <p className="text-xs text-slate-500 mt-0.5">Defina um nome e as permissões deste perfil</p>
+                      </div>
+                      <button onClick={() => setShowProfileForm(false)} className="p-2 text-slate-400 hover:text-slate-600">
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    <div className="px-6 py-5 space-y-5 max-h-[75vh] overflow-y-auto">
+                      {/* Nome e descrição */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-slate-600">Nome do perfil *</label>
+                          <input value={pfName} onChange={e => setPfName(e.target.value)}
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-400"
+                            placeholder="Ex: Financeiro, Corretor, Controladoria" />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-slate-600">Descrição</label>
+                          <input value={pfDesc} onChange={e => setPfDesc(e.target.value)}
+                            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-400"
+                            placeholder="Breve descrição do perfil" />
+                        </div>
+                      </div>
+
+                      {/* Cor */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-slate-600">Cor do perfil</label>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {PROFILE_COLORS.map(c => (
+                            <button key={c} onClick={() => setPfColor(c)}
+                              className={cn('w-7 h-7 rounded-full transition-transform', pfColor === c && 'ring-2 ring-offset-2 ring-slate-400 scale-110')}
+                              style={{ background: c }} />
+                          ))}
+                          <input type="color" value={pfColor} onChange={e => setPfColor(e.target.value)}
+                            className="w-7 h-7 rounded-full cursor-pointer border-0 p-0" title="Cor personalizada" />
+                        </div>
+                      </div>
+
+                      {/* Matriz de permissões */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-slate-600">Permissões por módulo</label>
+                        <div className="rounded-xl border border-slate-200 overflow-hidden">
+                          <div className="grid grid-cols-[1fr_80px_80px] bg-slate-50 border-b border-slate-100 px-4 py-2.5">
+                            <span className="text-xs font-semibold text-slate-500 uppercase">Módulo</span>
+                            <span className="text-xs font-semibold text-slate-500 text-center">Leitura</span>
+                            <span className="text-xs font-semibold text-slate-500 text-center">Escrita</span>
+                          </div>
+                          {MODULE_GROUPS.map(g => (
+                            <div key={g.group}>
+                              <div className="px-4 py-2 bg-slate-50/60 border-b border-slate-100 flex items-center justify-between">
+                                <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">{g.group}</p>
+                                <button onClick={() => {
+                                  const mods = g.modules.map(m => m.id)
+                                  const allRead = mods.every(id => pfPerms[id]?.read)
+                                  setPfPerms(prev => ({
+                                    ...prev,
+                                    ...Object.fromEntries(mods.map(id => [id, allRead ? { read: false, write: false } : { read: true, write: false }]))
+                                  }))
+                                }} className="text-[10px] text-slate-400 hover:text-blue-600">
+                                  {g.modules.every(m => pfPerms[m.id]?.read) ? 'Remover grupo' : 'Selecionar grupo'}
+                                </button>
+                              </div>
+                              {g.modules.map(mod => {
+                                const mp = pfPerms[mod.id] ?? { read: false, write: false }
+                                return (
+                                  <div key={mod.id}
+                                    className="grid grid-cols-[1fr_80px_80px] px-4 py-2.5 border-b border-slate-50 last:border-0 hover:bg-slate-50/40 transition-colors items-center">
+                                    <span className="text-sm text-slate-800">{mod.label}</span>
+                                    <div className="flex justify-center">
+                                      <button onClick={() => togglePfPerm(mod.id, 'read')}
+                                        className={cn('w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
+                                          mp.read ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-300 hover:bg-slate-200')}>
+                                        {mp.read ? <CheckCircle className="w-4 h-4" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
+                                      </button>
+                                    </div>
+                                    <div className="flex justify-center">
+                                      <button onClick={() => togglePfPerm(mod.id, 'write')} disabled={!mp.read}
+                                        className={cn('w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
+                                          mp.write ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-300 hover:bg-slate-200',
+                                          !mp.read && 'opacity-40 cursor-not-allowed')}>
+                                        {mp.write ? <CheckCircle className="w-4 h-4" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="px-6 py-4 border-t border-slate-100 flex gap-3 justify-end">
+                      <button onClick={() => setShowProfileForm(false)}
+                        className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+                        Cancelar
+                      </button>
+                      <button onClick={saveProfile} disabled={!pfName.trim() || profileSaving}
+                        className="flex items-center gap-2 px-5 py-2 text-sm font-medium text-white bg-[#1e3a5f] hover:bg-[#162d4a] disabled:opacity-50 rounded-lg transition-colors">
+                        {profileSaving ? <><Loader2 className="w-4 h-4 animate-spin" /> Salvando...</> : <><Check className="w-4 h-4" /> Salvar perfil</>}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
           {tab === 'permissoes' && (
             <>
               {/* User picker */}
@@ -943,7 +1242,7 @@ export default function ConfiguracoesPage() {
                     ? <p className="text-xs text-slate-400 animate-pulse">Carregando usuários...</p>
                     : users.map(u => (
                     <button key={u.id}
-                      onClick={() => setSelectedUser(u)}
+                      onClick={() => { setSelectedUser(u); loadUserProfiles(u.id) }}
                       className={cn(
                         'flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-medium transition-colors',
                         selectedUser?.id === u.id
@@ -963,84 +1262,121 @@ export default function ConfiguracoesPage() {
 
               {selectedUser ? (
                 <>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center">
-                        <span className="text-blue-700 text-xs font-semibold">
-                          {selectedUser.name.split(' ').slice(0,2).map(n => n[0]).join('')}
-                        </span>
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">{selectedUser.name}</p>
-                        <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_COLORS[selectedUser.role])}>
-                          {ROLE_LABELS[selectedUser.role]}
-                        </span>
-                      </div>
+                  {/* Header do usuário */}
+                  <div className="flex items-center gap-3 bg-white rounded-xl border border-slate-100 p-4 shadow-card">
+                    <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                      <span className="text-blue-700 text-sm font-semibold">
+                        {selectedUser.name.split(' ').slice(0,2).map(n => n[0]).join('')}
+                      </span>
                     </div>
-                    <button onClick={() => resetPerms(selectedUser.id)}
-                      className="text-xs text-slate-500 hover:text-blue-600 border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-50 transition-colors">
-                      Restaurar padrao do perfil
-                    </button>
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-slate-900">{selectedUser.name}</p>
+                      <p className="text-xs text-slate-500">{selectedUser.email}</p>
+                    </div>
+                    <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium', ROLE_COLORS[selectedUser.role])}>
+                      {ROLE_LABELS[selectedUser.role]}
+                    </span>
                   </div>
 
-                  <div className="bg-white rounded-xl border border-slate-100 shadow-card overflow-hidden">
-                    {/* Header */}
-                    <div className="grid grid-cols-[1fr_80px_80px] bg-slate-50 border-b border-slate-100 px-4 py-2.5">
-                      <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Modulo</span>
-                      <span className="text-xs font-semibold text-slate-500 text-center">Leitura</span>
-                      <span className="text-xs font-semibold text-slate-500 text-center">Escrita</span>
-                    </div>
-
-                    {MODULE_GROUPS.map(g => (
-                      <div key={g.group}>
-                        <div className="px-4 py-2 bg-slate-50/50 border-b border-slate-100">
-                          <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">{g.group}</p>
-                        </div>
-                        {g.modules.map(mod => {
-                          const mp = perms[selectedUser.id]?.[mod.id] ?? { read: false, write: false }
+                  {/* Perfis vinculados */}
+                  <div className="bg-white rounded-xl border border-slate-100 shadow-card p-4">
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
+                      Perfis de acesso vinculados
+                    </p>
+                    {profilesLoading ? (
+                      <p className="text-xs text-slate-400 animate-pulse">Carregando perfis...</p>
+                    ) : profiles.length === 0 ? (
+                      <p className="text-xs text-slate-400">Nenhum perfil cadastrado. Crie perfis na aba <strong>Perfis</strong>.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {profiles.map(p => {
+                          const active = (userProfiles[selectedUser.id] ?? []).includes(p.id)
                           return (
-                            <div key={mod.id}
-                              className="grid grid-cols-[1fr_80px_80px] px-4 py-2.5 border-b border-slate-50 last:border-0 hover:bg-slate-50/40 transition-colors items-center">
-                              <span className="text-sm text-slate-800">{mod.label}</span>
-
-                              {/* Read toggle */}
-                              <div className="flex justify-center">
-                                <button onClick={() => togglePerm(selectedUser.id, mod.id, 'read')}
-                                  className={cn('w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
-                                    mp.read ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-300 hover:bg-slate-200'
-                                  )}>
-                                  {mp.read ? <CheckCircle className="w-4 h-4" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
-                                </button>
+                            <label key={p.id}
+                              className={cn(
+                                'flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors',
+                                active ? 'border-blue-200 bg-blue-50' : 'border-slate-100 hover:bg-slate-50'
+                              )}>
+                              <input type="checkbox" checked={active}
+                                onChange={() => toggleUserProfile(selectedUser.id, p.id)}
+                                disabled={togglingProfile === p.id}
+                                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                              <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: p.color }} />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-slate-800">{p.name}</p>
+                                {p.description && <p className="text-xs text-slate-500 truncate">{p.description}</p>}
                               </div>
-
-                              {/* Write toggle */}
-                              <div className="flex justify-center">
-                                <button onClick={() => togglePerm(selectedUser.id, mod.id, 'write')}
-                                  className={cn('w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
-                                    mp.write ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-300 hover:bg-slate-200',
-                                    !mp.read && 'opacity-40 cursor-not-allowed'
-                                  )}
-                                  disabled={!mp.read}>
-                                  {mp.write ? <CheckCircle className="w-4 h-4" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
-                                </button>
-                              </div>
-                            </div>
+                              {togglingProfile === p.id && <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />}
+                            </label>
                           )
                         })}
                       </div>
-                    ))}
+                    )}
                   </div>
 
-                  <div className="flex gap-4 text-xs text-slate-500 bg-slate-50 rounded-xl p-3">
-                    <div className="flex items-center gap-1.5"><div className="w-4 h-4 bg-blue-100 rounded flex items-center justify-center"><CheckCircle className="w-3 h-3 text-blue-600" /></div> Leitura — visualiza o modulo</div>
-                    <div className="flex items-center gap-1.5"><div className="w-4 h-4 bg-emerald-100 rounded flex items-center justify-center"><CheckCircle className="w-3 h-3 text-emerald-600" /></div> Escrita — cria e edita registros</div>
-                    <div className="flex items-center gap-1.5"><div className="w-4 h-4 bg-slate-100 rounded flex items-center justify-center"><div className="w-3 h-3 rounded-full border-2 border-slate-300" /></div> Sem acesso</div>
-                  </div>
+                  {/* Preview das permissões combinadas */}
+                  {(userProfiles[selectedUser.id]?.length ?? 0) > 0 && (() => {
+                    const activeProfiles = profiles.filter(p => (userProfiles[selectedUser.id] ?? []).includes(p.id))
+                    const merged: Record<string, ModulePerms> = {}
+                    for (const mod of allModIds) {
+                      merged[mod] = {
+                        read:  activeProfiles.some(p => p.permissions?.[mod]?.read),
+                        write: activeProfiles.some(p => p.permissions?.[mod]?.write),
+                      }
+                    }
+                    return (
+                      <div className="bg-white rounded-xl border border-slate-100 shadow-card overflow-hidden">
+                        <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+                          <Tags className="w-4 h-4 text-slate-400" />
+                          <p className="text-xs font-semibold text-slate-600">
+                            Permissões combinadas dos perfis ativos
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-[1fr_80px_80px] bg-slate-50 border-b border-slate-100 px-4 py-2">
+                          <span className="text-xs font-semibold text-slate-500 uppercase">Módulo</span>
+                          <span className="text-xs font-semibold text-slate-500 text-center">Leitura</span>
+                          <span className="text-xs font-semibold text-slate-500 text-center">Escrita</span>
+                        </div>
+                        {MODULE_GROUPS.map(g => (
+                          <div key={g.group}>
+                            <div className="px-4 py-1.5 bg-slate-50/60 border-b border-slate-100">
+                              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">{g.group}</p>
+                            </div>
+                            {g.modules.map(mod => {
+                              const mp = merged[mod.id]
+                              return (
+                                <div key={mod.id}
+                                  className="grid grid-cols-[1fr_80px_80px] px-4 py-2 border-b border-slate-50 last:border-0 items-center">
+                                  <span className="text-sm text-slate-700">{mod.label}</span>
+                                  <div className="flex justify-center">
+                                    <div className={cn('w-6 h-6 rounded-md flex items-center justify-center',
+                                      mp.read ? 'bg-blue-100' : 'bg-slate-100')}>
+                                      {mp.read
+                                        ? <CheckCircle className="w-3.5 h-3.5 text-blue-600" />
+                                        : <div className="w-3 h-3 rounded-full border-2 border-slate-300" />}
+                                    </div>
+                                  </div>
+                                  <div className="flex justify-center">
+                                    <div className={cn('w-6 h-6 rounded-md flex items-center justify-center',
+                                      mp.write ? 'bg-emerald-100' : 'bg-slate-100')}>
+                                      {mp.write
+                                        ? <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                        : <div className="w-3 h-3 rounded-full border-2 border-slate-300" />}
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  })()}
                 </>
               ) : (
                 <div className="flex flex-col items-center justify-center h-40 gap-2 text-slate-400">
                   <Shield className="w-8 h-8 text-slate-200" />
-                  <p className="text-sm">Selecione um usuario acima para editar as permissoes</p>
+                  <p className="text-sm">Selecione um usuario acima para vincular perfis</p>
                 </div>
               )}
             </>
