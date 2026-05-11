@@ -64,20 +64,52 @@ apiClient.interceptors.request.use((config) => {
   return config
 })
 
-// Em 401: tenta refresh e repete
+// Em 401: tenta refresh UMA vez e, se falhar, redireciona para login
 let isRefreshing = false
+let failedQueue: Array<{ resolve: (v: unknown) => void; reject: (e: unknown) => void }> = []
+
+function processQueue(error: unknown, token: string | null = null) {
+  failedQueue.forEach(p => error ? p.reject(error) : p.resolve(token))
+  failedQueue = []
+}
+
 apiClient.interceptors.response.use(
   (res) => res,
   async (error) => {
     const original = error.config
-    if (error.response?.status === 401 && !original._retry && !isRefreshing) {
-      original._retry = true
-      isRefreshing    = true
-      const ok = await useAuthStore.getState().refresh()
-      isRefreshing = false
-      if (ok) return apiClient(original)
-      await useAuthStore.getState().logout()
+
+    // Não tenta refresh em rotas de auth ou se já tentou
+    const isAuthRoute = original?.url?.includes('/auth/')
+    if (error.response?.status !== 401 || isAuthRoute || original._retry) {
+      return Promise.reject(error)
     }
+
+    if (isRefreshing) {
+      // Enfileira as requisições enquanto está fazendo refresh
+      return new Promise((resolve, reject) => {
+        failedQueue.push({ resolve, reject })
+      }).then(token => {
+        original.headers['Authorization'] = `Bearer ${token}`
+        return apiClient(original)
+      }).catch(err => Promise.reject(err))
+    }
+
+    original._retry = true
+    isRefreshing = true
+
+    try {
+      const ok = await useAuthStore.getState().refresh()
+      if (ok) {
+        const newToken = useAuthStore.getState().accessToken
+        processQueue(null, newToken)
+        original.headers['Authorization'] = `Bearer ${newToken}`
+        return apiClient(original)
+      }
+    } catch { }
+
+    // Refresh falhou — desloga e redireciona
+    processQueue(error, null)
+    await useAuthStore.getState().logout()
     return Promise.reject(error)
   }
 )
@@ -133,10 +165,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       sessionStorage.removeItem('auth_user')
     }
 
-    // Remove o cookie de sessão → middleware vai redirecionar para /login
+    // Remove o cookie de sessão
     deleteCookie('hub_session')
 
     set({ user: null, accessToken: null })
+
+    // Redireciona para login — força reload para limpar estado React completamente
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login'
+    }
   },
 
   refresh: async () => {
