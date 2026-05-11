@@ -283,6 +283,9 @@ export default function ConfiguracoesPage() {
       snsSenderId:        config.snsSenderId        || 'LOTEAMENTO',
       snsSMSType:         config.snsSMSType         || 'Transactional' as 'Transactional' | 'Promotional',
       snsMockMode:        config.snsMockMode        ?? true,
+      aiProvider:         (config.aiProvider || 'openai') as 'openai' | 'gemini',
+      openaiApiKey:       config.openaiApiKey || '',
+      geminiApiKey:       config.geminiApiKey || '',
       whatsappToken:      config.whatsappToken      || '',
       whatsappPhoneId:    config.whatsappPhoneId    || '',
       whatsappBusinessId: config.whatsappBusinessId || '',
@@ -308,6 +311,10 @@ export default function ConfiguracoesPage() {
     snsSenderId:        config.snsSenderId        || 'LOTEAMENTO',
     snsSMSType:         config.snsSMSType         || 'Transactional' as 'Transactional' | 'Promotional',
     snsMockMode:        config.snsMockMode        ?? true,
+    // IA
+    aiProvider:     (config.aiProvider  || 'openai') as 'openai' | 'gemini',
+    openaiApiKey:   config.openaiApiKey || '',
+    geminiApiKey:   config.geminiApiKey || '',
     whatsappToken: config.whatsappToken || '',
     whatsappPhoneId: config.whatsappPhoneId || '',
     whatsappBusinessId: config.whatsappBusinessId || '',
@@ -1626,6 +1633,50 @@ export default function ConfiguracoesPage() {
                       )}
                     </div>
                   )}
+                </div>
+              </Section>
+
+              <Section title="Inteligência Artificial" sub="Chave de API para o assistente IA do painel">
+                <Field label="Provedor" name="aiProvider">
+                  <div className="flex gap-3">
+                    {(['openai', 'gemini'] as const).map(p => (
+                      <label key={p}
+                        className={cn(
+                          'flex items-center gap-2 px-4 py-2.5 rounded-xl border cursor-pointer text-sm font-medium transition-colors flex-1 justify-center',
+                          creds.aiProvider === p
+                            ? 'bg-[#1e3a5f] text-white border-[#1e3a5f]'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        )}>
+                        <input type="radio" className="hidden"
+                          checked={creds.aiProvider === p}
+                          onChange={() => setCreds(c => ({ ...c, aiProvider: p }))} />
+                        {p === 'openai' ? '🤖 OpenAI (GPT)' : '✨ Google Gemini'}
+                      </label>
+                    ))}
+                  </div>
+                </Field>
+                {creds.aiProvider === 'openai' && (
+                  <Field label="OpenAI API Key" name="openaiApiKey">
+                    <SecretInput
+                      value={creds.openaiApiKey}
+                      onChange={v => setCreds(c => ({ ...c, openaiApiKey: v }))}
+                      placeholder="sk-..." />
+                  </Field>
+                )}
+                {creds.aiProvider === 'gemini' && (
+                  <Field label="Gemini API Key" name="geminiApiKey">
+                    <SecretInput
+                      value={creds.geminiApiKey}
+                      onChange={v => setCreds(c => ({ ...c, geminiApiKey: v }))}
+                      placeholder="AIza..." />
+                  </Field>
+                )}
+                <div className="rounded-xl border border-blue-50 bg-blue-50/50 px-4 py-3 text-xs text-slate-500 leading-relaxed">
+                  Usada pelo <strong>Chat IA</strong> do painel. Obtenha sua chave em{' '}
+                  {creds.aiProvider === 'openai'
+                    ? <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">platform.openai.com</a>
+                    : <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">aistudio.google.com</a>
+                  }.
                 </div>
               </Section>
 
