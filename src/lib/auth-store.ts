@@ -199,11 +199,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (typeof window === 'undefined') return
     try {
       const stored = sessionStorage.getItem('auth_user')
-      if (stored) {
-        const user = JSON.parse(stored) as AuthUser
-        set({ user })
-        get().refresh()
-      }
+      if (!stored) return
+
+      const user = JSON.parse(stored) as AuthUser
+      // Seta user provisoriamente para o middleware não redirecionar
+      set({ user })
+
+      // Aguarda o refresh — se falhar, logout redireciona para /login
+      get().refresh().then(ok => {
+        if (!ok) get().logout()
+      })
     } catch {}
   },
 }))
