@@ -9,7 +9,7 @@ import {
   UserPlus, Copy, RefreshCw, Send, ChevronDown, Loader2,
   Layers, Plus, Pencil, Trash2, Tags,
 } from 'lucide-react'
-import { apiClient, useAuthStore } from '@/lib/auth-store'
+import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 import { useTenantConfig } from '@/lib/tenant-config-store'
 
@@ -244,8 +244,6 @@ function SecretInput({ value, onChange, placeholder }: {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ConfiguracoesPage() {
-  const user          = useAuthStore(s => s.user)
-  const isAdmin       = ['admin', 'super_admin'].includes(user?.role || '')
   const hydrate       = useTenantConfig(s => s.hydrate)
   const config        = useTenantConfig(s => s.config)
   const setConfig     = useTenantConfig(s => s.setConfig)
@@ -288,9 +286,6 @@ export default function ConfiguracoesPage() {
       whatsappToken:      config.whatsappToken      || '',
       whatsappPhoneId:    config.whatsappPhoneId    || '',
       whatsappBusinessId: config.whatsappBusinessId || '',
-      aiProvider:         (config.aiProvider || 'openai') as 'openai' | 'gemini',
-      openaiApiKey:       config.openaiApiKey       || '',
-      geminiApiKey:       config.geminiApiKey       || '',
       clicksignKey:       config.clicksignKey       || '',
       bankName:           config.bankName           || '',
       bankApiKey:         config.bankApiKey         || '',
@@ -316,9 +311,6 @@ export default function ConfiguracoesPage() {
     whatsappToken: config.whatsappToken || '',
     whatsappPhoneId: config.whatsappPhoneId || '',
     whatsappBusinessId: config.whatsappBusinessId || '',
-    aiProvider: (config.aiProvider || 'openai') as 'openai' | 'gemini',
-    openaiApiKey: config.openaiApiKey || '',
-    geminiApiKey: config.geminiApiKey || '',
     clicksignKey: config.clicksignKey || '',
     bankName: config.bankName || '',
     bankApiKey: config.bankApiKey || '',
@@ -475,6 +467,7 @@ export default function ConfiguracoesPage() {
   const [invName,         setInvName]         = useState('')
   const [invEmail,        setInvEmail]        = useState('')
   const [invRole,         setInvRole]         = useState<AppUser['role']>('broker')
+  const [invProfileIds,   setInvProfileIds]   = useState<string[]>([])
   const [invAutoActivate, setInvAutoActivate] = useState(true)
   const [invUseTempPw,    setInvUseTempPw]    = useState(false)
   const [invMsgMode,      setInvMsgMode]      = useState<'padrao'|'custom'>('padrao')
@@ -507,7 +500,7 @@ export default function ConfiguracoesPage() {
   }
 
   function resetInvite() {
-    setInvName(''); setInvEmail(''); setInvRole('broker')
+    setInvName(''); setInvEmail(''); setInvRole('broker'); setInvProfileIds([])
     setInvAutoActivate(true); setInvUseTempPw(false)
     setInvMsgMode('padrao'); setInvCustomMsg('')
     setInvResult(null); setInvErrors({})
@@ -525,6 +518,7 @@ export default function ConfiguracoesPage() {
     if (!invName.trim())  e.name  = 'Obrigatório'
     if (!invEmail.trim()) e.email = 'Obrigatório'
     if (!/^[^@]+@[^@]+\.[^@]+$/.test(invEmail)) e.email = 'E-mail inválido'
+    if (invProfileIds.length === 0) e.profiles = 'Selecione ao menos um perfil'
     setInvErrors(e)
     if (Object.keys(e).length) return
 
@@ -534,6 +528,7 @@ export default function ConfiguracoesPage() {
         name:             invName.trim(),
         email:            invEmail.trim().toLowerCase(),
         role:             invRole,
+        profile_ids:      invProfileIds,
         auto_activate:    invAutoActivate,
         use_temp_password: invUseTempPw,
         custom_message:   invMsgMode === 'custom' ? invCustomMsg.trim() : null,
@@ -951,22 +946,52 @@ export default function ConfiguracoesPage() {
                           </div>
                         </div>
 
-                        {/* Role */}
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs font-medium text-slate-600">Perfil de acesso</label>
-                          <div className="flex gap-2 flex-wrap">
-                            {(Object.entries(ROLE_LABELS) as [AppUser['role'], string][]).map(([r, label]) => (
-                              <button key={r} onClick={() => setInvRole(r)}
-                                className={cn(
-                                  'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border',
-                                  invRole === r
-                                    ? cn(ROLE_COLORS[r], 'border-transparent')
-                                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                                )}>
-                                {label}
-                              </button>
-                            ))}
+                        {/* Perfis do banco */}
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-medium text-slate-600">Perfil(s) de acesso</label>
+                            {invProfileIds.length > 0 && (
+                              <span className="text-[10px] text-blue-600 font-medium">
+                                {invProfileIds.length} selecionado{invProfileIds.length > 1 ? 's' : ''}
+                              </span>
+                            )}
                           </div>
+                          {profilesLoading ? (
+                            <p className="text-xs text-slate-400 animate-pulse">Carregando perfis...</p>
+                          ) : profiles.length === 0 ? (
+                            <p className="text-xs text-slate-400">
+                              Nenhum perfil cadastrado.{' '}
+                              <button onClick={() => { setShowInvite(false); setTab('perfis') }}
+                                className="text-blue-600 underline">
+                                Crie perfis primeiro
+                              </button>
+                            </p>
+                          ) : (
+                            <div className="flex gap-2 flex-wrap">
+                              {profiles.map(p => {
+                                const selected = invProfileIds.includes(p.id)
+                                return (
+                                  <button key={p.id}
+                                    onClick={() => setInvProfileIds(prev =>
+                                      prev.includes(p.id)
+                                        ? prev.filter(id => id !== p.id)
+                                        : [...prev, p.id]
+                                    )}
+                                    className={cn(
+                                      'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border',
+                                      selected ? 'border-transparent text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                                    )}
+                                    style={selected ? { background: p.color } : {}}>
+                                    {selected && <Check className="w-3 h-3" />}
+                                    {p.name}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )}
+                          {invProfileIds.length === 0 && profiles.length > 0 && (
+                            <p className="text-[10px] text-amber-600">Selecione ao menos um perfil</p>
+                          )}
                         </div>
 
                         {/* Opções */}
@@ -1028,7 +1053,7 @@ export default function ConfiguracoesPage() {
 
                           {invMsgMode === 'padrao' ? (
                             <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-500 italic leading-relaxed">
-                              Olá! Você foi convidado para acessar o sistema como <span className="font-semibold text-slate-700">{ROLE_LABELS[invRole]}</span>.
+                              Olá! Você foi convidado para acessar o sistema como <span className="font-semibold text-slate-700">{invProfileIds.length > 0 ? profiles.filter(p => invProfileIds.includes(p.id)).map(p => p.name).join(', ') : ROLE_LABELS[invRole]}</span>.
                               Use o link do convite para configurar sua senha e começar a usar.
                             </div>
                           ) : (
@@ -1507,45 +1532,6 @@ export default function ConfiguracoesPage() {
                   <SecretInput value={creds.googleMapsKey} onChange={v => setCreds(c => ({ ...c, googleMapsKey: v }))} placeholder="AIza..." />
                 </Field>
               </Section>
-
-              {isAdmin && (
-                <Section title="IA para Contas a Pagar" sub="Leitura de PDF ou imagem enviada no lançamento">
-                  <Field label="Provedor ativo" sub="Use somente uma IA por vez para a leitura dos documentos">
-                    <div className="grid grid-cols-2 gap-3">
-                      {[
-                        { id: 'openai', label: 'OpenAI API', sub: 'Usar chave da OpenAI' },
-                        { id: 'gemini', label: 'Gemini API', sub: 'Usar chave do Google Gemini' },
-                      ].map(opt => (
-                        <label key={opt.id} className={cn(
-                          'flex items-start gap-3 rounded-xl border px-3 py-3 cursor-pointer transition-colors',
-                          creds.aiProvider === opt.id ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:bg-slate-50'
-                        )}>
-                          <input
-                            type="radio"
-                            name="aiProvider"
-                            checked={creds.aiProvider === opt.id}
-                            onChange={() => setCreds(c => ({ ...c, aiProvider: opt.id as 'openai' | 'gemini' }))}
-                            className="mt-0.5 h-4 w-4 text-blue-600 focus:ring-blue-500"
-                          />
-                          <span>
-                            <span className="block text-sm font-semibold text-slate-800">{opt.label}</span>
-                            <span className="block text-xs text-slate-500">{opt.sub}</span>
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </Field>
-                  <Field label="OpenAI API Key" sub={creds.aiProvider === 'openai' ? 'Chave usada atualmente na análise' : 'Fica salva, mas não será usada enquanto Gemini estiver ativo'}>
-                    <SecretInput value={creds.openaiApiKey} onChange={v => setCreds(c => ({ ...c, openaiApiKey: v }))} placeholder="sk-..." />
-                  </Field>
-                  <Field label="Gemini API Key" sub={creds.aiProvider === 'gemini' ? 'Chave usada atualmente na análise' : 'Fica salva, mas não será usada enquanto OpenAI estiver ativo'}>
-                    <SecretInput value={creds.geminiApiKey} onChange={v => setCreds(c => ({ ...c, geminiApiKey: v }))} placeholder="AIza..." />
-                  </Field>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
-                    A IA será usada na tela de <strong>Contas a Pagar</strong> para tentar preencher fornecedor, documento, datas, valor e vencimentos a partir do PDF ou imagem anexada. O usuário ainda deve conferir os dados antes de salvar.
-                  </div>
-                </Section>
-              )}
 
               <Section title="AWS SNS / SMS" sub="Envio de SMS para leads direto do painel">
                 <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">

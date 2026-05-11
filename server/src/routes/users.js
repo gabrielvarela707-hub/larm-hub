@@ -111,6 +111,19 @@ router.post('/users/invite/accept/:token', async (req, res) => {
          WHERE id=$2`,
         [userId, invite.id]
       )
+
+      // Vincula perfis ao usuário recém-criado
+      const profileIds = (() => {
+        try { return JSON.parse(invite.profile_ids || '[]') } catch { return [] }
+      })()
+      if (Array.isArray(profileIds) && profileIds.length) {
+        for (const pid of profileIds) {
+          await client.query(
+            `INSERT INTO hub_user_profiles (user_id, profile_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+            [userId, pid]
+          ).catch(() => {})
+        }
+      }
     })
 
     logger.info(`Convite aceito: ${invite.email} [${invite.role}]`)
@@ -293,6 +306,7 @@ router.post('/users/invite', async (req, res) => {
 
   const {
     name, email, role = 'broker',
+    profile_ids      = [],  // IDs de hub_profiles a vincular
     auto_activate    = true,
     use_temp_password = false,
     custom_message,    // null = usa mensagem padrão
@@ -365,7 +379,25 @@ router.post('/users/invite', async (req, res) => {
       ]
     )
 
-    logger.info(`Convite criado: ${email} por ${inviter_name} [${role}]`)
+    // Vincula perfis ao usuário se já foi criado (auto_activate + senha temp)
+    if (createdUserId && Array.isArray(profile_ids) && profile_ids.length) {
+      for (const pid of profile_ids) {
+        await query(
+          `INSERT INTO hub_user_profiles (user_id, profile_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+          [createdUserId, pid]
+        ).catch(() => {}) // ignora se perfil não existe
+      }
+    }
+
+    // Salva profile_ids no convite para aplicar no aceite
+    if (Array.isArray(profile_ids) && profile_ids.length) {
+      await query(
+        `UPDATE hub_invites SET profile_ids = $1 WHERE id = $2`,
+        [JSON.stringify(profile_ids), invite.id]
+      ).catch(() => {}) // coluna pode não existir ainda — migration cobre isso
+    }
+
+    logger.info(`Convite criado: ${email} por ${inviter_name} [${role}] perfis=${profile_ids.join(',')}`)
 
     const inviteUrl = `${getFrontendUrl()}/convite/${token}`
 
