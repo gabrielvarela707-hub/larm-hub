@@ -1637,7 +1637,7 @@ export default function ConfiguracoesPage() {
               </Section>
 
               <Section title="Inteligência Artificial" sub="Chave de API para o assistente IA do painel">
-                <Field label="Provedor" name="aiProvider">
+                <Field label="Provedor">
                   <div className="flex gap-3">
                     {(['openai', 'gemini'] as const).map(p => (
                       <label key={p}
@@ -1656,7 +1656,7 @@ export default function ConfiguracoesPage() {
                   </div>
                 </Field>
                 {creds.aiProvider === 'openai' && (
-                  <Field label="OpenAI API Key" name="openaiApiKey">
+                  <Field label="OpenAI API Key">
                     <SecretInput
                       value={creds.openaiApiKey}
                       onChange={v => setCreds(c => ({ ...c, openaiApiKey: v }))}
@@ -1664,7 +1664,7 @@ export default function ConfiguracoesPage() {
                   </Field>
                 )}
                 {creds.aiProvider === 'gemini' && (
-                  <Field label="Gemini API Key" name="geminiApiKey">
+                  <Field label="Gemini API Key">
                     <SecretInput
                       value={creds.geminiApiKey}
                       onChange={v => setCreds(c => ({ ...c, geminiApiKey: v }))}
