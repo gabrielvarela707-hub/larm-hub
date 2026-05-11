@@ -27,14 +27,14 @@ export interface TenantConfig {
   snsSenderId: string
   snsSMSType: 'Transactional' | 'Promotional'
   snsMockMode: boolean
-  // WhatsApp
-  whatsappToken: string
-  whatsappPhoneId: string
-  whatsappBusinessId: string
   // IA
   aiProvider: 'openai' | 'gemini'
   openaiApiKey: string
   geminiApiKey: string
+  // WhatsApp
+  whatsappToken: string
+  whatsappPhoneId: string
+  whatsappBusinessId: string
   // Outros
   clicksignKey: string
   bankName: string
@@ -70,12 +70,12 @@ const DEFAULT: TenantConfig = {
   snsSenderId: 'LOTEAMENTO',
   snsSMSType: 'Transactional',
   snsMockMode: true,
-  whatsappToken: '',
-  whatsappPhoneId: '',
-  whatsappBusinessId: '',
   aiProvider: 'openai',
   openaiApiKey: '',
   geminiApiKey: '',
+  whatsappToken: '',
+  whatsappPhoneId: '',
+  whatsappBusinessId: '',
   clicksignKey: '',
   bankName: '',
   bankApiKey: '',
