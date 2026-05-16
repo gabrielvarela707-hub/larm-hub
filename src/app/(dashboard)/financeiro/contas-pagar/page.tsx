@@ -1,70 +1,707 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { useForm, useWatch } from 'react-hook-form'
+/**
+ * /financeiro/contas-pagar/page.tsx
+ *
+ * ALTERAÇÕES v2:
+ * 1. nf_doc campo número do documento — mínimo 9 dígitos
+ * 2. Código do fornecedor — mínimo 6 dígitos
+ * 3. Banco de pagamento — dropdown com todos os bancos brasileiros (código + nome)
+ * 4. Campos multa, juros e descontos — inputs em cada parcela
+ * 5. Cadastro do fornecedor — banco (lista completa), agência, conta, dígito, PIX, telefone, endereço, email
+ * 6. Editar e excluir na tela de leitura (lista)
+ */
+
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'react-hot-toast'
-import { Plus, Search, Check, Pencil } from 'lucide-react'
+import {
+  Plus, Search, Pencil, Trash2, X, ChevronDown, Building2,
+  Save, AlertTriangle, ChevronsUpDown,
+} from 'lucide-react'
 import { addMonths, format } from 'date-fns'
 import {
-  getContasPagar, createContaPagar, quitarParcela, getContasPagarResumo,
+  getContasPagar, createContaPagar, getContasPagarResumo,
   getFornecedores, getBancos, getPlanoContas,
+  createFornecedor, updateFornecedor,
   type ContaPagar, type BancoConta, type Fornecedor, type PlanoContas, type Empresa,
 } from '@/lib/api/financeiro'
+import { apiClient } from '@/lib/auth-store'
 
-// ─── Schema ───────────────────────────────────────────────────────────────────
-const schema = z.object({
-  empresa:         z.enum(['LARM', 'LM', 'HOLDING', 'RM']),
-  banco_conta_id:  z.coerce.number().optional(),
-  fornecedor_id:   z.coerce.number().optional(),
-  plano_contas_id: z.coerce.number().min(1, 'Obrigatório'),
-  centro_custo:    z.string().optional(),
-  historico:       z.string().min(3, 'Obrigatório'),
-  nf_doc:          z.string().optional(),
-  data_emissao:    z.string().min(1, 'Obrigatório'),
-  valor_total:     z.coerce.number().min(0.01, 'Obrigatório'),
-  num_parcelas:    z.coerce.number().min(1).max(120),
-  data_primeira:   z.string().min(1, 'Obrigatório'),
+// ─── Lista completa de bancos brasileiros ─────────────────────────────────────
+export const BANCOS_BR = [
+  { codigo: '001', nome: 'Banco do Brasil S.A.' },
+  { codigo: '003', nome: 'Banco da Amazônia S.A.' },
+  { codigo: '004', nome: 'Banco do Nordeste do Brasil S.A.' },
+  { codigo: '010', nome: 'Credicoamo Crédito Rural Cooperativa' },
+  { codigo: '021', nome: 'Banestes S.A. Banco do Estado do Espírito Santo' },
+  { codigo: '025', nome: 'Banco Alfa S.A.' },
+  { codigo: '033', nome: 'Banco Santander (Brasil) S.A.' },
+  { codigo: '036', nome: 'Banco Bradesco BBI S.A.' },
+  { codigo: '037', nome: 'Banco do Estado do Pará S.A.' },
+  { codigo: '040', nome: 'Banco Cargill S.A.' },
+  { codigo: '041', nome: 'Banco do Estado do Rio Grande do Sul S.A. (Banrisul)' },
+  { codigo: '047', nome: 'Banco do Estado de Sergipe S.A. (Banese)' },
+  { codigo: '062', nome: 'Hipercard Banco Múltiplo S.A.' },
+  { codigo: '063', nome: 'Banco Bradescard S.A.' },
+  { codigo: '069', nome: 'Banco Crefisa S.A.' },
+  { codigo: '070', nome: 'BRB – Banco de Brasília S.A.' },
+  { codigo: '077', nome: 'Banco Inter S.A.' },
+  { codigo: '082', nome: 'Banco Topázio S.A.' },
+  { codigo: '084', nome: 'Uniprime Norte do Paraná – Cooperativa de Crédito' },
+  { codigo: '085', nome: 'Cooperativa Central de Crédito – Ailos' },
+  { codigo: '089', nome: 'Cooperativa de Crédito Rural da Região da Mogiana' },
+  { codigo: '097', nome: 'Credisis – Central de Cooperativas de Crédito' },
+  { codigo: '099', nome: 'Uniprime Central – Central Interestadual de Cooperativas de Crédito' },
+  { codigo: '102', nome: 'XP Investimentos Corretora de Câmbio, Títulos e Valores Mobiliários S.A.' },
+  { codigo: '104', nome: 'Caixa Econômica Federal' },
+  { codigo: '107', nome: 'Banco Bocom BBM S.A.' },
+  { codigo: '108', nome: 'PortoCred S.A. – Crédito, Financiamento e Investimento' },
+  { codigo: '114', nome: 'Central Cooperativa de Crédito do Espírito Santo (Cecoop)' },
+  { codigo: '117', nome: 'Advanced Corretora de Câmbio Ltda.' },
+  { codigo: '119', nome: 'Banco Western Union do Brasil S.A.' },
+  { codigo: '120', nome: 'Banco Rodobens S.A.' },
+  { codigo: '121', nome: 'Banco Agibank S.A.' },
+  { codigo: '122', nome: 'Banco Bradesco BERJ S.A.' },
+  { codigo: '124', nome: 'Banco Woori Bank do Brasil S.A.' },
+  { codigo: '125', nome: 'Brasil Plural S.A. – Banco Múltiplo' },
+  { codigo: '126', nome: 'BR Partners Banco de Investimento S.A.' },
+  { codigo: '128', nome: 'MS Bank S.A. Banco de Câmbio' },
+  { codigo: '129', nome: 'UBS Brasil Banco de Investimento S.A.' },
+  { codigo: '130', nome: 'Caruana S.A. – Sociedade de Crédito, Financiamento e Investimento' },
+  { codigo: '131', nome: 'Tullett Prebon Brasil Corretora de Valores e Câmbio Ltda.' },
+  { codigo: '132', nome: 'ICBC do Brasil Banco Múltiplo S.A.' },
+  { codigo: '133', nome: 'Cresol – Confederação Nacional das Cooperativas Centrais de Crédito' },
+  { codigo: '134', nome: 'BGC Liquidez Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '136', nome: 'Unicred do Brasil – Confederação Nacional das Cooperativas Centrais Unicred' },
+  { codigo: '137', nome: 'Multimoney Financeira Ltda. – Crédito, Financiamento e Investimento' },
+  { codigo: '138', nome: 'Get Money Corretora de Câmbio S.A.' },
+  { codigo: '139', nome: 'Intesa Sanpaolo Brasil S.A. – Banco Múltiplo' },
+  { codigo: '140', nome: 'Easynvest – Título Corretora de Valores SA' },
+  { codigo: '142', nome: 'Broker Brasil Corretora de Câmbio Ltda.' },
+  { codigo: '143', nome: 'Treviso Corretora de Câmbio S.A.' },
+  { codigo: '144', nome: 'BEXS Banco de Câmbio S/A' },
+  { codigo: '145', nome: 'Levycam – Corretora de Câmbio e Valores Ltda.' },
+  { codigo: '146', nome: 'GUITTA Corretora de Câmbio Ltda.' },
+  { codigo: '149', nome: 'Facta Financeira S.A. – Crédito, Financiamento e Investimento' },
+  { codigo: '157', nome: 'ICAP do Brasil Corretora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '159', nome: 'Casa do Crédito S.A. Sociedade de Crédito ao Microempreendedor' },
+  { codigo: '163', nome: 'Commerzbank Brasil S.A. – Banco Múltiplo' },
+  { codigo: '169', nome: 'Banco Olé Consignado S.A.' },
+  { codigo: '172', nome: 'Albatross Corretora de Câmbio e Valores S.A.' },
+  { codigo: '173', nome: 'BRL Trust Distribuidora de Títulos e Valores Mobiliários S.A.' },
+  { codigo: '174', nome: 'Pernambucanas Financiadora S.A. – Crédito, Financiamento e Investimento' },
+  { codigo: '177', nome: 'Guide Investimentos S.A. Corretora de Valores' },
+  { codigo: '180', nome: 'CM Capital Markets Corretora de Câmbio, Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '183', nome: 'Socred S.A. – Sociedade de Crédito ao Microempreendedor e à Empresa de Pequeno Porte' },
+  { codigo: '184', nome: 'Banco Itaú BBA S.A.' },
+  { codigo: '188', nome: 'Ativa Investimentos S.A. Corretora de Títulos, Câmbio e Valores' },
+  { codigo: '189', nome: 'HS Financeira S.A. Crédito, Financiamento e Investimentos' },
+  { codigo: '190', nome: 'Servicoop – Cooperativa de Crédito dos Servidores Públicos Estaduais do Rio Grande do Sul' },
+  { codigo: '191', nome: 'Nova Futura Corretora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '193', nome: 'Frankfurt Trust Investimentos Ltda.' },
+  { codigo: '194', nome: 'Valores e Metais Nova Era S.A. – Distribuidora de Títulos e Valores Mobiliários' },
+  { codigo: '195', nome: 'Azimut Brasil Wealth Management Ltda.' },
+  { codigo: '196', nome: 'Fair Corretora de Câmbio S.A.' },
+  { codigo: '197', nome: 'Stone Pagamentos S.A.' },
+  { codigo: '208', nome: 'Banco BTG Pactual S.A.' },
+  { codigo: '212', nome: 'Banco Original S.A.' },
+  { codigo: '213', nome: 'Banco Arbi S.A.' },
+  { codigo: '217', nome: 'Banco John Deere S.A.' },
+  { codigo: '218', nome: 'Banco BS2 S.A.' },
+  { codigo: '222', nome: 'Banco Credit Agricole Brasil S.A.' },
+  { codigo: '224', nome: 'Banco Fibra S.A.' },
+  { codigo: '225', nome: 'Banco Cifra S.A.' },
+  { codigo: '229', nome: 'Banco Cruzeiro do Sul S.A.' },
+  { codigo: '230', nome: 'Unicard Banco Múltiplo S.A.' },
+  { codigo: '233', nome: 'Banco Cifra S.A.' },
+  { codigo: '237', nome: 'Banco Bradesco S.A.' },
+  { codigo: '241', nome: 'Banco Clássico S.A.' },
+  { codigo: '243', nome: 'Banco Máxima S.A.' },
+  { codigo: '246', nome: 'Banco ABC Brasil S.A.' },
+  { codigo: '249', nome: 'Banco Investcred Unibanco S.A.' },
+  { codigo: '250', nome: 'BCV – Banco de Crédito e Varejo S.A.' },
+  { codigo: '253', nome: 'Bexs Corretora de Câmbio S/A' },
+  { codigo: '254', nome: 'Paraná Banco S.A.' },
+  { codigo: '260', nome: 'Nu Pagamentos S.A. – Nubank' },
+  { codigo: '265', nome: 'Banco Fator S.A.' },
+  { codigo: '266', nome: 'Banco Cédula S.A.' },
+  { codigo: '268', nome: 'Barigui Companhia Hipotecária' },
+  { codigo: '269', nome: 'HSBC Brasil S.A. – Banco de Investimento' },
+  { codigo: '271', nome: 'IB Corretora de Câmbio, Títulos e Valores Mobiliários S.A.' },
+  { codigo: '272', nome: 'AGK Corretora de Câmbio S.A.' },
+  { codigo: '273', nome: 'Cooperativa de Crédito Rural de São Miguel do Oeste – Sulcredi/São Miguel' },
+  { codigo: '274', nome: 'BMP Money Plus Sociedade de Crédito ao Microempreendedor e à Empresa de Pequeno Porte Ltda.' },
+  { codigo: '276', nome: 'Senff S.A. – Crédito, Financiamento e Investimento' },
+  { codigo: '278', nome: 'Genial Investimentos Corretora de Valores Mobiliários S.A.' },
+  { codigo: '279', nome: 'Cooperativa de Crédito Rural de Primavera do Leste' },
+  { codigo: '280', nome: 'Avista S.A. Crédito, Financiamento e Investimento' },
+  { codigo: '281', nome: 'Cooperativa de Crédito Rural Coopavel' },
+  { codigo: '283', nome: 'RB Capital Investimentos Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '285', nome: 'Frente Corretora de Câmbio Ltda.' },
+  { codigo: '286', nome: 'Cooperativa de Crédito Rural UniCred Centro Norte' },
+  { codigo: '288', nome: 'Carol Distribuidora de Títulos e Valor Mobiliários Ltda.' },
+  { codigo: '289', nome: 'EFX Corretora de Câmbio, Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '290', nome: 'Pagseguro Internet S.A.' },
+  { codigo: '292', nome: 'BS2 Distribuidora de Títulos e Valores Mobiliários S.A.' },
+  { codigo: '293', nome: 'Lastro RDV Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '296', nome: 'OZ Corretora de Câmbio S.A.' },
+  { codigo: '298', nome: 'Vips Corretora de Câmbio e Valores Ltda.' },
+  { codigo: '299', nome: 'Bank of America Merrill Lynch Banco Múltiplo S.A.' },
+  { codigo: '300', nome: 'Banco de La Nación Argentina' },
+  { codigo: '301', nome: 'BPP Instituição de Pagamento S.A.' },
+  { codigo: '306', nome: 'Portopar Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '307', nome: 'Terra Investimentos Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '309', nome: 'Cambionet Corretora de Câmbio Ltda.' },
+  { codigo: '310', nome: 'VORTX Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '315', nome: 'PI Distribuidora de Títulos e Valores Mobiliários S.A.' },
+  { codigo: '318', nome: 'Banco BMG S.A.' },
+  { codigo: '319', nome: 'OM Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '320', nome: 'China Union Pay' },
+  { codigo: '321', nome: 'Crefaz Sociedade de Crédito ao Microempreendedor e à Empresa de Pequeno Porte Ltda.' },
+  { codigo: '322', nome: 'Cooperativa de Crédito Rural de Abelardo Luz – Sulcredi/Crediluz' },
+  { codigo: '323', nome: 'Mercado Pago – Conta do Mercado Livre' },
+  { codigo: '324', nome: 'Cartos Sociedade de Crédito Direto S.A.' },
+  { codigo: '325', nome: 'Órama Distribuidora de Títulos e Valores Mobiliários S.A.' },
+  { codigo: '326', nome: 'Parati – Crédito, Financiamento e Investimento S.A.' },
+  { codigo: '328', nome: 'Cooperativa de Economia e Crédito Mútuo dos Fabricantes de Calçados de Sapiranga' },
+  { codigo: '329', nome: 'QI Sociedade de Crédito Direto S.A.' },
+  { codigo: '330', nome: 'Banco Bari de Investimentos e Financiamentos S.A.' },
+  { codigo: '331', nome: 'Fram Capital Distribuidora de Títulos e Valores Mobiliários S.A.' },
+  { codigo: '332', nome: 'Acesso Soluções de Pagamento S.A.' },
+  { codigo: '335', nome: 'Banco Digio S.A.' },
+  { codigo: '336', nome: 'Banco C6 S.A.' },
+  { codigo: '340', nome: 'Super Pagamentos e Administração de Meios Eletrônicos S.A.' },
+  { codigo: '341', nome: 'Itaú Unibanco S.A.' },
+  { codigo: '342', nome: 'Creditas Sociedade de Crédito Direto S.A.' },
+  { codigo: '343', nome: 'FFA Sociedade de Crédito ao Microempreendedor e à Empresa de Pequeno Porte Ltda.' },
+  { codigo: '348', nome: 'Banco XP S.A.' },
+  { codigo: '349', nome: 'Al5 S.A. Crédito, Financiamento e Investimento' },
+  { codigo: '352', nome: 'Toro Corretora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '354', nome: 'Necton Investimentos S.A. Corretora de Valores Mobiliários e Commodities' },
+  { codigo: '355', nome: 'Ótimo Sociedade de Crédito Direto S.A.' },
+  { codigo: '356', nome: 'Banco Real S.A.' },
+  { codigo: '359', nome: 'Zema Crédito, Financiamento e Investimento S/A' },
+  { codigo: '360', nome: 'Trinus Capital Distribuidora de Títulos e Valores Mobiliários S.A.' },
+  { codigo: '362', nome: 'Cielo S.A.' },
+  { codigo: '363', nome: 'Socopa Sociedade Corretora Paulista S.A.' },
+  { codigo: '364', nome: 'Gerencianet Pagamentos do Brasil Ltda' },
+  { codigo: '365', nome: 'Solidus S.A. Corretora de Câmbio e Valores Mobiliários' },
+  { codigo: '366', nome: 'Banco Société Générale Brasil S.A.' },
+  { codigo: '370', nome: 'Banco Mizuho do Brasil S.A.' },
+  { codigo: '376', nome: 'Banco J. P. Morgan S.A.' },
+  { codigo: '380', nome: 'PicPay Serviços S.A.' },
+  { codigo: '381', nome: 'Banco Mercedes-Benz do Brasil S.A.' },
+  { codigo: '382', nome: 'Fiducia Scmepp Ltda.' },
+  { codigo: '383', nome: 'Juno' },
+  { codigo: '384', nome: 'Global SCM Sociedade de Crédito ao Microempreendedor e à Empresa de Pequeno Porte Ltda.' },
+  { codigo: '385', nome: 'Cooperativa de Economia e Crédito Mútuo dos Empregados do Grupo Corpvs' },
+  { codigo: '386', nome: 'Nu Financeira S.A. – Sociedade de Crédito, Financiamento e Investimento' },
+  { codigo: '387', nome: 'Banco Toyota do Brasil S.A.' },
+  { codigo: '389', nome: 'Banco Mercantil do Brasil S.A.' },
+  { codigo: '390', nome: 'Banco GM S.A.' },
+  { codigo: '391', nome: 'Cooperativa de Crédito Rural – Sulcredi/Cobel' },
+  { codigo: '393', nome: 'Banco Volkswagen S.A.' },
+  { codigo: '394', nome: 'Banco Bradesco Financiamentos S.A.' },
+  { codigo: '395', nome: 'F.D\'Gold – Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '396', nome: 'Hub Pagamentos S.A.' },
+  { codigo: '397', nome: 'Listo Sociedade de Crédito Direto S.A.' },
+  { codigo: '398', nome: 'Ideal Corretora de Títulos e Valores Mobiliários S.A.' },
+  { codigo: '399', nome: 'Kirton Bank S.A. – Banco Múltiplo' },
+  { codigo: '400', nome: 'Cooperativa de Crédito, Poupança e Serviços Financeiros do Centro Oeste' },
+  { codigo: '401', nome: 'Iugu Instituição de Pagamento S.A.' },
+  { codigo: '402', nome: 'Cobuccio S.A. Sociedade de Crédito, Financiamento e Investimentos' },
+  { codigo: '403', nome: 'Cora Sociedade de Crédito Direto S.A.' },
+  { codigo: '404', nome: 'Sumup Sociedade de Crédito Direto S.A.' },
+  { codigo: '406', nome: 'Accredito – Sociedade de Crédito Direto S.A.' },
+  { codigo: '408', nome: 'Bonuspago Sociedade de Crédito Direto S.A.' },
+  { codigo: '410', nome: 'Planner Sociedade de Crédito ao Microempreendedor S.A.' },
+  { codigo: '411', nome: 'Via Certa Financiadora S.A. – Crédito, Financiamento e Investimentos' },
+  { codigo: '412', nome: 'Banco Capital S.A.' },
+  { codigo: '413', nome: 'Banco BV S.A.' },
+  { codigo: '414', nome: 'Work Sociedade de Crédito Direto S.A.' },
+  { codigo: '415', nome: 'Lamara Sociedade de Crédito Direto S.A.' },
+  { codigo: '422', nome: 'Banco Safra S.A.' },
+  { codigo: '423', nome: 'Toro CTVM Ltda.' },
+  { codigo: '425', nome: 'Socinal S.A. – Crédito, Financiamento e Investimento' },
+  { codigo: '426', nome: 'Biorc Financeira – Crédito, Financiamento e Investimento S.A.' },
+  { codigo: '427', nome: 'Cooperativa de Crédito dos Servidores da Universidade Federal do Espírito Santo' },
+  { codigo: '428', nome: 'Credsystem Sociedade de Crédito Direto S.A.' },
+  { codigo: '429', nome: 'Crediare S.A. – Crédito, Financiamento e Investimento' },
+  { codigo: '430', nome: 'Cooperativa de Crédito Rural Seara – Crediseara' },
+  { codigo: '433', nome: 'BR-Capital Distribuidora de Títulos e Valores Mobiliários S.A.' },
+  { codigo: '435', nome: 'Delcred Sociedade de Crédito Direto S.A.' },
+  { codigo: '438', nome: 'Planner Trustee Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '439', nome: 'ID Corretora de Títulos e Valores Mobiliários S.A.' },
+  { codigo: '440', nome: 'Credibrf – Cooperativa de Crédito' },
+  { codigo: '441', nome: 'Magnetis – Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '442', nome: 'Ássio Corretora de Câmbio e Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '443', nome: 'Credihome Sociedade de Crédito Direto S.A.' },
+  { codigo: '444', nome: 'Trinus Sociedade de Crédito Direto S.A.' },
+  { codigo: '445', nome: 'Plantae S.A. – Crédito, Financiamento e Investimento' },
+  { codigo: '446', nome: 'Mirae Asset Wealth Management (Brazil) CCTVM Ltda.' },
+  { codigo: '447', nome: 'Mirae Asset Wealth Management (Brazil) CCTVM Ltda.' },
+  { codigo: '448', nome: 'Hemera Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '449', nome: 'Dmcard Sociedade de Crédito Direto S.A.' },
+  { codigo: '450', nome: 'Fitbank Pagamentos Eletrônicos S.A.' },
+  { codigo: '451', nome: 'J17 – Sociedade de Crédito Direto S/A' },
+  { codigo: '452', nome: 'Credifit Sociedade de Crédito Direto S.A.' },
+  { codigo: '453', nome: 'Mérito Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '454', nome: 'Mérito Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '455', nome: 'Fênix Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '456', nome: 'Banco MUFG Brasil S.A.' },
+  { codigo: '457', nome: 'UY3 Sociedade de Crédito Direto S/A' },
+  { codigo: '458', nome: 'Hedge Investments Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '459', nome: 'CCM Cooperativa de Crédito, Poupança e Investimento dos Profissionais das Ciências Contábeis' },
+  { codigo: '460', nome: 'Unavanti Sociedade de Crédito Direto S/A' },
+  { codigo: '461', nome: 'Asaas Gestão Financeira Instituição de Pagamento S.A.' },
+  { codigo: '462', nome: 'Stark Bank S.A. – Instituição de Pagamento' },
+  { codigo: '463', nome: 'Azumi Distribuidora de Títulos e Valores Mobiliários Ltda.' },
+  { codigo: '464', nome: 'Banco Sumitomo Mitsui Brasileiro S.A.' },
+  { codigo: '465', nome: 'Capital Consig Sociedade de Crédito Direto S.A.' },
+  { codigo: '467', nome: 'Master S/A Corretora de Câmbio, Títulos e Valores Mobiliários' },
+  { codigo: '468', nome: 'Portoseg S.A. – Crédito, Financiamento e Investimento' },
+  { codigo: '469', nome: 'Picpay Bank – Banco Múltiplo S.A.' },
+  { codigo: '470', nome: 'CDC Sociedade de Crédito ao Microempreendedor e à Empresa de Pequeno Porte S.A.' },
+  { codigo: '471', nome: 'Gazincred S.A. Sociedade de Crédito, Financiamento e Investimento' },
+  { codigo: '473', nome: 'Banco Caixa Geral – Brasil S.A.' },
+  { codigo: '477', nome: 'Citibank N.A.' },
+  { codigo: '479', nome: 'Banco ItauBank S.A.' },
+  { codigo: '487', nome: 'Deutsche Bank S.A. – Banco Alemão' },
+  { codigo: '488', nome: 'JPMorgan Chase Bank, National Association' },
+  { codigo: '492', nome: 'ING Bank N.V.' },
+  { codigo: '495', nome: 'Banco de La Provincia de Buenos Aires' },
+  { codigo: '505', nome: 'Banco Credit Suisse (Brasil) S.A.' },
+  { codigo: '545', nome: 'Senso Corretora de Câmbio e Valores Mobiliários S.A.' },
+  { codigo: '600', nome: 'Banco Luso Brasileiro S.A.' },
+  { codigo: '604', nome: 'Banco Industrial do Brasil S.A.' },
+  { codigo: '610', nome: 'Banco VR S.A.' },
+  { codigo: '611', nome: 'Banco Paulista S.A.' },
+  { codigo: '612', nome: 'Banco Guanabara S.A.' },
+  { codigo: '613', nome: 'Omni Banco S.A.' },
+  { codigo: '623', nome: 'Banco Pan S.A.' },
+  { codigo: '626', nome: 'Banco C6 Consignado S.A.' },
+  { codigo: '630', nome: 'Banco Smartbank S.A.' },
+  { codigo: '633', nome: 'Banco Rendimento S.A.' },
+  { codigo: '634', nome: 'Banco Triângulo S.A.' },
+  { codigo: '637', nome: 'Banco Sofisa S.A.' },
+  { codigo: '643', nome: 'Banco Pine S.A.' },
+  { codigo: '652', nome: 'Itaú Unibanco Holding S.A.' },
+  { codigo: '653', nome: 'Banco Indusval S.A.' },
+  { codigo: '654', nome: 'Banco A.J. Renner S.A.' },
+  { codigo: '655', nome: 'Banco Votorantim S.A.' },
+  { codigo: '707', nome: 'Banco Daycoval S.A.' },
+  { codigo: '712', nome: 'Banco Ourinvest S.A.' },
+  { codigo: '720', nome: 'Banco RNX S.A.' },
+  { codigo: '739', nome: 'Banco Cetelem S.A.' },
+  { codigo: '741', nome: 'Banco Ribeirão Preto S.A.' },
+  { codigo: '743', nome: 'Banco Semear S.A.' },
+  { codigo: '745', nome: 'Banco Citibank S.A.' },
+  { codigo: '746', nome: 'Banco Modal S.A.' },
+  { codigo: '747', nome: 'Banco Rabobank International Brasil S.A.' },
+  { codigo: '748', nome: 'Banco Cooperativo Sicredi S.A.' },
+  { codigo: '751', nome: 'Scotiabank Brasil S.A. Banco Múltiplo' },
+  { codigo: '752', nome: 'Banco BNP Paribas Brasil S.A.' },
+  { codigo: '753', nome: 'Novo Banco Continental S.A. – Banco Múltiplo' },
+  { codigo: '754', nome: 'Banco Sistema S.A.' },
+  { codigo: '755', nome: 'Bank of America Merrill Lynch Banco Múltiplo S.A.' },
+  { codigo: '756', nome: 'Banco Cooperativo do Brasil S.A. – Bancoob (Sicoob)' },
+  { codigo: '757', nome: 'Banco KEB Hana do Brasil S.A.' },
+]
+
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+type ParcelaForm = { num: number; data: string; valor: string; multa: string; juros: string; desconto: string }
+
+// ─── Schema formulário lançamento ─────────────────────────────────────────────
+const lancSchema = z.object({
+  empresa:          z.enum(['LARM', 'LM', 'HOLDING', 'RM']),
+  banco_conta_id:   z.coerce.number().optional(),
+  fornecedor_id:    z.coerce.number().optional(),
+  plano_contas_id:  z.coerce.number().min(1, 'Obrigatório'),
+  centro_custo:     z.string().optional(),
+  historico:        z.string().min(3, 'Obrigatório'),
+  nf_doc:           z.string()
+    .optional()
+    .refine(v => !v || v.replace(/\D/g, '').length >= 9, { message: 'Mínimo 9 dígitos numéricos' }),
+  data_emissao:     z.string().min(1, 'Obrigatório'),
+  valor_total:      z.coerce.number().min(0.01, 'Obrigatório'),
+  num_parcelas:     z.coerce.number().min(1).max(120),
+  data_primeira:    z.string().min(1, 'Obrigatório'),
 })
-type FormData = z.infer<typeof schema>
+type LancFormData = z.infer<typeof lancSchema>
 
-const STATUS_LABEL: Record<string, string> = { P: 'Pendente', Q: 'Quitado', V: 'Vencido', C: 'Conciliado', X: 'Cancelado' }
+// ─── Schema formulário fornecedor ─────────────────────────────────────────────
+const fornSchema = z.object({
+  razao_social:  z.string().min(2, 'Obrigatório'),
+  nome_fantasia: z.string().optional(),
+  cnpj_cpf:      z.string().optional(),
+  tipo_pessoa:   z.enum(['PJ', 'PF']),
+  categoria:     z.string().optional(),
+  empresa:       z.string().default('TODOS'),
+  codigo:        z.string()
+    .optional()
+    .refine(v => !v || v.replace(/\D/g, '').length >= 6, { message: 'Mínimo 6 dígitos' }),
+  // Contato
+  email:    z.string().email('E-mail inválido').optional().or(z.literal('')),
+  telefone: z.string().optional(),
+  // Endereço
+  cep:       z.string().optional(),
+  endereco:  z.string().optional(),
+  cidade_uf: z.string().optional(),
+  // Dados bancários
+  banco_nome:   z.string().optional(),
+  codigo_banco: z.string().optional(),
+  agencia:      z.string().optional(),
+  conta:        z.string().optional(),
+  digito:       z.string().optional(),
+  tipo_conta:   z.enum(['Corrente', 'Poupança']).default('Corrente'),
+  chave_pix:    z.string().optional(),
+  tipo_pix:     z.string().optional(),
+  obs:          z.string().optional(),
+})
+type FornFormData = z.infer<typeof fornSchema>
+
+// ─── Status helpers ───────────────────────────────────────────────────────────
+const STATUS_LABEL: Record<string, string> = { P: 'Pendente', Q: 'Quitado', V: 'Vencido', C: 'Conciliado', X: 'Cancelado', pendente: 'Pendente', pago: 'Pago', vencido: 'Vencido' }
 const STATUS_CLS: Record<string, string> = {
-  P: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
-  Q: 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300',
-  V: 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300',
-  C: 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-  X: 'bg-zinc-100 text-zinc-500',
+  P: 'bg-amber-50 text-amber-700', Q: 'bg-green-50 text-green-700', V: 'bg-red-50 text-red-700',
+  C: 'bg-blue-50 text-blue-700', X: 'bg-zinc-100 text-zinc-500',
+  pendente: 'bg-amber-50 text-amber-700', pago: 'bg-green-50 text-green-700', vencido: 'bg-red-50 text-red-700',
 }
 
-// ─── Componente ───────────────────────────────────────────────────────────────
-export default function ContasPagarPage() {
-  const [tab, setTab]           = useState<'lista' | 'novo'>('lista')
-  const [titulos, setTitulos]   = useState<ContaPagar[]>([])
-  const [resumo, setResumo]     = useState<any>(null)
-  const [loading, setLoading]   = useState(false)
-  const [busca, setBusca]       = useState('')
-  const [statusFiltro, setStatusFiltro] = useState('')
-  const [page, setPage]         = useState(1)
-  const [total, setTotal]       = useState(0)
+// ─── BancoSelect — searchable dropdown ───────────────────────────────────────
+function BancoSelect({
+  value, onChange, placeholder = 'Selecione o banco…',
+}: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const [open, setOpen]       = useState(false)
+  const [busca, setBusca]     = useState('')
+  const ref                   = useRef<HTMLDivElement>(null)
 
-  // Selects data
+  const filtered = BANCOS_BR.filter(b =>
+    b.codigo.includes(busca) ||
+    b.nome.toLowerCase().includes(busca.toLowerCase())
+  ).slice(0, 60)
+
+  const selected = BANCOS_BR.find(b => b.codigo === value)
+
+  useEffect(() => {
+    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', fn)
+    return () => document.removeEventListener('mousedown', fn)
+  }, [])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={`${inputCls} flex items-center justify-between gap-2 text-left`}
+      >
+        <span className={selected ? '' : 'text-zinc-400'}>
+          {selected ? `${selected.codigo} — ${selected.nome}` : placeholder}
+        </span>
+        <ChevronsUpDown className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-50 w-full mt-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-xl">
+          <div className="p-2 border-b border-zinc-100 dark:border-zinc-800">
+            <input
+              autoFocus
+              value={busca}
+              onChange={e => setBusca(e.target.value)}
+              placeholder="Buscar por código ou nome…"
+              className="w-full px-2 py-1.5 text-sm rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 outline-none"
+            />
+          </div>
+          <div className="max-h-52 overflow-y-auto">
+            <button
+              type="button"
+              className="w-full text-left px-3 py-2 text-sm text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              onClick={() => { onChange(''); setOpen(false); setBusca('') }}
+            >
+              — Nenhum —
+            </button>
+            {filtered.map(b => (
+              <button
+                key={b.codigo}
+                type="button"
+                onClick={() => { onChange(b.codigo); setOpen(false); setBusca('') }}
+                className={`w-full text-left px-3 py-2 text-sm hover:bg-amber-50 dark:hover:bg-amber-900/20 ${value === b.codigo ? 'bg-amber-50 dark:bg-amber-900/20 font-medium' : ''}`}
+              >
+                <span className="font-mono text-amber-600 mr-2">{b.codigo}</span>
+                {b.nome}
+              </button>
+            ))}
+            {filtered.length === 0 && <p className="px-3 py-4 text-sm text-zinc-400 text-center">Nenhum banco encontrado</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Modal fornecedor ─────────────────────────────────────────────────────────
+function FornecedorModal({
+  forn, onClose, onSaved,
+}: { forn: Partial<Fornecedor> | null; onClose: () => void; onSaved: (f: Fornecedor) => void }) {
+  const isEdit = !!(forn as any)?.id
+  const [saving, setSaving] = useState(false)
+
+  const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<FornFormData>({
+    resolver: zodResolver(fornSchema),
+    defaultValues: {
+      razao_social: (forn as any)?.razao_social || '',
+      nome_fantasia: (forn as any)?.nome_fantasia || '',
+      cnpj_cpf: (forn as any)?.cnpj_cpf || '',
+      tipo_pessoa: (forn as any)?.tipo_pessoa || 'PJ',
+      categoria: (forn as any)?.categoria || '',
+      empresa: (forn as any)?.empresa || 'TODOS',
+      codigo: (forn as any)?.codigo || '',
+      email: (forn as any)?.email || '',
+      telefone: (forn as any)?.telefone || '',
+      cep: (forn as any)?.cep || '',
+      endereco: (forn as any)?.endereco || '',
+      cidade_uf: (forn as any)?.cidade_uf || '',
+      banco_nome: (forn as any)?.banco_nome || '',
+      codigo_banco: (forn as any)?.codigo_banco || '',
+      agencia: (forn as any)?.agencia || '',
+      conta: (forn as any)?.conta || '',
+      digito: (forn as any)?.digito || '',
+      tipo_conta: (forn as any)?.tipo_conta || 'Corrente',
+      chave_pix: (forn as any)?.chave_pix || '',
+      tipo_pix: (forn as any)?.tipo_pix || '',
+      obs: (forn as any)?.obs || '',
+    },
+  })
+
+  const codigoBanco = watch('codigo_banco')
+
+  const onSubmit = async (values: FornFormData) => {
+    setSaving(true)
+    try {
+      // Preenche banco_nome a partir do código escolhido
+      const banco = BANCOS_BR.find(b => b.codigo === values.codigo_banco)
+      const payload = { ...values, banco_nome: banco?.nome || values.banco_nome }
+      const saved = isEdit
+        ? await updateFornecedor((forn as any).id, payload)
+        : await createFornecedor(payload)
+      toast.success(isEdit ? 'Fornecedor atualizado!' : 'Fornecedor cadastrado!')
+      onSaved(saved)
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Erro ao salvar fornecedor')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-5 border-b border-zinc-200 dark:border-zinc-700">
+          <div className="flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-amber-500" />
+            <h2 className="font-semibold text-zinc-900 dark:text-white">
+              {isEdit ? 'Editar Fornecedor' : 'Novo Fornecedor'}
+            </h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit(onSubmit)} className="p-5 space-y-5">
+          {/* Dados básicos */}
+          <div>
+            <SectionTitle>Dados do Fornecedor</SectionTitle>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Razão Social *" error={errors.razao_social?.message} full>
+                <input {...register('razao_social')} className={inputCls} />
+              </Field>
+              <Field label="Nome Fantasia">
+                <input {...register('nome_fantasia')} className={inputCls} />
+              </Field>
+              <Field label="CNPJ / CPF">
+                <input {...register('cnpj_cpf')} className={inputCls} placeholder="00.000.000/0001-00" />
+              </Field>
+              <Field label="Código Interno" error={errors.codigo?.message}>
+                <input {...register('codigo')} className={inputCls} placeholder="Mín. 6 dígitos" />
+              </Field>
+              <Field label="Tipo Pessoa">
+                <select {...register('tipo_pessoa')} className={inputCls}>
+                  <option value="PJ">Pessoa Jurídica</option>
+                  <option value="PF">Pessoa Física</option>
+                </select>
+              </Field>
+              <Field label="Categoria">
+                <input {...register('categoria')} className={inputCls} placeholder="Ex: Serviços, Fornecedor…" />
+              </Field>
+              <Field label="Empresa">
+                <select {...register('empresa')} className={inputCls}>
+                  {['TODOS','LARM','LM','HOLDING','RM'].map(e => <option key={e}>{e}</option>)}
+                </select>
+              </Field>
+            </div>
+          </div>
+
+          {/* Contato */}
+          <div>
+            <SectionTitle>Contato</SectionTitle>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="E-mail" error={errors.email?.message}>
+                <input {...register('email')} type="email" className={inputCls} />
+              </Field>
+              <Field label="Telefone">
+                <input {...register('telefone')} className={inputCls} placeholder="(00) 00000-0000" />
+              </Field>
+            </div>
+          </div>
+
+          {/* Endereço */}
+          <div>
+            <SectionTitle>Endereço</SectionTitle>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="CEP">
+                <input {...register('cep')} className={inputCls} placeholder="00000-000" />
+              </Field>
+              <Field label="Cidade / UF">
+                <input {...register('cidade_uf')} className={inputCls} placeholder="São Paulo / SP" />
+              </Field>
+              <Field label="Endereço completo" full>
+                <input {...register('endereco')} className={inputCls} placeholder="Rua, nº, complemento, bairro" />
+              </Field>
+            </div>
+          </div>
+
+          {/* Dados bancários */}
+          <div>
+            <SectionTitle>Dados Bancários</SectionTitle>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Banco" full>
+                <BancoSelect
+                  value={codigoBanco || ''}
+                  onChange={v => setValue('codigo_banco', v)}
+                />
+              </Field>
+              <Field label="Agência">
+                <input {...register('agencia')} className={inputCls} placeholder="0000" />
+              </Field>
+              <Field label="Conta">
+                <input {...register('conta')} className={inputCls} placeholder="00000" />
+              </Field>
+              <Field label="Dígito">
+                <input {...register('digito')} className={inputCls} placeholder="0" maxLength={2} />
+              </Field>
+              <Field label="Tipo de Conta">
+                <select {...register('tipo_conta')} className={inputCls}>
+                  <option value="Corrente">Conta Corrente</option>
+                  <option value="Poupança">Conta Poupança</option>
+                </select>
+              </Field>
+              <Field label="Tipo Chave PIX">
+                <select {...register('tipo_pix')} className={inputCls}>
+                  <option value="">Selecione…</option>
+                  <option value="CPF_CNPJ">CPF / CNPJ</option>
+                  <option value="TELEFONE">Telefone</option>
+                  <option value="EMAIL">E-mail</option>
+                  <option value="EVP">Chave Aleatória (EVP)</option>
+                </select>
+              </Field>
+              <Field label="Chave PIX" full>
+                <input {...register('chave_pix')} className={inputCls} placeholder="CPF, telefone, e-mail ou chave aleatória" />
+              </Field>
+            </div>
+          </div>
+
+          {/* Obs */}
+          <div>
+            <Field label="Observações">
+              <textarea {...register('obs')} className={`${inputCls} h-20 resize-none`} />
+            </Field>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 text-sm hover:bg-zinc-50">
+              Cancelar
+            </button>
+            <button type="submit" disabled={saving}
+              className="flex items-center gap-2 px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium disabled:opacity-60">
+              <Save className="h-4 w-4" />
+              {saving ? 'Salvando…' : 'Salvar Fornecedor'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── Modal confirmação exclusão ───────────────────────────────────────────────
+function ConfirmDelete({ onConfirm, onCancel, loading }: { onConfirm: () => void; onCancel: () => void; loading?: boolean }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-xl w-full max-w-sm p-6">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-lg">
+            <AlertTriangle className="h-5 w-5 text-red-500" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-zinc-900 dark:text-white">Excluir lançamento?</h3>
+            <p className="text-sm text-zinc-500 mt-1">Esta ação não pode ser desfeita. Somente lançamentos sem parcelas pagas podem ser excluídos.</p>
+          </div>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50">
+            Cancelar
+          </button>
+          <button onClick={onConfirm} disabled={loading}
+            className="px-4 py-2 text-sm rounded-lg bg-red-500 hover:bg-red-600 text-white font-medium disabled:opacity-60">
+            {loading ? 'Excluindo…' : 'Excluir'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Componente principal ─────────────────────────────────────────────────────
+export default function ContasPagarPage() {
+  const [tab, setTab]               = useState<'lista' | 'novo'>('lista')
+  const [titulos, setTitulos]       = useState<ContaPagar[]>([])
+  const [resumo, setResumo]         = useState<any>(null)
+  const [loading, setLoading]       = useState(false)
+  const [busca, setBusca]           = useState('')
+  const [statusFiltro, setStatusFiltro] = useState('')
+  const [page, setPage]             = useState(1)
+  const [total, setTotal]           = useState(0)
+
+  // Dados dos selects
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([])
   const [bancos, setBancos]             = useState<BancoConta[]>([])
   const [planos, setPlanos]             = useState<PlanoContas[]>([])
 
-  // Parcelas calculadas para preview
-  const [parcelas, setParcelas] = useState<{ num: number; data: string; valor: string }[]>([])
+  // Parcelas do formulário
+  const [parcelas, setParcelas] = useState<ParcelaForm[]>([])
 
-  const { register, handleSubmit, watch, reset, formState: { errors } } = useForm<FormData>({
-    resolver: zodResolver(schema),
+  // Estado editar/excluir
+  const [editingId, setEditingId]     = useState<number | null>(null)
+  const [deletingId, setDeletingId]   = useState<number | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+
+  // Modal fornecedor
+  const [fornModal, setFornModal] = useState<Partial<Fornecedor> | null | false>(false)
+
+  // Banco de pagamento selecionado (banco brasileiro)
+  const [bancoPagCodigo, setBancoPagCodigo] = useState('')
+
+  const { register, handleSubmit, watch, reset, setValue, formState: { errors } } = useForm<LancFormData>({
+    resolver: zodResolver(lancSchema),
     defaultValues: { empresa: 'LARM', num_parcelas: 1, data_emissao: format(new Date(), 'yyyy-MM-dd') },
   })
 
-  const valorTotal    = watch('valor_total')
-  const numParcelas   = watch('num_parcelas')
-  const dataPrimeira  = watch('data_primeira')
+  const valorTotal   = watch('valor_total')
+  const numParcelas  = watch('num_parcelas')
+  const dataPrimeira = watch('data_primeira')
 
   // Recalcula preview das parcelas
   useEffect(() => {
@@ -72,12 +709,14 @@ export default function ContasPagarPage() {
     const v = parseFloat(String(valorTotal)) || 0
     if (!dataPrimeira || v <= 0) { setParcelas([]); return }
     const vp = v / n
-    const data = Array.from({ length: n }, (_, i) => ({
+    setParcelas(Array.from({ length: n }, (_, i) => ({
       num: i + 1,
       data: format(addMonths(new Date(dataPrimeira + 'T12:00:00'), i), 'yyyy-MM-dd'),
       valor: vp.toFixed(2),
-    }))
-    setParcelas(data)
+      multa: '0.00',
+      juros: '0.00',
+      desconto: '0.00',
+    })))
   }, [valorTotal, numParcelas, dataPrimeira])
 
   const load = useCallback(async () => {
@@ -95,20 +734,18 @@ export default function ContasPagarPage() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
-    Promise.all([
-      getFornecedores({ limit: 200 }),
-      getBancos(),
-      getPlanoContas(),
-    ]).then(([f, b, p]) => {
-      setFornecedores(f.data)
-      setBancos(b)
-      setPlanos(p.filter(pl => pl.tipo === 'A'))
-    })
+    Promise.all([getFornecedores({ limit: 200 }), getBancos(), getPlanoContas()])
+      .then(([f, b, p]) => {
+        setFornecedores(f.data)
+        setBancos(b)
+        setPlanos(p.filter(pl => pl.tipo === 'A'))
+      })
   }, [])
 
-  const onSubmit = async (values: FormData) => {
+  // ─── Submit novo lançamento ───────────────────────────────────────────────
+  const onSubmit = async (values: LancFormData) => {
     try {
-      await createContaPagar({
+      const payload = {
         ...values,
         empresa: values.empresa as Empresa,
         parcelas: parcelas.map((p, i) => ({
@@ -116,12 +753,22 @@ export default function ContasPagarPage() {
           total_parcelas: parcelas.length,
           data_vencimento: p.data,
           valor: parseFloat(p.valor),
+          multa: parseFloat(p.multa || '0'),
+          juros: parseFloat(p.juros || '0'),
+          desconto: parseFloat(p.desconto || '0'),
           banco_conta_id: values.banco_conta_id,
           status: 'P',
         })),
-      })
-      toast.success('Título lançado com sucesso!')
+      }
+      if (editingId) {
+        await apiClient.put(`/financeiro/lancamentos-cp/${editingId}`, payload)
+        toast.success('Lançamento atualizado!')
+      } else {
+        await createContaPagar(payload)
+        toast.success('Título lançado com sucesso!')
+      }
       reset()
+      setEditingId(null)
       setTab('lista')
       load()
     } catch (e: any) {
@@ -129,7 +776,58 @@ export default function ContasPagarPage() {
     }
   }
 
-  const fmtBRL = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  // ─── Abrir edição ─────────────────────────────────────────────────────────
+  const handleEdit = async (t: ContaPagar) => {
+    try {
+      const { data: detail } = await apiClient.get(`/financeiro/lancamentos-cp/${t.id}`)
+      const d = detail.data
+      setValue('empresa', d.empresa)
+      setValue('banco_conta_id', d.banco_conta_id)
+      setValue('fornecedor_id', d.fornecedor_id)
+      setValue('historico', d.historico)
+      setValue('nf_doc', d.nf_doc || '')
+      setValue('data_emissao', d.dt_emissao?.slice(0,10) || '')
+      setValue('valor_total', d.valor_total)
+      setValue('num_parcelas', d.qtd_parcelas || 1)
+      if (d.parcelas?.length) {
+        setParcelas(d.parcelas.map((p: any) => ({
+          num: p.numero,
+          data: p.vencimento?.slice(0,10) || '',
+          valor: String(p.valor || 0),
+          multa: String(p.multa || 0),
+          juros: String(p.juros || 0),
+          desconto: String(p.desconto || 0),
+        })))
+        setValue('data_primeira', d.parcelas[0]?.vencimento?.slice(0,10) || '')
+      }
+      setEditingId(t.id)
+      setTab('novo')
+    } catch { toast.error('Erro ao carregar lançamento') }
+  }
+
+  // ─── Confirmar exclusão ───────────────────────────────────────────────────
+  const handleDelete = async () => {
+    if (!deletingId) return
+    setDeleteLoading(true)
+    try {
+      await apiClient.delete(`/financeiro/lancamentos-cp/${deletingId}`)
+      toast.success('Lançamento excluído!')
+      setDeletingId(null)
+      load()
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || 'Erro ao excluir')
+    } finally { setDeleteLoading(false) }
+  }
+
+  const fmtBRL = (v: number) => v?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) ?? '—'
+
+  const parcelaValorFinal = (p: ParcelaForm) => {
+    const v = parseFloat(p.valor || '0')
+    const m = parseFloat(p.multa || '0')
+    const j = parseFloat(p.juros || '0')
+    const d = parseFloat(p.desconto || '0')
+    return v + m + j - d
+  }
 
   return (
     <div className="p-6 space-y-4">
@@ -153,8 +851,8 @@ export default function ContasPagarPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-1 w-fit">
-        {([['lista', 'Lançamentos'], ['novo', 'Novo Lançamento']] as const).map(([t, label]) => (
-          <button key={t} onClick={() => setTab(t)}
+        {([['lista', 'Lançamentos'], ['novo', editingId ? 'Editar Lançamento' : 'Novo Lançamento']] as const).map(([t, label]) => (
+          <button key={t} onClick={() => { if (t === 'lista') { setEditingId(null); reset() } setTab(t) }}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${tab === t ? 'bg-white dark:bg-zinc-700 shadow text-zinc-900 dark:text-white' : 'text-zinc-500 hover:text-zinc-700'}`}>
             {label}
           </button>
@@ -172,11 +870,15 @@ export default function ContasPagarPage() {
             </div>
             <select className={inputCls} value={statusFiltro} onChange={e => setStatusFiltro(e.target.value)}>
               <option value="">Todos os status</option>
-              {Object.entries(STATUS_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              {Object.entries(STATUS_LABEL).slice(0,5).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
-            <button onClick={() => setTab('novo')}
+            <button onClick={() => { setEditingId(null); reset(); setTab('novo') }}
               className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium">
               <Plus className="h-4 w-4" /> Novo
+            </button>
+            <button onClick={() => setFornModal({})}
+              className="flex items-center gap-2 px-4 py-2 border border-amber-500 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20 rounded-lg text-sm font-medium">
+              <Building2 className="h-4 w-4" /> Fornecedor
             </button>
           </div>
 
@@ -187,39 +889,78 @@ export default function ContasPagarPage() {
                   <th className="px-3 py-3 text-left">Emissão</th>
                   <th className="px-3 py-3 text-left">Fornecedor</th>
                   <th className="px-3 py-3 text-left">Histórico</th>
-                  <th className="px-3 py-3 text-left">Plano</th>
+                  <th className="px-3 py-3 text-left">NF/Doc</th>
                   <th className="px-3 py-3 text-left">Empresa</th>
                   <th className="px-3 py-3 text-right">Valor</th>
-                  <th className="px-3 py-3 text-left">Parcelas</th>
+                  <th className="px-3 py-3 text-center">Parcelas</th>
                   <th className="px-3 py-3 text-left">Status</th>
-                  <th className="px-3 py-3" />
+                  <th className="px-3 py-3 text-center">Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr><td colSpan={9} className="text-center py-8 text-zinc-400">Carregando...</td></tr>
+                ) : titulos.length === 0 ? (
+                  <tr><td colSpan={9} className="text-center py-8 text-zinc-400">Nenhum lançamento encontrado</td></tr>
                 ) : titulos.map(t => (
                   <tr key={t.id} className="border-t border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                    <td className="px-3 py-2.5 font-mono text-xs text-zinc-500">{t.data_emissao?.slice(0,10)}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-zinc-500">{(t as any).dt_emissao?.slice(0,10) || t.data_emissao?.slice(0,10)}</td>
                     <td className="px-3 py-2.5 max-w-[140px] truncate">{(t as any).fornecedor_nome || '—'}</td>
                     <td className="px-3 py-2.5 text-zinc-500 max-w-[180px] truncate text-xs">{t.historico}</td>
-                    <td className="px-3 py-2.5 text-zinc-400 text-xs max-w-[120px] truncate">{(t as any).plano_descricao || '—'}</td>
-                    <td className="px-3 py-2.5"><span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">{t.empresa}</span></td>
-                    <td className="px-3 py-2.5 font-mono text-right text-red-500 font-medium">{fmtBRL(t.valor_total)}</td>
-                    <td className="px-3 py-2.5 text-xs text-center">{t.num_parcelas}x</td>
-                    <td className="px-3 py-2.5"><span className={`text-xs px-2 py-0.5 rounded font-medium ${STATUS_CLS[t.status]}`}>{STATUS_LABEL[t.status]}</span></td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-zinc-400">{(t as any).nf_doc || '—'}</td>
                     <td className="px-3 py-2.5">
-                      <button className="p-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-700 rounded"><Pencil className="h-3.5 w-3.5 text-zinc-400" /></button>
+                      <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">{t.empresa}</span>
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-right text-red-500 font-medium">{fmtBRL(t.valor_total)}</td>
+                    <td className="px-3 py-2.5 text-xs text-center">{(t as any).qtd_parcelas || t.num_parcelas || 1}x</td>
+                    <td className="px-3 py-2.5">
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${STATUS_CLS[t.status] || STATUS_CLS['P']}`}>
+                        {STATUS_LABEL[t.status] || t.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1 justify-center">
+                        <button
+                          onClick={() => handleEdit(t)}
+                          title="Editar"
+                          className="p-1.5 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded text-blue-500">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setDeletingId(t.id)}
+                          title="Excluir"
+                          className="p-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded text-red-400">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
+          {/* Paginação simples */}
+          {total > 20 && (
+            <div className="flex items-center justify-between text-sm text-zinc-500">
+              <span>{total} registros</span>
+              <div className="flex gap-1">
+                <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}
+                  className="px-3 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40 hover:bg-zinc-50">
+                  ‹ Anterior
+                </button>
+                <span className="px-3 py-1">Pág. {page} / {Math.ceil(total/20)}</span>
+                <button onClick={() => setPage(p => Math.min(Math.ceil(total/20), p+1))} disabled={page >= Math.ceil(total/20)}
+                  className="px-3 py-1 rounded border border-zinc-200 dark:border-zinc-700 disabled:opacity-40 hover:bg-zinc-50">
+                  Próxima ›
+                </button>
+              </div>
+            </div>
+          )}
         </>
       )}
 
-      {/* ── NOVO LANÇAMENTO ── */}
+      {/* ── NOVO / EDITAR LANÇAMENTO ── */}
       {tab === 'novo' && (
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
           <section className={card}>
@@ -230,47 +971,89 @@ export default function ContasPagarPage() {
                   {['LARM','LM','HOLDING','RM'].map(e => <option key={e}>{e}</option>)}
                 </select>
               </Field>
-              <Field label="Banco / Conta de Pagamento">
-                <select {...register('banco_conta_id')} className={inputCls}>
-                  <option value="">Selecione...</option>
-                  {bancos.map(b => <option key={b.id} value={b.id}>{b.empresa} — {b.banco} {b.conta}</option>)}
-                </select>
+
+              {/* ▶ Banco de pagamento — listagem completa dos bancos brasileiros */}
+              <Field label="Banco de Pagamento">
+                <BancoSelect
+                  value={bancoPagCodigo}
+                  onChange={v => {
+                    setBancoPagCodigo(v)
+                    // também tenta vincular ao banco cadastrado na empresa
+                    const banco = bancos.find(b => b.cod_banco === v || (b as any).codigo_banco === v)
+                    if (banco) setValue('banco_conta_id', banco.id)
+                  }}
+                  placeholder="Selecione o banco…"
+                />
               </Field>
+
+              {/* Conta bancária cadastrada (opcional, complementar) */}
+              {bancos.length > 0 && (
+                <Field label="Conta Bancária Cadastrada" full>
+                  <select {...register('banco_conta_id')} className={inputCls}>
+                    <option value="">Selecione a conta cadastrada (opcional)…</option>
+                    {bancos.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.empresa} — {b.banco} {b.conta}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+
               <Field label="Fornecedor" full>
-                <select {...register('fornecedor_id')} className={inputCls}>
-                  <option value="">Selecione...</option>
-                  {fornecedores.map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
-                </select>
+                <div className="flex gap-2">
+                  <select {...register('fornecedor_id')} className={`${inputCls} flex-1`}>
+                    <option value="">Selecione...</option>
+                    {fornecedores.map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
+                  </select>
+                  <button type="button" onClick={() => setFornModal({})}
+                    className="px-3 py-2 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs hover:bg-zinc-50 dark:hover:bg-zinc-800 text-amber-600 font-medium whitespace-nowrap">
+                    + Novo
+                  </button>
+                </div>
               </Field>
+
               <Field label="Plano de Contas *" error={errors.plano_contas_id?.message}>
                 <select {...register('plano_contas_id')} className={inputCls}>
                   <option value="">Selecione...</option>
                   {planos.map(p => <option key={p.id} value={p.id}>{p.codigo} — {p.descricao}</option>)}
                 </select>
               </Field>
+
               <Field label="Centro de Custo">
                 <select {...register('centro_custo')} className={inputCls}>
+                  <option value="">Selecione...</option>
                   <option>Administrativo</option>
                   <option>Operacional</option>
                   <option>Fazenda São Luiz do Rio Pequeno</option>
                   <option>Residencial Santa Clara</option>
                 </select>
               </Field>
+
               <Field label="Histórico *" error={errors.historico?.message} full>
                 <input {...register('historico')} className={inputCls} placeholder="Descrição do pagamento" />
               </Field>
-              <Field label="NF / DOC">
-                <input {...register('nf_doc')} className={inputCls} />
+
+              {/* ▶ NF/Doc — mínimo 9 dígitos numéricos */}
+              <Field label="NF / Nº Documento" error={errors.nf_doc?.message}>
+                <input
+                  {...register('nf_doc')}
+                  className={inputCls}
+                  placeholder="Mín. 9 dígitos numéricos"
+                />
               </Field>
+
               <Field label="Data de Emissão *" error={errors.data_emissao?.message}>
                 <input {...register('data_emissao')} type="date" className={inputCls} />
               </Field>
+
               <Field label="Valor Total (R$) *" error={errors.valor_total?.message}>
                 <input {...register('valor_total')} type="number" step="0.01" className={inputCls} placeholder="0,00" />
               </Field>
             </div>
           </section>
 
+          {/* ── Parcelamento ── */}
           <section className={card}>
             <SectionTitle>Parcelamento</SectionTitle>
             <div className="grid grid-cols-3 gap-4 mb-4">
@@ -286,43 +1069,105 @@ export default function ContasPagarPage() {
 
             {parcelas.length > 0 && (
               <div className="space-y-2 mt-2">
+                {/* Cabeçalho */}
+                <div className="grid grid-cols-[80px_1fr_110px_100px_100px_100px_110px] gap-2 px-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                  <span>Parcela</span>
+                  <span>Vencimento</span>
+                  <span className="text-right">Valor (R$)</span>
+                  <span className="text-right">Multa</span>
+                  <span className="text-right">Juros</span>
+                  <span className="text-right">Desconto</span>
+                  <span className="text-right">Total</span>
+                </div>
                 {parcelas.map((p, i) => (
-                  <div key={i} className="flex items-center gap-3 bg-zinc-50 dark:bg-zinc-900/40 rounded-lg p-3 border border-zinc-100 dark:border-zinc-800">
-                    <span className="text-xs text-zinc-400 min-w-[70px]">Parcela {p.num}/{parcelas.length}</span>
+                  <div key={i} className="grid grid-cols-[80px_1fr_110px_100px_100px_100px_110px] gap-2 items-center bg-zinc-50 dark:bg-zinc-900/40 rounded-lg px-3 py-2 border border-zinc-100 dark:border-zinc-800">
+                    <span className="text-xs text-zinc-400">{p.num}/{parcelas.length}</span>
                     <input
                       type="date" value={p.data}
-                      onChange={e => setParcelas(prev => prev.map((x, j) => j === i ? { ...x, data: e.target.value } : x))}
-                      className={`${inputCls} flex-1 max-w-[160px]`}
+                      onChange={e => setParcelas(prev => prev.map((x,j) => j===i ? {...x, data:e.target.value} : x))}
+                      className={`${inputCls} text-xs py-1.5`}
                     />
-                    <input
-                      type="number" step="0.01" value={p.valor}
-                      onChange={e => setParcelas(prev => prev.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))}
-                      className={`${inputCls} w-[130px] text-right font-mono`}
-                    />
-                    <span className="text-xs text-zinc-400">R$</span>
+                    <input type="number" step="0.01" value={p.valor}
+                      onChange={e => setParcelas(prev => prev.map((x,j) => j===i ? {...x, valor:e.target.value} : x))}
+                      className={`${inputCls} text-right font-mono text-xs py-1.5`} />
+                    {/* ▶ Multa */}
+                    <input type="number" step="0.01" value={p.multa}
+                      onChange={e => setParcelas(prev => prev.map((x,j) => j===i ? {...x, multa:e.target.value} : x))}
+                      className={`${inputCls} text-right font-mono text-xs py-1.5 text-red-500`}
+                      placeholder="0.00" />
+                    {/* ▶ Juros */}
+                    <input type="number" step="0.01" value={p.juros}
+                      onChange={e => setParcelas(prev => prev.map((x,j) => j===i ? {...x, juros:e.target.value} : x))}
+                      className={`${inputCls} text-right font-mono text-xs py-1.5 text-orange-500`}
+                      placeholder="0.00" />
+                    {/* ▶ Desconto */}
+                    <input type="number" step="0.01" value={p.desconto}
+                      onChange={e => setParcelas(prev => prev.map((x,j) => j===i ? {...x, desconto:e.target.value} : x))}
+                      className={`${inputCls} text-right font-mono text-xs py-1.5 text-green-600`}
+                      placeholder="0.00" />
+                    {/* Total calculado */}
+                    <span className="text-right font-mono text-xs font-semibold text-zinc-700 dark:text-zinc-200">
+                      {fmtBRL(parcelaValorFinal(p))}
+                    </span>
                   </div>
                 ))}
+                {/* Totais */}
+                <div className="grid grid-cols-[80px_1fr_110px_100px_100px_100px_110px] gap-2 px-3 pt-2 border-t border-zinc-100 dark:border-zinc-800 text-xs font-semibold text-zinc-600 dark:text-zinc-400">
+                  <span></span><span></span>
+                  <span className="text-right font-mono">{fmtBRL(parcelas.reduce((s,p)=>s+parseFloat(p.valor||'0'),0))}</span>
+                  <span className="text-right font-mono text-red-500">{fmtBRL(parcelas.reduce((s,p)=>s+parseFloat(p.multa||'0'),0))}</span>
+                  <span className="text-right font-mono text-orange-500">{fmtBRL(parcelas.reduce((s,p)=>s+parseFloat(p.juros||'0'),0))}</span>
+                  <span className="text-right font-mono text-green-600">{fmtBRL(parcelas.reduce((s,p)=>s+parseFloat(p.desconto||'0'),0))}</span>
+                  <span className="text-right font-mono text-zinc-900 dark:text-white">{fmtBRL(parcelas.reduce((s,p)=>s+parcelaValorFinal(p),0))}</span>
+                </div>
+                <p className="text-xs text-zinc-400 px-1">
+                  <span className="text-red-400">Multa</span> e <span className="text-orange-400">Juros</span> somam ao valor · <span className="text-green-500">Desconto</span> subtrai
+                </p>
               </div>
             )}
           </section>
 
           <div className="flex gap-2 justify-end">
-            <button type="button" onClick={() => { setTab('lista'); reset() }}
+            <button type="button" onClick={() => { setTab('lista'); setEditingId(null); reset() }}
               className="px-4 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 text-sm hover:bg-zinc-50">
               Cancelar
             </button>
             <button type="submit"
-              className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium">
-              Lançar Título
+              className="flex items-center gap-2 px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium">
+              <Save className="h-4 w-4" />
+              {editingId ? 'Salvar Alterações' : 'Lançar Título'}
             </button>
           </div>
         </form>
+      )}
+
+      {/* ── Modal confirmação exclusão ── */}
+      {deletingId !== null && (
+        <ConfirmDelete
+          onConfirm={handleDelete}
+          onCancel={() => setDeletingId(null)}
+          loading={deleteLoading}
+        />
+      )}
+
+      {/* ── Modal fornecedor ── */}
+      {fornModal !== false && (
+        <FornecedorModal
+          forn={fornModal || null}
+          onClose={() => setFornModal(false)}
+          onSaved={saved => {
+            setFornModal(false)
+            // Atualiza lista de fornecedores
+            getFornecedores({ limit: 200 }).then(r => setFornecedores(r.data))
+            toast.success(`Fornecedor ${saved.razao_social} salvo!`)
+          }}
+        />
       )}
     </div>
   )
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers de estilo ────────────────────────────────────────────────────────
 const inputCls = 'w-full px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent'
 const card = 'bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 p-5'
 
@@ -334,9 +1179,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   )
 }
 
-function Field({ label, children, error, full }: {
-  label: string; children: React.ReactNode; error?: string; full?: boolean
-}) {
+function Field({ label, children, error, full }: { label: string; children: React.ReactNode; error?: string; full?: boolean }) {
   return (
     <div className={`flex flex-col gap-1 ${full ? 'col-span-full' : ''}`}>
       <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">{label}</label>
