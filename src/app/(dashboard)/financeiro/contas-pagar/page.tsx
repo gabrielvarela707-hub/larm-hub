@@ -477,7 +477,7 @@ export default function ContasPagarPage() {
           juros: parseFloat(p.juros || '0'),
           desconto: parseFloat(p.desconto || '0'),
           banco_conta_id: values.banco_conta_id,
-          status: 'P',
+          status: 'P' as const,
         })),
       }
       if (editingId) {
