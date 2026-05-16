@@ -1,21 +1,36 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Plus, Search, X, Check, FileText, Loader2, Sparkles } from 'lucide-react'
+import { Plus, Search, X, Check, FileText, Loader2, Sparkles, Pencil, Trash2, ChevronsUpDown } from 'lucide-react'
 import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
+import { BANCOS_BR } from '@/lib/bancos-br'
 
 interface Fornecedor { id: number; razao_social: string; empresa: string; cnpj_cpf?: string | null; nome_fantasia?: string | null }
 interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null }
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
 interface TipoDocumento { id: number; nome: string }
-interface Parcela     { id?: number; numero: number; valor: number; vencimento: string; status: string }
+interface Parcela     { id?: number; numero: number; valor: number; vencimento: string; status: string; multa?: number; juros?: number; desconto?: number }
 interface NovoFornecedorForm {
   razao_social: string
   nome_fantasia: string
   cnpj_cpf: string
   tipo_pessoa: 'PJ' | 'PF'
   empresa: string
+  codigo: string
+  email: string
+  telefone: string
+  cep: string
+  endereco: string
+  cidade_uf: string
+  codigo_banco: string
+  banco_nome: string
+  agencia: string
+  conta: string
+  digito: string
+  tipo_conta: string
+  chave_pix: string
+  tipo_pix: string
 }
 type SortKey = 'empresa' | 'fornecedor' | 'tipo_documento' | 'numero' | 'parcela' | 'valor' | 'emissao' | 'vencimento' | 'pagamento' | 'status'
 interface AiContaPagarResult {
@@ -105,6 +120,73 @@ const getSortValue = (l: Lancamento, key: SortKey): string | number => {
   }
 }
 
+
+// ─── BancoSelect ─────────────────────────────────────────────────────────────
+function BancoSelect({ value, onChange, inp }: { value: string; onChange: (v: string) => void; inp: string }) {
+  const [open, setOpen] = useState(false)
+  const [busca, setBusca] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+  const filtered = BANCOS_BR.filter(b =>
+    b.codigo.includes(busca) || b.nome.toLowerCase().includes(busca.toLowerCase())
+  ).slice(0, 60)
+  const selected = BANCOS_BR.find(b => b.codigo === value)
+  useEffect(() => {
+    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', fn)
+    return () => document.removeEventListener('mousedown', fn)
+  }, [])
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className={cn(inp, 'flex items-center justify-between gap-2 text-left')}>
+        <span className={selected ? 'text-slate-700' : 'text-slate-400'}>
+          {selected ? `${selected.codigo} — ${selected.nome}` : 'Selecione o banco…'}
+        </span>
+        <ChevronsUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-[70] w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl">
+          <div className="p-2 border-b border-slate-100">
+            <input autoFocus value={busca} onChange={e => setBusca(e.target.value)}
+              placeholder="Buscar por código ou nome…"
+              className="w-full px-2 py-1.5 text-xs rounded border border-slate-200 bg-white outline-none" />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            <button type="button" onClick={() => { onChange(''); setOpen(false); setBusca('') }}
+              className="w-full text-left px-3 py-2 text-xs text-slate-400 hover:bg-slate-50">— Nenhum —</button>
+            {filtered.map(b => (
+              <button key={b.codigo} type="button"
+                onClick={() => { onChange(b.codigo); setOpen(false); setBusca('') }}
+                className={cn('w-full text-left px-3 py-2 text-xs hover:bg-blue-50', value === b.codigo && 'bg-blue-50 font-medium')}>
+                <span className="font-mono text-blue-600 mr-2">{b.codigo}</span>{b.nome}
+              </button>
+            ))}
+            {filtered.length === 0 && <p className="px-3 py-4 text-xs text-slate-400 text-center">Nenhum banco encontrado</p>}
+          </div>
+        </div>
+      )}
+      {/* ── Modal confirmar exclusão ── */}
+      {deletingId !== null && (
+        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-5">
+            <h3 className="font-bold text-slate-800 mb-2">Excluir lançamento?</h3>
+            <p className="text-xs text-slate-500 mb-4">Esta ação não pode ser desfeita. Lançamentos com parcelas pagas não podem ser excluídos.</p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setDeletingId(null)} className="px-4 py-2 text-xs rounded-lg border border-slate-200 hover:bg-slate-50">Cancelar</button>
+              <button onClick={handleDeleteConfirm} disabled={deletingLoading}
+                className="px-4 py-2 text-xs rounded-lg bg-red-500 hover:bg-red-600 text-white font-semibold disabled:opacity-60">
+                {deletingLoading ? 'Excluindo…' : 'Excluir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+    </div>
+  )
+}
+
 export default function PagarPage() {
   const [lista,     setLista]     = useState<Lancamento[]>([])
   const [total,     setTotal]     = useState(0)
@@ -118,6 +200,12 @@ export default function PagarPage() {
   const [showBaixaModal, setShowBaixaModal] = useState(false)
   const [savingBaixa, setSavingBaixa] = useState(false)
   const [baixaErrors, setBaixaErrors] = useState<Record<string, string>>({})
+  // ── edit / delete ──────────────────────────────────────────────────────
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [deletingLoading, setDeletingLoading] = useState(false)
+  // banco brasileiro selecionado (código BACEN)
+  const [fBancoCodigo, setFBancoCodigo] = useState('')
   const [baixaParcela, setBaixaParcela] = useState<Lancamento | null>(null)
   const [baixaForm, setBaixaForm] = useState<BaixaForm>({
     valor_parcela: '',
@@ -162,11 +250,10 @@ export default function PagarPage() {
   const [fCC,      setFCC]      = useState('')
   const [fObs,     setFObs]     = useState('')
   const [novoFornecedor, setNovoFornecedor] = useState<NovoFornecedorForm>({
-    razao_social: '',
-    nome_fantasia: '',
-    cnpj_cpf: '',
-    tipo_pessoa: 'PJ',
-    empresa: '',
+    razao_social: '', nome_fantasia: '', cnpj_cpf: '',
+    tipo_pessoa: 'PJ', empresa: '', codigo: '', email: '', telefone: '',
+    cep: '', endereco: '', cidade_uf: '', codigo_banco: '', banco_nome: '',
+    agencia: '', conta: '', digito: '', tipo_conta: 'Corrente', chave_pix: '', tipo_pix: '',
   })
   const [fDocumentoNome,   setFDocumentoNome]   = useState('')
   const [fDocumentoMime,   setFDocumentoMime]   = useState('')
@@ -254,11 +341,10 @@ export default function PagarPage() {
   function openFornecedorModal() {
     setFornecedorErrors({})
     setNovoFornecedor({
-      razao_social: '',
-      nome_fantasia: '',
-      cnpj_cpf: '',
-      tipo_pessoa: 'PJ',
-      empresa: fEmp || 'TODOS',
+      razao_social: '', nome_fantasia: '', cnpj_cpf: '',
+      tipo_pessoa: 'PJ', empresa: fEmp || 'TODOS', codigo: '', email: '', telefone: '',
+      cep: '', endereco: '', cidade_uf: '', codigo_banco: '', banco_nome: '',
+      agencia: '', conta: '', digito: '', tipo_conta: 'Corrente', chave_pix: '', tipo_pix: '',
     })
     setShowFornecedorModal(true)
   }
@@ -273,17 +359,34 @@ export default function PagarPage() {
     const e: Record<string, string> = {}
     if (!novoFornecedor.razao_social.trim()) e.razao_social = 'Obrigatório'
     if (!novoFornecedor.empresa) e.empresa = 'Obrigatório'
+    if (novoFornecedor.codigo && novoFornecedor.codigo.replace(/\D/g, '').length > 0 && novoFornecedor.codigo.replace(/\D/g, '').length < 6)
+      e.codigo = 'Mínimo 6 dígitos'
     setFornecedorErrors(e)
     if (Object.keys(e).length) return
 
     setSavingFornecedor(true)
     try {
+      const bancoSelecionado = BANCOS_BR.find(b => b.codigo === novoFornecedor.codigo_banco)
       const payload = {
         razao_social: novoFornecedor.razao_social.trim(),
         nome_fantasia: novoFornecedor.nome_fantasia.trim() || null,
         cnpj_cpf: novoFornecedor.cnpj_cpf.trim() || null,
         tipo_pessoa: novoFornecedor.tipo_pessoa,
         empresa: novoFornecedor.empresa,
+        codigo: novoFornecedor.codigo.trim() || null,
+        email: novoFornecedor.email.trim() || null,
+        telefone: novoFornecedor.telefone.trim() || null,
+        cep: novoFornecedor.cep.trim() || null,
+        endereco: novoFornecedor.endereco.trim() || null,
+        cidade_uf: novoFornecedor.cidade_uf.trim() || null,
+        banco_nome: bancoSelecionado?.nome || novoFornecedor.banco_nome || null,
+        codigo_banco: novoFornecedor.codigo_banco || null,
+        agencia: novoFornecedor.agencia.trim() || null,
+        conta: novoFornecedor.conta.trim() || null,
+        digito: novoFornecedor.digito.trim() || null,
+        tipo_conta: novoFornecedor.tipo_conta || null,
+        chave_pix: novoFornecedor.chave_pix.trim() || null,
+        tipo_pix: novoFornecedor.tipo_pix || null,
         categoria: null,
       }
       const r = await apiClient.post('/financeiro/fornecedores', payload)
@@ -312,6 +415,7 @@ export default function PagarPage() {
     setParcelas([]); setErrors({})
     setShowFornecedorModal(false); setFornecedorErrors({})
     setShowBaixaModal(false); setBaixaParcela(null); setBaixaErrors({})
+    setFBancoCodigo(''); setEditingId(null)
   }
 
   function validate() {
@@ -319,6 +423,8 @@ export default function PagarPage() {
     if (!fEmp)       e.empresa   = 'Obrigatório'
     if (!fHistorico) e.historico = 'Obrigatório'
     if (!fValor || parseFloat(fValor) <= 0) e.valor = 'Informe um valor válido'
+    if (fNF && fNF.replace(/\D/g, '').length > 0 && fNF.replace(/\D/g, '').length < 9)
+      e.nf_doc = 'Mínimo 9 dígitos numéricos'
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -437,12 +543,53 @@ export default function PagarPage() {
     }
   }
 
+  async function handleEdit(l: Lancamento) {
+    try {
+      const r = await apiClient.get(`/financeiro/lancamentos-cp/${l.id}`)
+      const d = r.data.data
+      setFEmp(d.empresa || '')
+      setFForn(d.fornecedor_id ? String(d.fornecedor_id) : '')
+      setFBanco(d.banco_conta_id ? String(d.banco_conta_id) : '')
+      setFHistorico(d.historico || '')
+      setFTipoDoc(d.tipo_documento_id ? String(d.tipo_documento_id) : '')
+      setFNF(d.nf_doc || '')
+      setFEmissao(d.dt_emissao?.slice(0,10) || todayISO())
+      setFValor(String(d.valor_total || ''))
+      setFNParc(d.qtd_parcelas || 1)
+      setFConta(d.conta_contabil || '')
+      setFCC(d.centro_custo || '')
+      setFObs(d.obs || '')
+      if (d.parcelas?.length) {
+        setParcelas(d.parcelas.map((p: { numero: number; valor: number; vencimento: string; status: string; multa?: number; juros?: number; desconto?: number }) => ({
+          numero: p.numero, valor: p.valor,
+          vencimento: p.vencimento?.slice(0,10) || '',
+          status: p.status || 'pendente',
+          multa: p.multa || 0, juros: p.juros || 0, desconto: p.desconto || 0,
+        })))
+      }
+      setEditingId(l.id)
+      setShowForm(true)
+    } catch { alert('Erro ao carregar lançamento') }
+  }
+
+  async function handleDeleteConfirm() {
+    if (!deletingId) return
+    setDeletingLoading(true)
+    try {
+      await apiClient.delete(`/financeiro/lancamentos-cp/${deletingId}`)
+      setDeletingId(null)
+      load()
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao excluir')
+    } finally { setDeletingLoading(false) }
+  }
+
   async function save() {
     if (!validate()) return
     setSaving(true)
     try {
       const contaObj = plano.find(p => p.codigo === fConta)
-      await apiClient.post('/financeiro/lancamentos-cp', {
+      const payload = {
         empresa:         fEmp,
         fornecedor_id:   fForn   || null,
         banco_conta_id:  fBanco  || null,
@@ -461,7 +608,12 @@ export default function PagarPage() {
         centro_custo:    fCC      || null,
         obs:             fObs     || null,
         parcelas,
-      })
+      }
+      if (editingId) {
+        await apiClient.put(`/financeiro/lancamentos-cp/${editingId}`, payload)
+      } else {
+        await apiClient.post('/financeiro/lancamentos-cp', payload)
+      }
       closeForm()
       load()
     } catch (err: unknown) {
@@ -732,6 +884,16 @@ export default function PagarPage() {
                             Dar baixa
                           </button>
                         )}
+                        <div className="flex items-center gap-1 mt-1">
+                          <button type="button" onClick={() => handleEdit(l)} title="Editar"
+                            className="p-1 rounded hover:bg-blue-50 text-blue-500">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button type="button" onClick={() => setDeletingId(l.id)} title="Excluir"
+                            className="p-1 rounded hover:bg-red-50 text-red-400">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -798,7 +960,7 @@ export default function PagarPage() {
                     </select>
                   </F>
                   <F label="Número do Documento" name="nf_doc">
-                    <input className={inp} value={fNF} onChange={e => setFNF(e.target.value)} placeholder="Ex.: NF, boleto, recibo" />
+                    <input className={cn(inp, errors.nf_doc && 'border-red-300')} value={fNF} onChange={e => setFNF(e.target.value)} placeholder="Mín. 9 dígitos numéricos" />
                   </F>
                   <F label="Documento em PDF ou imagem" name="documento_arquivo" full>
                     <label className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-600 cursor-pointer hover:bg-slate-100">
@@ -832,12 +994,22 @@ export default function PagarPage() {
                     </select>
                   </F>
                   <F label="Banco para Pagamento" name="banco_conta_id">
-                    <select className={inp} value={fBanco} onChange={e => setFBanco(e.target.value)}>
-                      <option value="">Selecione</option>
-                      {bancos
-                        .filter(b => !fEmp || b.empresa === fEmp)
-                        .map(b => <option key={b.id} value={b.id}>{b.empresa} – {b.banco_nome} {b.agencia ? `ag.${b.agencia}` : ''} {b.conta || ''}</option>)}
-                    </select>
+                    <BancoSelect
+                      value={fBancoCodigo}
+                      onChange={v => {
+                        setFBancoCodigo(v)
+                        const match = bancos.find(b => b.banco_nome?.toLowerCase().includes(BANCOS_BR.find(x=>x.codigo===v)?.nome?.split(' ')[0]?.toLowerCase()||'__') || String(b.id) === v)
+                        setFBanco(match ? String(match.id) : '')
+                      }}
+                      inp={inp}
+                    />
+                    {bancos.filter(b => !fEmp || b.empresa === fEmp).length > 0 && (
+                      <select className={cn(inp,'mt-1 text-[10px] text-slate-500')} value={fBanco} onChange={e => setFBanco(e.target.value)}>
+                        <option value="">Conta cadastrada (opcional)</option>
+                        {bancos.filter(b => !fEmp || b.empresa === fEmp)
+                          .map(b => <option key={b.id} value={b.id}>{b.empresa} – {b.banco_nome} {b.agencia ? `ag.${b.agencia}` : ''} {b.conta || ''}</option>)}
+                      </select>
+                    )}
                   </F>
                   <F label="Data de Emissão" name="dt_emissao">
                     <input className={inp} type="date" value={fEmissao} onChange={e => setFEmissao(e.target.value)} />
@@ -1083,6 +1255,24 @@ export default function PagarPage() {
           </div>
         </div>
       )}
+
+      {/* ── Modal confirmar exclusão ── */}
+      {deletingId !== null && (
+        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-5">
+            <h3 className="font-bold text-slate-800 mb-2">Excluir lançamento?</h3>
+            <p className="text-xs text-slate-500 mb-4">Esta ação não pode ser desfeita. Lançamentos com parcelas pagas não podem ser excluídos.</p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setDeletingId(null)} className="px-4 py-2 text-xs rounded-lg border border-slate-200 hover:bg-slate-50">Cancelar</button>
+              <button onClick={handleDeleteConfirm} disabled={deletingLoading}
+                className="px-4 py-2 text-xs rounded-lg bg-red-500 hover:bg-red-600 text-white font-semibold disabled:opacity-60">
+                {deletingLoading ? 'Excluindo…' : 'Excluir'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
     </div>
   )
