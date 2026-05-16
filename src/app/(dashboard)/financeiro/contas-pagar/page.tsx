@@ -166,33 +166,33 @@ function BancoSelect({
 function FornecedorModal({
   forn, onClose, onSaved,
 }: { forn: Partial<Fornecedor> | null; onClose: () => void; onSaved: (f: Fornecedor) => void }) {
-  const isEdit = !!(forn as any)?.id
+  const isEdit = !!(forn as Fornecedor)?.id
   const [saving, setSaving] = useState(false)
 
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm<FornFormData>({
     resolver: zodResolver(fornSchema),
     defaultValues: {
-      razao_social: (forn as any)?.razao_social || '',
-      nome_fantasia: (forn as any)?.nome_fantasia || '',
-      cnpj_cpf: (forn as any)?.cnpj_cpf || '',
-      tipo_pessoa: (forn as any)?.tipo_pessoa || 'PJ',
-      categoria: (forn as any)?.categoria || '',
-      empresa: (forn as any)?.empresa || 'TODOS',
-      codigo: (forn as any)?.codigo || '',
-      email: (forn as any)?.email || '',
-      telefone: (forn as any)?.telefone || '',
-      cep: (forn as any)?.cep || '',
-      endereco: (forn as any)?.endereco || '',
-      cidade_uf: (forn as any)?.cidade_uf || '',
-      banco_nome: (forn as any)?.banco_nome || '',
-      codigo_banco: (forn as any)?.codigo_banco || '',
-      agencia: (forn as any)?.agencia || '',
-      conta: (forn as any)?.conta || '',
-      digito: (forn as any)?.digito || '',
-      tipo_conta: (forn as any)?.tipo_conta || 'Corrente',
-      chave_pix: (forn as any)?.chave_pix || '',
-      tipo_pix: (forn as any)?.tipo_pix || '',
-      obs: (forn as any)?.obs || '',
+      razao_social: forn?.razao_social || '',
+      nome_fantasia: forn?.nome_fantasia || '',
+      cnpj_cpf: forn?.cnpj_cpf || '',
+      tipo_pessoa: forn?.tipo_pessoa || 'PJ',
+      categoria: forn?.categoria || '',
+      empresa: forn?.empresa || 'TODOS',
+      codigo: forn?.codigo || '',
+      email: forn?.email || '',
+      telefone: forn?.telefone || '',
+      cep: forn?.cep || '',
+      endereco: forn?.endereco || '',
+      cidade_uf: forn?.cidade_uf || '',
+      banco_nome: forn?.banco_nome || '',
+      codigo_banco: forn?.codigo_banco || '',
+      agencia: forn?.agencia || '',
+      conta: forn?.conta || '',
+      digito: forn?.digito || '',
+      tipo_conta: forn?.tipo_conta || 'Corrente',
+      chave_pix: forn?.chave_pix || '',
+      tipo_pix: forn?.tipo_pix || '',
+      obs: forn?.obs || '',
     },
   })
 
@@ -205,7 +205,7 @@ function FornecedorModal({
       const banco = BANCOS_BR.find(b => b.codigo === values.codigo_banco)
       const payload = { ...values, banco_nome: banco?.nome || values.banco_nome }
       const saved = isEdit
-        ? await updateFornecedor((forn as any).id, payload)
+        ? await updateFornecedor((forn as Fornecedor).id, payload)
         : await createFornecedor(payload)
       toast.success(isEdit ? 'Fornecedor atualizado!' : 'Fornecedor cadastrado!')
       onSaved(saved)
@@ -388,7 +388,10 @@ function ConfirmDelete({ onConfirm, onCancel, loading }: { onConfirm: () => void
 export default function ContasPagarPage() {
   const [tab, setTab]               = useState<'lista' | 'novo'>('lista')
   const [titulos, setTitulos]       = useState<ContaPagar[]>([])
-  const [resumo, setResumo]         = useState<any>(null)
+  const [resumo, setResumo]         = useState<{
+    a_vencer_30d: number; qtd_a_vencer: number
+    vencidos: number; qtd_vencidos: number; pago_mes: number
+  } | null>(null)
   const [loading, setLoading]       = useState(false)
   const [busca, setBusca]           = useState('')
   const [statusFiltro, setStatusFiltro] = useState('')
@@ -624,15 +627,15 @@ export default function ContasPagarPage() {
                   <tr><td colSpan={9} className="text-center py-8 text-zinc-400">Nenhum lançamento encontrado</td></tr>
                 ) : titulos.map(t => (
                   <tr key={t.id} className="border-t border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                    <td className="px-3 py-2.5 font-mono text-xs text-zinc-500">{(t as any).dt_emissao?.slice(0,10) || t.data_emissao?.slice(0,10)}</td>
-                    <td className="px-3 py-2.5 max-w-[140px] truncate">{(t as any).fornecedor_nome || '—'}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-zinc-500">{t.dt_emissao?.slice(0,10) || t.data_emissao?.slice(0,10)}</td>
+                    <td className="px-3 py-2.5 max-w-[140px] truncate">{t.fornecedor_nome || '—'}</td>
                     <td className="px-3 py-2.5 text-zinc-500 max-w-[180px] truncate text-xs">{t.historico}</td>
-                    <td className="px-3 py-2.5 font-mono text-xs text-zinc-400">{(t as any).nf_doc || '—'}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-zinc-400">{t.nf_doc || '—'}</td>
                     <td className="px-3 py-2.5">
                       <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">{t.empresa}</span>
                     </td>
                     <td className="px-3 py-2.5 font-mono text-right text-red-500 font-medium">{fmtBRL(t.valor_total)}</td>
-                    <td className="px-3 py-2.5 text-xs text-center">{(t as any).qtd_parcelas || t.num_parcelas || 1}x</td>
+                    <td className="px-3 py-2.5 text-xs text-center">{t.qtd_parcelas || t.num_parcelas || 1}x</td>
                     <td className="px-3 py-2.5">
                       <span className={`text-xs px-2 py-0.5 rounded font-medium ${STATUS_CLS[t.status] || STATUS_CLS['P']}`}>
                         {STATUS_LABEL[t.status] || t.status}
@@ -699,7 +702,7 @@ export default function ContasPagarPage() {
                   onChange={v => {
                     setBancoPagCodigo(v)
                     // também tenta vincular ao banco cadastrado na empresa
-                    const banco = bancos.find(b => b.cod_banco === v || (b as any).codigo_banco === v)
+                    const banco = bancos.find(b => b.cod_banco === v || b.codigo_banco === v)
                     if (banco) setValue('banco_conta_id', banco.id)
                   }}
                   placeholder="Selecione o banco…"

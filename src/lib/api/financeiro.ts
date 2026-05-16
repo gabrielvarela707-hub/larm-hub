@@ -53,6 +53,7 @@ export interface BancoConta {
   empresa: Empresa
   banco: string
   cod_banco?: string
+  codigo_banco?: string
   agencia: string
   conta: string
   tipo_conta: 'CC' | 'CP' | 'CI'
@@ -69,6 +70,9 @@ export interface Parcela {
   total_parcelas: number
   data_vencimento: string
   valor: number
+  multa?: number
+  juros?: number
+  desconto?: number
   banco_conta_id?: number
   status: 'P' | 'Q' | 'V' | 'C'
   data_pagamento?: string
@@ -89,8 +93,10 @@ export interface ContaPagar {
   historico: string
   nf_doc?: string
   data_emissao: string
+  dt_emissao?: string
   valor_total: number
   num_parcelas: number
+  qtd_parcelas?: number
   status: 'P' | 'Q' | 'V' | 'C' | 'X'
   parcelas?: Parcela[]
   obs?: string
@@ -198,8 +204,10 @@ export const createContaPagar = (body: {
   historico: string
   nf_doc?: string
   data_emissao: string
+  dt_emissao?: string
   valor_total: number
   num_parcelas: number
+  qtd_parcelas?: number
   parcelas: Parcela[]
   obs?: string
 }) => apiClient.post<{ ok: boolean; data: ContaPagar }>('/financeiro/contas-pagar', body)
@@ -246,11 +254,11 @@ export const getMovimento = (params?: MovimentoParams) =>
 export const getMovimentoFiltros = () =>
   apiClient.get<{
     ok: boolean
-    data: { empresas: string[]; bancos: string[]; contas: any[]; anos: number[] }
+    data: { empresas: string[]; bancos: string[]; contas: Record<string, unknown>[]; anos: number[] }
   }>('/financeiro/movimento/filtros').then(data)
 
 export const getMovimentoResumo = (empresa?: Empresa, ano?: number) =>
-  apiClient.get<{ ok: boolean; data: any }>(
+  apiClient.get<{ ok: boolean; data: Record<string, unknown> }>(
     '/financeiro/movimento/resumo', { params: { empresa, ano } }
   ).then(data)
 
@@ -262,12 +270,12 @@ export interface CashflowParams {
 }
 
 export const getCashflow = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: CashflowParams) =>
-  apiClient.get<{ ok: boolean; data: any }>(
+  apiClient.get<{ ok: boolean; data: Record<string, unknown> }>(
     '/financeiro/cashflow', { params: { empresa, ano, ...params } }
   ).then(data)
 
 export const getCashflowResumo = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: Pick<CashflowParams, 'mes'>) =>
-  apiClient.get<{ ok: boolean; data: any }>(
+  apiClient.get<{ ok: boolean; data: Record<string, unknown> }>(
     '/financeiro/cashflow/resumo', { params: { empresa, ano, ...params } }
   ).then(data)
 
