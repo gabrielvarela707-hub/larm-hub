@@ -165,23 +165,6 @@ function BancoSelect({ value, onChange, inp }: { value: string; onChange: (v: st
           </div>
         </div>
       )}
-      {/* ── Modal confirmar exclusão ── */}
-      {deletingId !== null && (
-        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-5">
-            <h3 className="font-bold text-slate-800 mb-2">Excluir lançamento?</h3>
-            <p className="text-xs text-slate-500 mb-4">Esta ação não pode ser desfeita. Lançamentos com parcelas pagas não podem ser excluídos.</p>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setDeletingId(null)} className="px-4 py-2 text-xs rounded-lg border border-slate-200 hover:bg-slate-50">Cancelar</button>
-              <button onClick={handleDeleteConfirm} disabled={deletingLoading}
-                className="px-4 py-2 text-xs rounded-lg bg-red-500 hover:bg-red-600 text-white font-semibold disabled:opacity-60">
-                {deletingLoading ? 'Excluindo…' : 'Excluir'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
 
     </div>
   )
@@ -1256,6 +1239,7 @@ export default function PagarPage() {
         </div>
       )}
 
+
       {/* ── Modal confirmar exclusão ── */}
       {deletingId !== null && (
         <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
@@ -1272,7 +1256,6 @@ export default function PagarPage() {
           </div>
         </div>
       )}
-
 
     </div>
   )
