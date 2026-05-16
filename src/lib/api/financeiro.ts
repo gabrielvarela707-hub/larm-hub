@@ -27,25 +27,31 @@ export interface PlanoContas {
 export interface Fornecedor {
   id: number
   tipo_pessoa: 'PJ' | 'PF'
-  cnpj_cpf: string
+  cnpj_cpf?: string
   razao_social: string
   nome_fantasia?: string
-  inscricao_est?: string
   categoria?: string
-  plano_contas_id?: number
-  plano_descricao?: string
-  cep?: string; logradouro?: string; numero?: string
-  complemento?: string; bairro?: string; cidade?: string; estado?: string
-  telefone?: string; whatsapp?: string; email?: string
-  site?: string; nome_contato?: string
-  banco_pag?: string; agencia_pag?: string; conta_pag?: string
-  tipo_conta_pag?: 'CC' | 'CP'
-  pix_chave?: string; pix_tipo?: string
-  ativo: boolean
-  bloquear_lanc: boolean
-  requer_aprova: boolean
-  limite_aprova: number
+  empresa?: string
+  // Código interno (mín. 6 dígitos)
+  codigo?: string
+  // Contato
+  email?: string
+  telefone?: string
+  // Endereço
+  cep?: string
+  endereco?: string
+  cidade_uf?: string
+  // Dados bancários — nomes reais do banco/API
+  banco_nome?: string
+  codigo_banco?: string
+  agencia?: string
+  conta?: string
+  digito?: string
+  tipo_conta?: 'Corrente' | 'Poupança'
+  chave_pix?: string
+  tipo_pix?: string
   obs?: string
+  ativo?: boolean
 }
 
 export interface BancoConta {
