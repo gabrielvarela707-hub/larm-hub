@@ -3,8 +3,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import {
+  AlertTriangle,
+  Bell,
   Calendar,
   CheckCircle,
+  CheckSquare,
+  ClipboardList,
+  Clock,
   Edit3,
   FileSpreadsheet,
   Filter,
@@ -89,6 +94,9 @@ type Lead = {
   last_interaction_at?: string | null
   next_follow_up_at?: string | null
   days_in_stage?: number
+  open_tasks_count?: number
+  overdue_tasks_count?: number
+  next_task_due_at?: string | null
 }
 
 type LeadHistory = {
@@ -99,6 +107,42 @@ type LeadHistory = {
   to_stage_name?: string | null
   note: string
   created_at: string
+}
+
+type TaskPriority = 'baixa' | 'media' | 'alta' | 'urgente'
+type TaskStatus = 'pendente' | 'concluida' | 'cancelada'
+
+type LeadTask = {
+  id: string
+  lead_id: string
+  lead_name?: string
+  title: string
+  description: string
+  due_at?: string | null
+  priority: TaskPriority
+  status: TaskStatus
+  responsible_id?: string | null
+  responsible_name?: string
+  completed_at?: string | null
+  created_at: string
+  updated_at?: string
+}
+
+type CrmSummary = {
+  tasks_today: number
+  tasks_overdue: number
+  tasks_due_soon: number
+  leads_without_contact: number
+  sla_overdue: number
+  tasks: LeadTask[]
+}
+
+type TaskForm = {
+  title: string
+  description: string
+  due_at: string
+  priority: TaskPriority
+  responsible_id: string
 }
 
 type LeadForm = {
@@ -173,6 +217,21 @@ const TEMP_LABELS: Record<Temperature, { label: string; className: string }> = {
   quente: { label: 'Quente', className: 'bg-red-50 text-red-700 border-red-100' },
 }
 
+const PRIORITY_LABELS: Record<TaskPriority, { label: string; className: string }> = {
+  baixa: { label: 'Baixa', className: 'bg-slate-50 text-slate-600 border-slate-100' },
+  media: { label: 'Média', className: 'bg-blue-50 text-blue-700 border-blue-100' },
+  alta: { label: 'Alta', className: 'bg-amber-50 text-amber-700 border-amber-100' },
+  urgente: { label: 'Urgente', className: 'bg-red-50 text-red-700 border-red-100' },
+}
+
+const EMPTY_TASK_FORM: TaskForm = {
+  title: '',
+  description: '',
+  due_at: '',
+  priority: 'media',
+  responsible_id: '',
+}
+
 const EMPTY_LEAD_FORM: LeadForm = {
   stage_id: '',
   responsible_id: '',
@@ -231,6 +290,13 @@ function dateTimeLabel(value?: string | null) {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return 'Sem data'
   return date.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function isPastDate(value?: string | null) {
+  if (!value) return false
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return false
+  return date.getTime() < Date.now()
 }
 
 function toInputDateTime(value?: string | null) {
@@ -315,6 +381,7 @@ function LeadCard({ lead, stage, onOpen, onDragStart }: {
   onDragStart: () => void
 }) {
   const overdue = Boolean(stage?.max_days && stage.max_days > 0 && Number(lead.days_in_stage || 0) > stage.max_days)
+  const hasOverdueTask = Number(lead.overdue_tasks_count || 0) > 0
   const temp = TEMP_LABELS[lead.temperature] || TEMP_LABELS.morno
 
   return (
@@ -323,7 +390,10 @@ function LeadCard({ lead, stage, onOpen, onDragStart }: {
       draggable
       onDragStart={onDragStart}
       onClick={onOpen}
-      className="group mb-3 w-full rounded-xl border border-slate-100 bg-white p-3 text-left shadow-card transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+      className={cn(
+        'group mb-3 w-full rounded-xl border bg-white p-3 text-left shadow-card transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md',
+        hasOverdueTask ? 'border-red-200' : 'border-slate-100'
+      )}
     >
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
@@ -340,7 +410,13 @@ function LeadCard({ lead, stage, onOpen, onDragStart }: {
 
       <div className="space-y-1.5 text-xs text-slate-500">
         {lead.phone && <p className="flex items-center gap-1"><Phone className="h-3 w-3" /> {lead.phone}</p>}
-        {lead.next_follow_up_at && <p className="flex items-center gap-1"><Calendar className="h-3 w-3" /> Próx.: {dateTimeLabel(lead.next_follow_up_at)}</p>}
+        {lead.next_task_due_at ? (
+          <p className={cn('flex items-center gap-1', isPastDate(lead.next_task_due_at) ? 'font-semibold text-red-600' : 'text-slate-500')}>
+            <Clock className="h-3 w-3" /> Tarefa: {dateTimeLabel(lead.next_task_due_at)}
+          </p>
+        ) : lead.next_follow_up_at ? (
+          <p className="flex items-center gap-1"><Calendar className="h-3 w-3" /> Próx.: {dateTimeLabel(lead.next_follow_up_at)}</p>
+        ) : null}
         {lead.notes && <p className="line-clamp-2 text-slate-400">{lead.notes}</p>}
       </div>
 
@@ -351,6 +427,11 @@ function LeadCard({ lead, stage, onOpen, onDragStart }: {
         <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold', temp.className)}>
           {temp.label}
         </span>
+        {Number(lead.open_tasks_count || 0) > 0 && (
+          <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-semibold', hasOverdueTask ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700')}>
+            {lead.open_tasks_count} tarefa(s)
+          </span>
+        )}
         {overdue && (
           <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700">
             SLA {lead.days_in_stage}d
@@ -374,6 +455,7 @@ function LeadModal({
   onClose,
   onSave,
   onDelete,
+  onRefresh,
   initialStageId = '',
 }: {
   open: boolean
@@ -385,9 +467,12 @@ function LeadModal({
   onClose: () => void
   onSave: (form: LeadForm) => Promise<void>
   onDelete: (leadId: string) => Promise<void>
+  onRefresh: () => Promise<void>
 }) {
   const [form, setForm] = useState<LeadForm>(EMPTY_LEAD_FORM)
   const [history, setHistory] = useState<LeadHistory[]>([])
+  const [tasks, setTasks] = useState<LeadTask[]>([])
+  const [taskForm, setTaskForm] = useState<TaskForm>(EMPTY_TASK_FORM)
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const selectedStage = stages.find(s => s.id === form.stage_id)
@@ -414,12 +499,18 @@ function LeadModal({
         next_follow_up_at: toInputDateTime(lead.next_follow_up_at),
         history_note: '',
       })
+      setTaskForm({ ...EMPTY_TASK_FORM, responsible_id: lead.responsible_id || '' })
       apiClient.get<ApiResponse<LeadHistory[]>>(`/crm/leads/${lead.id}/history`)
         .then(({ data }) => setHistory(data.data || []))
         .catch(() => setHistory([]))
+      apiClient.get<ApiResponse<LeadTask[]>>(`/crm/tasks?lead_id=${lead.id}&status=all`)
+        .then(({ data }) => setTasks(data.data || []))
+        .catch(() => setTasks([]))
     } else {
       setForm({ ...EMPTY_LEAD_FORM, stage_id: initialStageId || stages[0]?.id || '' })
+      setTaskForm(EMPTY_TASK_FORM)
       setHistory([])
+      setTasks([])
     }
   }, [open, lead, stages, initialStageId])
 
@@ -443,6 +534,42 @@ function LeadModal({
     const { data } = await apiClient.post<ApiResponse<LeadHistory>>(`/crm/leads/${lead.id}/history`, { note: note.trim() })
     setHistory(prev => [data.data, ...prev])
     setNote('')
+  }
+
+  async function addTask() {
+    if (!lead || !taskForm.title.trim()) return alert('Informe o título da tarefa')
+    const payload = {
+      lead_id: lead.id,
+      title: taskForm.title.trim(),
+      description: taskForm.description.trim(),
+      due_at: taskForm.due_at || null,
+      priority: taskForm.priority,
+      responsible_id: taskForm.responsible_id || lead.responsible_id || null,
+    }
+    const { data } = await apiClient.post<ApiResponse<LeadTask>>('/crm/tasks', payload)
+    setTasks(prev => [data.data, ...prev])
+    setTaskForm({ ...EMPTY_TASK_FORM, responsible_id: lead.responsible_id || '' })
+    await onRefresh()
+    apiClient.get<ApiResponse<LeadHistory[]>>(`/crm/leads/${lead.id}/history`)
+      .then(({ data }) => setHistory(data.data || []))
+      .catch(() => {})
+  }
+
+  async function completeTask(taskId: string) {
+    if (!lead) return
+    await apiClient.patch(`/crm/tasks/${taskId}/complete`)
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'concluida', completed_at: new Date().toISOString() } : t))
+    await onRefresh()
+    apiClient.get<ApiResponse<LeadHistory[]>>(`/crm/leads/${lead.id}/history`)
+      .then(({ data }) => setHistory(data.data || []))
+      .catch(() => {})
+  }
+
+  async function cancelTask(taskId: string) {
+    if (!confirm('Cancelar esta tarefa?')) return
+    await apiClient.delete(`/crm/tasks/${taskId}`)
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'cancelada' } : t))
+    await onRefresh()
   }
 
   async function handleDelete() {
@@ -546,6 +673,58 @@ function LeadModal({
           </div>
 
           <div className="border-t border-slate-100 bg-slate-50/70 p-5 lg:border-l lg:border-t-0">
+            {lead && (
+              <div className="mb-5 rounded-2xl border border-blue-100 bg-white p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><CheckSquare className="h-4 w-4 text-blue-600" /> Tarefas e follow-up</h3>
+                  <span className="text-xs text-slate-400">{tasks.filter(t => t.status === 'pendente').length} pendente(s)</span>
+                </div>
+                <div className="grid grid-cols-1 gap-2">
+                  <input value={taskForm.title} onChange={e => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="Ex.: ligar para o cliente" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-400" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="datetime-local" value={taskForm.due_at} onChange={e => setTaskForm({ ...taskForm, due_at: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-400" />
+                    <select value={taskForm.priority} onChange={e => setTaskForm({ ...taskForm, priority: e.target.value as TaskPriority })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-400">
+                      <option value="baixa">Baixa</option>
+                      <option value="media">Média</option>
+                      <option value="alta">Alta</option>
+                      <option value="urgente">Urgente</option>
+                    </select>
+                  </div>
+                  <select value={taskForm.responsible_id} onChange={e => setTaskForm({ ...taskForm, responsible_id: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-400">
+                    <option value="">Responsável do lead</option>
+                    {users.map(user => <option key={user.id} value={user.id}>{user.name}</option>)}
+                  </select>
+                  <textarea value={taskForm.description} onChange={e => setTaskForm({ ...taskForm, description: e.target.value })} placeholder="Descrição opcional" rows={2} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-400" />
+                  <button type="button" onClick={addTask} className="rounded-xl bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700">Criar tarefa</button>
+                </div>
+
+                <div className="mt-4 max-h-44 space-y-2 overflow-y-auto pr-1">
+                  {tasks.map(task => {
+                    const priority = PRIORITY_LABELS[task.priority] || PRIORITY_LABELS.media
+                    const overdueTask = task.status === 'pendente' && isPastDate(task.due_at)
+                    return (
+                      <div key={task.id} className={cn('rounded-xl border bg-slate-50 p-3', overdueTask ? 'border-red-200 bg-red-50/50' : 'border-slate-100')}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className={cn('truncate text-xs font-semibold', task.status === 'concluida' ? 'text-slate-400 line-through' : 'text-slate-800')}>{task.title}</p>
+                            <p className="mt-0.5 text-[10px] text-slate-500">{task.due_at ? dateTimeLabel(task.due_at) : 'Sem prazo'} · {task.responsible_name || 'Sem responsável'}</p>
+                          </div>
+                          <span className={cn('shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold', priority.className)}>{priority.label}</span>
+                        </div>
+                        {task.description && <p className="mt-1 line-clamp-2 text-[11px] text-slate-500">{task.description}</p>}
+                        {task.status === 'pendente' ? (
+                          <div className="mt-2 flex gap-2">
+                            <button type="button" onClick={() => completeTask(task.id)} className="rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100">Concluir</button>
+                            <button type="button" onClick={() => cancelTask(task.id)} className="rounded-lg bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-500 hover:bg-red-50 hover:text-red-600">Cancelar</button>
+                          </div>
+                        ) : <p className="mt-2 text-[10px] font-semibold text-slate-400">{task.status === 'concluida' ? 'Concluída' : 'Cancelada'}</p>}
+                      </div>
+                    )
+                  })}
+                  {!tasks.length && <p className="rounded-xl border border-dashed border-slate-200 p-3 text-center text-xs text-slate-400">Nenhuma tarefa ainda</p>}
+                </div>
+              </div>
+            )}
             <div className="mb-3 flex items-center justify-between">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><History className="h-4 w-4" /> Histórico</h3>
               <span className="text-xs text-slate-400">{history.length} eventos</span>
@@ -603,6 +782,9 @@ function historyActionLabel(item: LeadHistory) {
     stage_changed: 'Mudança de etapa',
     note: 'Observação',
     inactivated: 'Lead inativado',
+    task_created: 'Tarefa criada',
+    task_completed: 'Tarefa concluída',
+    task_canceled: 'Tarefa cancelada',
   }
   return labels[item.action] || item.action
 }
@@ -814,6 +996,7 @@ export default function CRMPage() {
   const [leads, setLeads] = useState<Lead[]>([])
   const [users, setUsers] = useState<CrmUser[]>([])
   const [lossReasons, setLossReasons] = useState<LossReason[]>([])
+  const [summary, setSummary] = useState<CrmSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
@@ -833,16 +1016,18 @@ export default function CRMPage() {
     setLoading(true)
     setError('')
     try {
-      const [stageRes, leadRes, userRes, reasonRes] = await Promise.all([
+      const [stageRes, leadRes, userRes, reasonRes, summaryRes] = await Promise.all([
         apiClient.get<ApiResponse<FunnelStage[]>>('/crm/stages'),
         apiClient.get<ApiResponse<Lead[]>>('/crm/leads'),
         apiClient.get<ApiResponse<CrmUser[]>>('/crm/users'),
         apiClient.get<ApiResponse<LossReason[]>>('/crm/loss-reasons'),
+        apiClient.get<ApiResponse<CrmSummary>>('/crm/summary'),
       ])
       setStages(stageRes.data.data || [])
       setLeads(leadRes.data.data || [])
       setUsers(userRes.data.data || [])
       setLossReasons(reasonRes.data.data || [])
+      setSummary(summaryRes.data.data || null)
     } catch (err) {
       setError(getErrorMessage(err))
     } finally {
@@ -885,6 +1070,8 @@ export default function CRMPage() {
     const stage = stages.find(s => s.id === lead.stage_id)
     return Boolean(stage?.max_days && stage.max_days > 0 && Number(lead.days_in_stage || 0) > stage.max_days)
   }).length
+
+  const priorityTasks = summary?.tasks || []
 
   function openNewLead(stageId?: string) {
     setNewLeadStageId(stageId || '')
@@ -1000,7 +1187,7 @@ export default function CRMPage() {
       <div className="rounded-2xl border border-red-100 bg-red-50 p-6 text-sm text-red-700">
         <p className="font-semibold">Não foi possível carregar o CRM.</p>
         <p className="mt-1">{error}</p>
-        <p className="mt-3 text-xs">Confira se a migration <strong>migrate_crm_fase1.js</strong> foi executada no backend.</p>
+        <p className="mt-3 text-xs">Confira se as migrations <strong>migrate_crm_fase1.js</strong> e <strong>migrate_crm_fase2.js</strong> foram executadas no backend.</p>
         <button onClick={loadAll} className="mt-4 rounded-xl bg-red-600 px-3 py-2 text-xs font-medium text-white">Tentar novamente</button>
       </div>
     )
@@ -1011,7 +1198,7 @@ export default function CRMPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">CRM & Funil de Vendas</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Funil configurável, histórico de leads e controle de perda.</p>
+          <p className="mt-0.5 text-sm text-slate-500">Funil configurável, tarefas, follow-up e controle de SLA comercial.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => setConfigOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings className="h-4 w-4" /> Configurar funil</button>
@@ -1036,12 +1223,54 @@ export default function CRMPage() {
       </div>
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/70 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-slate-900">Base pronta para campanhas com SES e SNS</p>
-            <p className="mt-0.5 text-xs text-slate-500">Fase 1 estruturou origem/campanha no lead. A próxima etapa pode disparar e-mail via SES, SMS via SNS e registrar tudo no histórico.</p>
+            <p className="text-sm font-semibold text-slate-900">Gestão comercial — tarefas e SLA</p>
+            <p className="mt-0.5 text-xs text-slate-500">Priorize retornos, tarefas atrasadas, leads parados e etapas fora do prazo.</p>
           </div>
-          <a href="/configuracoes" className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700">Ver credenciais</a>
+          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-blue-700">Versão 0.0.3</span>
+        </div>
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+          {[
+            { label: 'Tarefas hoje', value: summary?.tasks_today || 0, icon: ClipboardList, className: 'text-blue-700' },
+            { label: 'Tarefas atrasadas', value: summary?.tasks_overdue || 0, icon: AlertTriangle, className: 'text-red-600' },
+            { label: 'Próx. 48h', value: summary?.tasks_due_soon || 0, icon: Clock, className: 'text-amber-600' },
+            { label: 'Sem contato 7d', value: summary?.leads_without_contact || 0, icon: Phone, className: 'text-slate-700' },
+            { label: 'SLA vencido', value: summary?.sla_overdue || overdue, icon: Bell, className: 'text-red-700' },
+          ].map(item => (
+            <div key={item.label} className="rounded-xl border border-white/70 bg-white p-3 shadow-sm">
+              <div className="flex items-center justify-between gap-2"><p className="text-xs text-slate-500">{item.label}</p><item.icon className={cn('h-4 w-4', item.className)} /></div>
+              <p className={cn('mt-1 text-xl font-bold', item.className)}>{item.value}</p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 overflow-hidden rounded-xl border border-blue-100 bg-white">
+          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+            <p className="text-sm font-semibold text-slate-900">Prioridades de atendimento</p>
+            <span className="text-xs text-slate-400">{priorityTasks.length} tarefa(s)</span>
+          </div>
+          <div className="max-h-64 overflow-y-auto divide-y divide-slate-50">
+            {priorityTasks.map(task => {
+              const priority = PRIORITY_LABELS[task.priority] || PRIORITY_LABELS.media
+              const overdueTask = task.status === 'pendente' && isPastDate(task.due_at)
+              return (
+                <button key={task.id} onClick={() => {
+                  const lead = leads.find(l => l.id === task.lead_id)
+                  if (lead) { setEditingLead(lead); setLeadModalOpen(true) }
+                }} className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-slate-900">{task.title}</p>
+                    <p className="truncate text-xs text-slate-500">{task.lead_name || 'Lead'} · {task.responsible_name || 'Sem responsável'} · {task.due_at ? dateTimeLabel(task.due_at) : 'Sem prazo'}</p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {overdueTask && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700">Atrasada</span>}
+                    <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold', priority.className)}>{priority.label}</span>
+                  </div>
+                </button>
+              )
+            })}
+            {!priorityTasks.length && <p className="px-4 py-8 text-center text-sm text-slate-400">Nenhuma tarefa pendente no momento.</p>}
+          </div>
         </div>
       </div>
 
@@ -1136,7 +1365,7 @@ export default function CRMPage() {
         </div>
       )}
 
-      <LeadModal open={leadModalOpen} lead={editingLead} initialStageId={newLeadStageId} stages={activeStages} users={users} lossReasons={lossReasons} onClose={() => { setLeadModalOpen(false); setEditingLead(null); setNewLeadStageId('') }} onSave={saveLead} onDelete={deleteLead} />
+      <LeadModal open={leadModalOpen} lead={editingLead} initialStageId={newLeadStageId} stages={activeStages} users={users} lossReasons={lossReasons} onClose={() => { setLeadModalOpen(false); setEditingLead(null); setNewLeadStageId('') }} onSave={saveLead} onDelete={deleteLead} onRefresh={loadAll} />
       <ConfigModal open={configOpen} stages={stages} lossReasons={lossReasons} onClose={() => setConfigOpen(false)} onSaveStage={saveStage} onInactivateStage={inactivateStage} onSaveReason={saveReason} onInactivateReason={inactivateReason} />
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onImport={importLeads} />
     </div>
