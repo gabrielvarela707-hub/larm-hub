@@ -31,6 +31,7 @@ const EMPRESA_COLOR: Record<string, string> = {
 
 interface Venda {
   id: number; ano: number; num_contrato: number | null
+  obra_id: number | null; obra: string
   data_venda: string; empresa: string; unidade: string
   cliente_codigo: string; cliente_nome: string
   valor_prazo: number; valor_vista: number; entrada: number
@@ -45,6 +46,8 @@ interface Summary {
 }
 
 interface Pagination { page: number; pages: number; total: number; limit: number }
+
+interface ObraFilter { codigo: number; nome: string; empresa?: string }
 
 interface Resumo {
   por_ano: Array<{ ano: number; contratos: number; total_prazo: number; total_vista: number; total_entrada: number; area_total: number; preco_m2_medio: number }>
@@ -102,24 +105,35 @@ export default function MapaVendasPage() {
   const [pag, setPag]       = useState<Pagination>({ page: 1, pages: 1, total: 0, limit: LIMIT })
   const [resumo, setResumo] = useState<Resumo | null>(null)
   const [anos, setAnos]     = useState<Array<{ ano: number; contratos: number }>>([])
+  const [obras, setObras]   = useState<ObraFilter[]>([])
   const [loading, setLoading] = useState(false)
 
   // Filtros
   const [fAno,     setFAno]     = useState<number | null>(null)
   const [fEmpresa, setFEmpresa] = useState('')
+  const [fObra,    setFObra]    = useState('')
   const [busca,    setBusca]    = useState('')
   const [page,     setPage]     = useState(1)
 
-  // Carrega anos disponíveis
+  // Carrega filtros e resumo
   useEffect(() => {
-    apiClient.get('/mapa-vendas/anos')
+    apiClient.get('/relatorios-tools/filtros')
+      .then(r => setObras(r.data.data?.obras ?? []))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    const params: Record<string, unknown> = {}
+    if (fObra) params.obra = fObra
+
+    apiClient.get('/mapa-vendas/anos', { params })
       .then(r => setAnos(r.data.data))
       .catch(() => {})
 
-    apiClient.get('/mapa-vendas/resumo')
+    apiClient.get('/mapa-vendas/resumo', { params })
       .then(r => setResumo(r.data.data))
       .catch(() => {})
-  }, [])
+  }, [fObra])
 
   const loadVendas = useCallback(async (pg = 1) => {
     setLoading(true)
@@ -127,6 +141,7 @@ export default function MapaVendasPage() {
       const params: Record<string, unknown> = { page: pg, limit: LIMIT }
       if (fAno)     params.ano     = fAno
       if (fEmpresa) params.empresa = fEmpresa
+      if (fObra)    params.obra    = fObra
       if (busca)    params.busca   = busca
 
       const r = await apiClient.get('/mapa-vendas', { params })
@@ -136,13 +151,14 @@ export default function MapaVendasPage() {
       setPage(pg)
     } catch {}
     finally { setLoading(false) }
-  }, [fAno, fEmpresa, busca])
+  }, [fAno, fEmpresa, fObra, busca])
 
   useEffect(() => {
     if (tab === 'tabela') loadVendas(1)
-  }, [fAno, fEmpresa, tab])
+  }, [fAno, fEmpresa, fObra, tab])
 
   const empresas = resumo?.por_empresa.map(e => e.empresa) ?? []
+  const obraAtual = obras.find(o => String(o.codigo) === String(fObra))
 
   return (
     <div className="space-y-4">
@@ -151,7 +167,7 @@ export default function MapaVendasPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-800">Mapa de Vendas</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Loteamento Residencial Santa Clara · {resumo?.total?.total_contratos ?? 0} contratos
+            {obraAtual ? `${obraAtual.codigo} - ${obraAtual.nome}` : 'Todos os projetos'} · {resumo?.total?.total_contratos ?? 0} contratos
           </p>
         </div>
         <div className="flex gap-2 items-center">
@@ -167,6 +183,17 @@ export default function MapaVendasPage() {
 
       {/* Filtros globais */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4 py-3 flex flex-wrap gap-3 items-center">
+        <select
+          value={fObra}
+          onChange={e => { setFObra(e.target.value); setFAno(null); setPage(1) }}
+          className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700 min-w-[260px]"
+        >
+          <option value="">Todos os projetos</option>
+          {obras.map(o => (
+            <option key={o.codigo} value={o.codigo}>{o.codigo} - {o.nome}</option>
+          ))}
+        </select>
+
         {/* Ano */}
         <div className="flex gap-1">
           <button onClick={() => setFAno(null)}
@@ -339,7 +366,7 @@ export default function MapaVendasPage() {
                 </div>
                 <table className="w-full text-xs">
                   <thead><tr className="border-b border-slate-100 bg-slate-50">
-                    {['Data','Empresa','Unidade','Cliente','Valor a Prazo','Entrada','Parcelas'].map(h => (
+                    {['Data','Projeto','Empresa','Unidade','Cliente','Valor a Prazo','Entrada','Parcelas'].map(h => (
                       <th key={h} className="text-left px-4 py-2 font-semibold text-slate-500">{h}</th>
                     ))}
                   </tr></thead>
@@ -347,6 +374,7 @@ export default function MapaVendasPage() {
                     {resumo.recentes.map(v => (
                       <tr key={v.id} className="border-b border-slate-50 hover:bg-slate-50">
                         <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmtDate(v.data_venda)}</td>
+                        <td className="px-4 py-2.5 text-slate-600">{v.obra_id ? `${v.obra_id} - ${v.obra}` : v.obra}</td>
                         <td className="px-4 py-2.5">
                           <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', EMPRESA_COLOR[v.empresa] ?? 'bg-slate-100 text-slate-600')}>
                             {v.empresa}
@@ -408,20 +436,21 @@ export default function MapaVendasPage() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-[#0d1b2a] text-white">
-                    {['#','Data','Empresa','Unidade','Cliente','Valor Prazo','Valor Vista','Entrada','Parcelas','Área m²','R$/m²','Comissão'].map(h => (
+                    {['#','Data','Projeto','Empresa','Unidade','Cliente','Valor Prazo','Valor Vista','Entrada','Parcelas','Área m²','R$/m²','Comissão'].map(h => (
                       <th key={h} className="text-left px-3 py-2.5 font-semibold whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {loading && <Skel cols={12} />}
+                  {loading && <Skel cols={13} />}
                   {!loading && vendas.length === 0 && (
-                    <tr><td colSpan={12} className="text-center py-12 text-slate-400 text-sm">Nenhuma venda encontrada</td></tr>
+                    <tr><td colSpan={13} className="text-center py-12 text-slate-400 text-sm">Nenhuma venda encontrada</td></tr>
                   )}
                   {!loading && vendas.map(v => (
                     <tr key={v.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                       <td className="px-3 py-2.5 text-slate-400 tabular-nums">{v.num_contrato ?? v.id}</td>
                       <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{fmtDate(v.data_venda)}</td>
+                      <td className="px-3 py-2.5 text-slate-600">{v.obra_id ? `${v.obra_id} - ${v.obra}` : v.obra}</td>
                       <td className="px-3 py-2.5">
                         <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', EMPRESA_COLOR[v.empresa] ?? 'bg-slate-100 text-slate-600')}>
                           {v.empresa}

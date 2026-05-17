@@ -73,6 +73,9 @@ const NAV: NavItem[] = [
     label: 'Relatorios', href: '/relatorios', icon: BarChart3, moduleIds: ['relatorios'],
     children: [
       { label: 'Mapa de Vendas', href: '/relatorios/mapa-vendas', moduleIds: ['relatorios_mapa_vendas'] },
+      { label: 'Projetos / Obras', href: '/relatorios/projetos-obras', moduleIds: ['relatorios_projetos_obras'] },
+      { label: 'Unidades do Estoque', href: '/relatorios/unidades-estoque', moduleIds: ['relatorios_unidades_estoque'] },
+      { label: 'Implantacao / Plantas', href: '/relatorios/implantacao', moduleIds: ['relatorios_implantacao'] },
     ],
   },
   { label: 'Controladoria', href: '/controladoria', icon: Receipt, moduleIds: ['controladoria'] },
