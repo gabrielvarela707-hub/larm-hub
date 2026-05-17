@@ -2,10 +2,12 @@
 
 import type { ReactNode } from 'react'
 import { Lock } from 'lucide-react'
-import { canRead, canWrite, MOCK_CURRENT_USER, type ModuleId } from '@/lib/permissions'
+import type { ModuleId } from '@/lib/permissions'
+import { useAuthStore } from '@/lib/auth-store'
+import { hasModuleAccess } from '@/lib/module-access'
 
 interface PermissionGateProps {
-  moduleId: ModuleId
+  moduleId: ModuleId | string
   require?: 'read' | 'write'
   fallback?: ReactNode
   children: ReactNode
@@ -17,8 +19,8 @@ export default function PermissionGate({
   fallback,
   children,
 }: PermissionGateProps) {
-  const user = MOCK_CURRENT_USER // swap for useAuth() hook when real auth exists
-  const allowed = require === 'write' ? canWrite(user, moduleId) : canRead(user, moduleId)
+  const user = useAuthStore(s => s.user)
+  const allowed = hasModuleAccess(user, moduleId, require)
 
   if (allowed) return <>{children}</>
 
@@ -41,13 +43,15 @@ export default function PermissionGate({
 }
 
 // Inline read/write badge for UI hints
-export function PermBadge({ moduleId }: { moduleId: ModuleId }) {
-  const user = MOCK_CURRENT_USER
-  const level = canWrite(user, moduleId) ? 'Leitura e gravacao'
-               : canRead(user, moduleId)  ? 'Somente leitura'
+export function PermBadge({ moduleId }: { moduleId: ModuleId | string }) {
+  const user = useAuthStore(s => s.user)
+  const canWrite = hasModuleAccess(user, moduleId, 'write')
+  const canRead = hasModuleAccess(user, moduleId, 'read')
+  const level = canWrite ? 'Leitura e gravacao'
+               : canRead ? 'Somente leitura'
                : 'Sem acesso'
-  const color = canWrite(user, moduleId) ? 'bg-emerald-100 text-emerald-700'
-               : canRead(user, moduleId)  ? 'bg-blue-100 text-blue-700'
+  const color = canWrite ? 'bg-emerald-100 text-emerald-700'
+               : canRead ? 'bg-blue-100 text-blue-700'
                : 'bg-red-100 text-red-700'
   return (
     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${color}`}>
