@@ -18,11 +18,14 @@ import {
   Flame,
   History,
   Loader2,
+  Mail,
+  MessageSquare,
   MoreHorizontal,
   Phone,
   Plus,
   RefreshCw,
   Search,
+  Send,
   Settings,
   Target,
   Trash2,
@@ -179,6 +182,68 @@ type CrmAnalytics = {
   by_campaign: AnalyticsMetric[]
   loss_reasons: AnalyticsMetric[]
   score_buckets: AnalyticsMetric[]
+}
+
+
+type CampaignChannel = 'email' | 'sms'
+type CampaignStatus = 'draft' | 'scheduled' | 'sending' | 'sent' | 'cancelled' | 'failed'
+
+type MessageTemplate = {
+  id: string
+  name: string
+  channel: CampaignChannel
+  subject?: string | null
+  body: string
+  is_active: boolean
+}
+
+type Campaign = {
+  id: string
+  name: string
+  channel: CampaignChannel
+  status: CampaignStatus
+  template_id?: string | null
+  template_name?: string | null
+  subject?: string | null
+  body: string
+  target_filter?: Record<string, string | number | null>
+  total_recipients: number
+  sent_count: number
+  failed_count: number
+  skipped_count: number
+  pending_count?: number
+  created_at: string
+  completed_at?: string | null
+}
+
+type CampaignForm = {
+  name: string
+  channel: CampaignChannel
+  template_id: string
+  subject: string
+  body: string
+  stage_id: string
+  responsible_id: string
+  source: string
+  temperature: string
+  min_score: string
+  campaign: string
+  q: string
+}
+
+const EMPTY_CAMPAIGN_FORM: CampaignForm = {
+  name: '',
+  channel: 'email',
+  template_id: '',
+  subject: '',
+  body: '',
+  stage_id: '',
+  responsible_id: '',
+  source: '',
+  temperature: '',
+  min_score: '',
+  campaign: '',
+  q: '',
 }
 
 type AnalyticsColumn = {
@@ -1150,6 +1215,282 @@ function AnalyticsPanel({ analytics, onRecalculate, recalculating }: {
   )
 }
 
+function CampaignsPanel({
+  campaigns,
+  templates,
+  stages,
+  users,
+  onRefresh,
+}: {
+  campaigns: Campaign[]
+  templates: MessageTemplate[]
+  stages: FunnelStage[]
+  users: CrmUser[]
+  onRefresh: () => Promise<void>
+}) {
+  const [form, setForm] = useState<CampaignForm>(EMPTY_CAMPAIGN_FORM)
+  const [templateForm, setTemplateForm] = useState({ name: '', channel: 'email' as CampaignChannel, subject: '', body: '' })
+  const [sendingId, setSendingId] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const filteredTemplates = templates.filter(t => t.channel === form.channel && t.is_active)
+  const statusLabels: Record<CampaignStatus, { label: string; className: string }> = {
+    draft: { label: 'Rascunho', className: 'bg-slate-50 text-slate-600 border-slate-100' },
+    scheduled: { label: 'Agendada', className: 'bg-blue-50 text-blue-700 border-blue-100' },
+    sending: { label: 'Enviando', className: 'bg-amber-50 text-amber-700 border-amber-100' },
+    sent: { label: 'Enviada', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+    cancelled: { label: 'Cancelada', className: 'bg-slate-50 text-slate-500 border-slate-100' },
+    failed: { label: 'Falhou', className: 'bg-red-50 text-red-700 border-red-100' },
+  }
+
+  function applyTemplate(templateId: string) {
+    const template = templates.find(t => t.id === templateId)
+    setForm(prev => ({
+      ...prev,
+      template_id: templateId,
+      subject: template?.subject || prev.subject,
+      body: template?.body || prev.body,
+    }))
+  }
+
+  async function createTemplate(e: FormEvent) {
+    e.preventDefault()
+    if (!templateForm.name.trim() || !templateForm.body.trim()) return alert('Informe nome e conteúdo do template')
+    setSaving(true)
+    try {
+      await apiClient.post('/crm/templates', {
+        name: templateForm.name.trim(),
+        channel: templateForm.channel,
+        subject: templateForm.channel === 'email' ? templateForm.subject.trim() : null,
+        body: templateForm.body.trim(),
+        is_active: true,
+      })
+      setTemplateForm({ name: '', channel: 'email', subject: '', body: '' })
+      await onRefresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function createCampaign(e: FormEvent) {
+    e.preventDefault()
+    if (!form.name.trim() || !form.body.trim()) return alert('Informe nome e mensagem da campanha')
+    if (form.channel === 'email' && !form.subject.trim()) return alert('Informe o assunto do e-mail')
+    setSaving(true)
+    try {
+      await apiClient.post('/crm/campaigns', {
+        name: form.name.trim(),
+        channel: form.channel,
+        template_id: form.template_id || null,
+        subject: form.channel === 'email' ? form.subject.trim() : null,
+        body: form.body.trim(),
+        target_filter: {
+          stage_id: form.stage_id || null,
+          responsible_id: form.responsible_id || null,
+          source: form.source || null,
+          temperature: form.temperature || null,
+          min_score: form.min_score ? Number(form.min_score) : null,
+          campaign: form.campaign || null,
+          q: form.q || null,
+        },
+      })
+      setForm(EMPTY_CAMPAIGN_FORM)
+      await onRefresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function prepareCampaign(id: string) {
+    setSendingId(id)
+    try {
+      await apiClient.post(`/crm/campaigns/${id}/prepare`)
+      await onRefresh()
+    } finally {
+      setSendingId('')
+    }
+  }
+
+  async function sendCampaign(id: string) {
+    if (!confirm('Enviar esta campanha agora?')) return
+    setSendingId(id)
+    try {
+      await apiClient.post(`/crm/campaigns/${id}/send`, { limit: 300 })
+      await onRefresh()
+    } finally {
+      setSendingId('')
+    }
+  }
+
+  async function cancelCampaign(id: string) {
+    if (!confirm('Cancelar esta campanha?')) return
+    setSendingId(id)
+    try {
+      await apiClient.post(`/crm/campaigns/${id}/cancel`)
+      await onRefresh()
+    } finally {
+      setSendingId('')
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <form onSubmit={createCampaign} className="rounded-2xl border border-slate-100 bg-white p-5 shadow-card">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900"><Mail className="h-4 w-4 text-blue-600" /> Nova campanha</h2>
+              <p className="mt-1 text-xs text-slate-500">Segmente leads do funil e envie por AWS SES ou AWS SNS.</p>
+            </div>
+            <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700">Fase 4</span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <label className="space-y-1.5 md:col-span-2">
+              <span className="text-xs font-medium text-slate-600">Nome da campanha *</span>
+              <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Ex.: Follow-up leads quentes maio" />
+            </label>
+            <label className="space-y-1.5">
+              <span className="text-xs font-medium text-slate-600">Canal</span>
+              <select value={form.channel} onChange={e => setForm({ ...form, channel: e.target.value as CampaignChannel, template_id: '', subject: '', body: '' })} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400">
+                <option value="email">E-mail / SES</option>
+                <option value="sms">SMS / SNS</option>
+              </select>
+            </label>
+            <label className="space-y-1.5">
+              <span className="text-xs font-medium text-slate-600">Template</span>
+              <select value={form.template_id} onChange={e => applyTemplate(e.target.value)} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400">
+                <option value="">Sem template</option>
+                {filteredTemplates.map(template => <option key={template.id} value={template.id}>{template.name}</option>)}
+              </select>
+            </label>
+            {form.channel === 'email' && (
+              <label className="space-y-1.5 md:col-span-2">
+                <span className="text-xs font-medium text-slate-600">Assunto *</span>
+                <input value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Olá, {{nome}}" />
+              </label>
+            )}
+            <label className="space-y-1.5 md:col-span-2">
+              <span className="text-xs font-medium text-slate-600">Mensagem *</span>
+              <textarea value={form.body} onChange={e => setForm({ ...form, body: e.target.value })} rows={5} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Use variáveis: {{nome}}, {{empreendimento}}, {{telefone}}, {{campanha}}, {{responsavel}}" />
+            </label>
+          </div>
+
+          <div className="mt-5 rounded-xl border border-slate-100 bg-slate-50/70 p-4">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Segmentação</p>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <select value={form.stage_id} onChange={e => setForm({ ...form, stage_id: e.target.value })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none">
+                <option value="">Todas etapas</option>
+                {stages.filter(s => s.is_active).map(stage => <option key={stage.id} value={stage.id}>{stage.name}</option>)}
+              </select>
+              <select value={form.responsible_id} onChange={e => setForm({ ...form, responsible_id: e.target.value })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none">
+                <option value="">Todos responsáveis</option>
+                {users.map(user => <option key={user.id} value={user.id}>{user.name}</option>)}
+              </select>
+              <select value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none">
+                <option value="">Todas origens</option>
+                {SOURCE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <select value={form.temperature} onChange={e => setForm({ ...form, temperature: e.target.value })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none">
+                <option value="">Todas temperaturas</option>
+                <option value="frio">Frio</option>
+                <option value="morno">Morno</option>
+                <option value="quente">Quente</option>
+              </select>
+              <input type="number" min="0" max="100" value={form.min_score} onChange={e => setForm({ ...form, min_score: e.target.value })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none" placeholder="Score mínimo" />
+              <input value={form.campaign} onChange={e => setForm({ ...form, campaign: e.target.value })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none" placeholder="Campanha do lead" />
+              <input value={form.q} onChange={e => setForm({ ...form, q: e.target.value })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none md:col-span-3" placeholder="Busca livre por nome, telefone, e-mail, empreendimento ou observação" />
+            </div>
+          </div>
+
+          <div className="mt-5 flex justify-end">
+            <button disabled={saving} className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"><Plus className="h-4 w-4" /> Criar e preparar campanha</button>
+          </div>
+        </form>
+
+        <form onSubmit={createTemplate} className="rounded-2xl border border-slate-100 bg-white p-5 shadow-card">
+          <div className="mb-4">
+            <h2 className="flex items-center gap-2 text-base font-semibold text-slate-900"><MessageSquare className="h-4 w-4 text-emerald-600" /> Templates</h2>
+            <p className="mt-1 text-xs text-slate-500">Modelos reutilizáveis com variáveis dinâmicas.</p>
+          </div>
+          <div className="space-y-3">
+            <input value={templateForm.name} onChange={e => setTemplateForm({ ...templateForm, name: e.target.value })} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Nome do template" />
+            <select value={templateForm.channel} onChange={e => setTemplateForm({ ...templateForm, channel: e.target.value as CampaignChannel, subject: '' })} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400">
+              <option value="email">E-mail</option>
+              <option value="sms">SMS</option>
+            </select>
+            {templateForm.channel === 'email' && <input value={templateForm.subject} onChange={e => setTemplateForm({ ...templateForm, subject: e.target.value })} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Assunto" />}
+            <textarea value={templateForm.body} onChange={e => setTemplateForm({ ...templateForm, body: e.target.value })} rows={4} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" placeholder="Mensagem do template" />
+            <button disabled={saving} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">Salvar template</button>
+          </div>
+          <div className="mt-5 max-h-64 overflow-y-auto divide-y divide-slate-50 rounded-xl border border-slate-100">
+            {templates.map(template => (
+              <div key={template.id} className="p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-slate-900">{template.name}</p>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{template.channel === 'email' ? 'E-mail' : 'SMS'}</span>
+                </div>
+                <p className="mt-1 line-clamp-2 text-xs text-slate-500">{template.subject ? `${template.subject} · ` : ''}{template.body}</p>
+              </div>
+            ))}
+            {!templates.length && <p className="p-5 text-center text-sm text-slate-400">Nenhum template cadastrado.</p>}
+          </div>
+        </form>
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-card">
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Campanhas</h2>
+            <p className="text-xs text-slate-500">Preparação, disparo e resultado de envios.</p>
+          </div>
+          <span className="text-xs text-slate-400">{campaigns.length} campanha(s)</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50/70">
+              <tr className="border-b border-slate-100">
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Campanha</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Canal</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Status</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600">Dest.</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600">Enviados</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-slate-600">Falhas</th>
+                <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {campaigns.map(campaign => {
+                const status = statusLabels[campaign.status] || statusLabels.draft
+                const busy = sendingId === campaign.id
+                return (
+                  <tr key={campaign.id} className="hover:bg-slate-50/50">
+                    <td className="px-4 py-3"><p className="font-semibold text-slate-900">{campaign.name}</p><p className="text-xs text-slate-500">{campaign.template_name || campaign.subject || dateTimeLabel(campaign.created_at)}</p></td>
+                    <td className="px-4 py-3 text-xs text-slate-600">{campaign.channel === 'email' ? 'E-mail / SES' : 'SMS / SNS'}</td>
+                    <td className="px-4 py-3"><span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold', status.className)}>{status.label}</span></td>
+                    <td className="px-4 py-3 text-right text-xs font-semibold text-slate-700">{campaign.total_recipients || 0}</td>
+                    <td className="px-4 py-3 text-right text-xs font-semibold text-emerald-700">{campaign.sent_count || 0}</td>
+                    <td className="px-4 py-3 text-right text-xs font-semibold text-red-700">{campaign.failed_count || 0}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-center gap-1.5">
+                        <button disabled={busy || campaign.status === 'sent' || campaign.status === 'cancelled'} onClick={() => prepareCampaign(campaign.id)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50">Preparar</button>
+                        <button disabled={busy || campaign.status === 'sent' || campaign.status === 'cancelled'} onClick={() => sendCampaign(campaign.id)} className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">{busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />} Enviar</button>
+                        <button disabled={busy || campaign.status === 'sent' || campaign.status === 'cancelled'} onClick={() => cancelCampaign(campaign.id)} className="rounded-lg px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50">Cancelar</button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          {!campaigns.length && <div className="py-12 text-center text-sm text-slate-400">Nenhuma campanha criada ainda.</div>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 function ImportModal({ open, onClose, onImport }: {
   open: boolean
   onClose: () => void
@@ -1228,6 +1569,8 @@ export default function CRMPage() {
   const [lossReasons, setLossReasons] = useState<LossReason[]>([])
   const [summary, setSummary] = useState<CrmSummary | null>(null)
   const [analytics, setAnalytics] = useState<CrmAnalytics | null>(null)
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
@@ -1235,7 +1578,7 @@ export default function CRMPage() {
   const [responsibleFilter, setResponsibleFilter] = useState('all')
   const [temperatureFilter, setTemperatureFilter] = useState<'all' | Temperature>('all')
   const [sourceFilter, setSourceFilter] = useState('all')
-  const [view, setView] = useState<'kanban' | 'list' | 'analytics'>('kanban')
+  const [view, setView] = useState<'kanban' | 'list' | 'analytics' | 'campaigns'>('kanban')
   const [dragLeadId, setDragLeadId] = useState<string | null>(null)
   const [leadModalOpen, setLeadModalOpen] = useState(false)
   const [editingLead, setEditingLead] = useState<Lead | null>(null)
@@ -1248,13 +1591,15 @@ export default function CRMPage() {
     setLoading(true)
     setError('')
     try {
-      const [stageRes, leadRes, userRes, reasonRes, summaryRes, analyticsRes] = await Promise.all([
+      const [stageRes, leadRes, userRes, reasonRes, summaryRes, analyticsRes, campaignRes, templateRes] = await Promise.all([
         apiClient.get<ApiResponse<FunnelStage[]>>('/crm/stages'),
         apiClient.get<ApiResponse<Lead[]>>('/crm/leads'),
         apiClient.get<ApiResponse<CrmUser[]>>('/crm/users'),
         apiClient.get<ApiResponse<LossReason[]>>('/crm/loss-reasons'),
         apiClient.get<ApiResponse<CrmSummary>>('/crm/summary'),
         apiClient.get<ApiResponse<CrmAnalytics>>('/crm/analytics'),
+        apiClient.get<ApiResponse<Campaign[]>>('/crm/campaigns'),
+        apiClient.get<ApiResponse<MessageTemplate[]>>('/crm/templates'),
       ])
       setStages(stageRes.data.data || [])
       setLeads(leadRes.data.data || [])
@@ -1262,6 +1607,8 @@ export default function CRMPage() {
       setLossReasons(reasonRes.data.data || [])
       setSummary(summaryRes.data.data || null)
       setAnalytics(analyticsRes.data.data || null)
+      setCampaigns(campaignRes.data.data || [])
+      setTemplates(templateRes.data.data || [])
     } catch (err) {
       setError(getErrorMessage(err))
     } finally {
@@ -1431,7 +1778,7 @@ export default function CRMPage() {
       <div className="rounded-2xl border border-red-100 bg-red-50 p-6 text-sm text-red-700">
         <p className="font-semibold">Não foi possível carregar o CRM.</p>
         <p className="mt-1">{error}</p>
-        <p className="mt-3 text-xs">Confira se as migrations <strong>migrate_crm_fase1.js</strong>, <strong>migrate_crm_fase2.js</strong> e <strong>migrate_crm_fase3.js</strong> foram executadas no backend.</p>
+        <p className="mt-3 text-xs">Confira se as migrations <strong>migrate_crm_fase1.js</strong>, <strong>migrate_crm_fase2.js</strong>, <strong>migrate_crm_fase3.js</strong> e <strong>migrate_crm_fase4.js</strong> foram executadas no backend.</p>
         <button onClick={loadAll} className="mt-4 rounded-xl bg-red-600 px-3 py-2 text-xs font-medium text-white">Tentar novamente</button>
       </div>
     )
@@ -1442,7 +1789,7 @@ export default function CRMPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">CRM & Funil de Vendas</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Funil configurável, tarefas, inteligência comercial, scoring e relatórios de conversão.</p>
+          <p className="mt-0.5 text-sm text-slate-500">Funil configurável, tarefas, inteligência comercial, scoring, campanhas e comunicação SES/SNS.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => setConfigOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings className="h-4 w-4" /> Configurar funil</button>
@@ -1544,11 +1891,14 @@ export default function CRMPage() {
           <button onClick={() => setView('kanban')} className={cn('px-3 py-2 text-xs font-medium', view === 'kanban' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50')}>Kanban</button>
           <button onClick={() => setView('list')} className={cn('px-3 py-2 text-xs font-medium', view === 'list' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50')}>Lista</button>
           <button onClick={() => setView('analytics')} className={cn('px-3 py-2 text-xs font-medium', view === 'analytics' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50')}>Inteligência</button>
+          <button onClick={() => setView('campaigns')} className={cn('px-3 py-2 text-xs font-medium', view === 'campaigns' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50')}>Campanhas</button>
         </div>
       </div>
 
       {view === 'analytics' ? (
         <AnalyticsPanel analytics={analytics} onRecalculate={recalculateScores} recalculating={recalculatingScores} />
+      ) : view === 'campaigns' ? (
+        <CampaignsPanel campaigns={campaigns} templates={templates} stages={activeStages} users={users} onRefresh={loadAll} />
       ) : view === 'kanban' ? (
         <div className="flex gap-3 overflow-x-auto pb-4">
           {activeStages.map(stage => {
