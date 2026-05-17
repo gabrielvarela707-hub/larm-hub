@@ -1,9 +1,11 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import type { ChangeEvent, FormEvent } from 'react'
+import type { ChangeEvent, FormEvent, ReactNode } from 'react'
 import {
   AlertTriangle,
+  Award,
+  BarChart3,
   Bell,
   Calendar,
   CheckCircle,
@@ -19,8 +21,10 @@ import {
   MoreHorizontal,
   Phone,
   Plus,
+  RefreshCw,
   Search,
   Settings,
+  Target,
   Trash2,
   TrendingUp,
   Upload,
@@ -135,6 +139,52 @@ type CrmSummary = {
   leads_without_contact: number
   sla_overdue: number
   tasks: LeadTask[]
+}
+
+type AnalyticsMetric = {
+  source?: string
+  stage_name?: string
+  responsible_name?: string
+  campaign?: string
+  loss_reason_name?: string
+  temperature?: string
+  total?: number
+  total_leads?: number
+  won?: number
+  won_leads?: number
+  lost?: number
+  lost_leads?: number
+  active_pipeline?: number
+  hot_leads?: number
+  warm_leads?: number
+  cold_leads?: number
+  pipeline_value?: number
+  weighted_forecast?: number
+  won_value?: number
+  lost_value?: number
+  total_value?: number
+  avg_score?: number
+  conversion_rate?: number
+  loss_rate?: number
+  sla_overdue?: number
+  overdue_tasks?: number
+  leads_with_overdue_tasks?: number
+}
+
+type CrmAnalytics = {
+  totals: AnalyticsMetric
+  by_stage: AnalyticsMetric[]
+  by_source: AnalyticsMetric[]
+  by_responsible: AnalyticsMetric[]
+  by_campaign: AnalyticsMetric[]
+  loss_reasons: AnalyticsMetric[]
+  score_buckets: AnalyticsMetric[]
+}
+
+type AnalyticsColumn = {
+  label: string
+  className?: string
+  render: (row: AnalyticsMetric) => ReactNode
 }
 
 type TaskForm = {
@@ -268,6 +318,18 @@ function getErrorMessage(err: unknown) {
 
 function money(value?: number) {
   return Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
+function metricNumber(value?: number | string | null) {
+  return Number(value || 0)
+}
+
+function pct(value?: number | string | null) {
+  return `${metricNumber(value).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`
+}
+
+function sourceLabel(value?: string) {
+  return SOURCE_LABELS[value || 'outros'] || value || 'Outros'
 }
 
 
@@ -920,6 +982,174 @@ function ConfigModal({
   )
 }
 
+
+function AnalyticsTable({ title, description, rows, columns, empty = 'Sem dados para este relatório.' }: {
+  title: string
+  description?: string
+  rows: AnalyticsMetric[]
+  columns: AnalyticsColumn[]
+  empty?: string
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-100 bg-white shadow-card">
+      <div className="border-b border-slate-100 px-4 py-3">
+        <p className="text-sm font-semibold text-slate-900">{title}</p>
+        {description && <p className="mt-0.5 text-xs text-slate-500">{description}</p>}
+      </div>
+      {rows.length ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50/70">
+              <tr>
+                {columns.map(column => (
+                  <th key={column.label} className={cn('px-4 py-3 text-left text-xs font-semibold text-slate-600', column.className)}>{column.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {rows.map((row, index) => (
+                <tr key={`${title}-${index}`} className="hover:bg-slate-50/60">
+                  {columns.map(column => (
+                    <td key={column.label} className={cn('px-4 py-3 text-xs text-slate-600', column.className)}>{column.render(row)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="px-4 py-8 text-center text-sm text-slate-400">{empty}</div>
+      )}
+    </div>
+  )
+}
+
+function AnalyticsPanel({ analytics, onRecalculate, recalculating }: {
+  analytics: CrmAnalytics | null
+  onRecalculate: () => Promise<void>
+  recalculating: boolean
+}) {
+  const totals = analytics?.totals || {}
+  const scoreRows = analytics?.score_buckets || []
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-indigo-100 bg-indigo-50/70 p-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Inteligência comercial — Fase 3</p>
+            <p className="mt-0.5 text-xs text-slate-500">Scoring, previsão de fechamento, conversão por origem, ranking de responsáveis e campanhas.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onRecalculate}
+            disabled={recalculating}
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-60"
+          >
+            {recalculating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            Recalcular scores
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-6">
+          {[
+            { label: 'Previsão ponderada', value: money(metricNumber(totals.weighted_forecast)), icon: Target, className: 'text-indigo-700' },
+            { label: 'Pipeline aberto', value: money(metricNumber(totals.pipeline_value)), icon: TrendingUp, className: 'text-blue-700' },
+            { label: 'Receita vendida', value: money(metricNumber(totals.won_value)), icon: Award, className: 'text-emerald-700' },
+            { label: 'Conversão geral', value: pct(totals.conversion_rate), icon: BarChart3, className: 'text-orange-600' },
+            { label: 'Score médio', value: metricNumber(totals.avg_score).toLocaleString('pt-BR', { maximumFractionDigits: 1 }), icon: Flame, className: 'text-red-600' },
+            { label: 'Leads quentes', value: metricNumber(totals.hot_leads), icon: Users, className: 'text-slate-900' },
+          ].map(card => (
+            <div key={card.label} className="rounded-xl border border-white/80 bg-white p-3 shadow-sm">
+              <div className="flex items-center justify-between gap-2"><p className="text-xs text-slate-500">{card.label}</p><card.icon className={cn('h-4 w-4', card.className)} /></div>
+              <p className={cn('mt-1 text-lg font-bold', card.className)}>{card.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        {scoreRows.map(row => {
+          const tempKey = (row.temperature || 'morno') as Temperature
+          const temp = TEMP_LABELS[tempKey] || TEMP_LABELS.morno
+          return (
+            <div key={tempKey} className="rounded-xl border border-slate-100 bg-white p-4 shadow-card">
+              <div className="flex items-center justify-between gap-2">
+                <span className={cn('rounded-full border px-2 py-0.5 text-xs font-semibold', temp.className)}>{temp.label}</span>
+                <span className="text-xs font-semibold text-slate-400">Score médio {metricNumber(row.avg_score).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</span>
+              </div>
+              <p className="mt-3 text-2xl font-bold text-slate-900">{metricNumber(row.total)} lead(s)</p>
+              <p className="mt-1 text-xs text-slate-500">Pipeline: <strong>{money(metricNumber(row.pipeline_value))}</strong> · Previsão: <strong>{money(metricNumber(row.weighted_forecast))}</strong></p>
+            </div>
+          )
+        })}
+        {!scoreRows.length && <div className="rounded-xl border border-slate-100 bg-white p-6 text-sm text-slate-400 shadow-card">Sem dados de scoring ainda.</div>}
+      </div>
+
+      <div className="grid gap-4 2xl:grid-cols-2">
+        <AnalyticsTable
+          title="Conversão por origem"
+          description="Mostra de onde vem volume, venda, pipeline e previsão ponderada."
+          rows={analytics?.by_source || []}
+          columns={[
+            { label: 'Origem', render: row => <span className="font-semibold text-slate-900">{sourceLabel(row.source)}</span> },
+            { label: 'Leads', className: 'text-right', render: row => metricNumber(row.total) },
+            { label: 'Vendidos', className: 'text-right', render: row => metricNumber(row.won) },
+            { label: 'Conversão', className: 'text-right', render: row => pct(row.conversion_rate) },
+            { label: 'Previsão', className: 'text-right', render: row => money(metricNumber(row.weighted_forecast)) },
+          ]}
+        />
+        <AnalyticsTable
+          title="Ranking por responsável"
+          description="Ranking comercial com conversão, pipeline, previsão e tarefas atrasadas."
+          rows={analytics?.by_responsible || []}
+          columns={[
+            { label: 'Responsável', render: row => <span className="font-semibold text-slate-900">{row.responsible_name || 'Sem responsável'}</span> },
+            { label: 'Leads', className: 'text-right', render: row => metricNumber(row.total) },
+            { label: 'Vendidos', className: 'text-right', render: row => metricNumber(row.won) },
+            { label: 'Conversão', className: 'text-right', render: row => pct(row.conversion_rate) },
+            { label: 'Atrasos', className: 'text-right', render: row => metricNumber(row.overdue_tasks) },
+          ]}
+        />
+        <AnalyticsTable
+          title="Conversão por etapa"
+          description="Identifica gargalos, SLA vencido e valor parado no funil."
+          rows={analytics?.by_stage || []}
+          columns={[
+            { label: 'Etapa', render: row => <span className="font-semibold text-slate-900">{row.stage_name || 'Sem etapa'}</span> },
+            { label: 'Leads', className: 'text-right', render: row => metricNumber(row.total) },
+            { label: 'SLA vencido', className: 'text-right', render: row => metricNumber(row.sla_overdue) },
+            { label: 'Score médio', className: 'text-right', render: row => metricNumber(row.avg_score).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) },
+            { label: 'Pipeline', className: 'text-right', render: row => money(metricNumber(row.pipeline_value)) },
+          ]}
+        />
+        <AnalyticsTable
+          title="Campanhas"
+          description="Base para a próxima fase de campanhas com SES/SNS."
+          rows={analytics?.by_campaign || []}
+          columns={[
+            { label: 'Campanha', render: row => <span className="font-semibold text-slate-900">{row.campaign || 'Sem campanha'}</span> },
+            { label: 'Leads', className: 'text-right', render: row => metricNumber(row.total) },
+            { label: 'Conversão', className: 'text-right', render: row => pct(row.conversion_rate) },
+            { label: 'Score', className: 'text-right', render: row => metricNumber(row.avg_score).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) },
+            { label: 'Previsão', className: 'text-right', render: row => money(metricNumber(row.weighted_forecast)) },
+          ]}
+        />
+      </div>
+
+      <AnalyticsTable
+        title="Motivos de perda"
+        description="Ajuda a ajustar preço, abordagem, crédito, documentação e comunicação comercial."
+        rows={analytics?.loss_reasons || []}
+        columns={[
+          { label: 'Motivo', render: row => <span className="font-semibold text-slate-900">{row.loss_reason_name || 'Sem motivo'}</span> },
+          { label: 'Ocorrências', className: 'text-right', render: row => metricNumber(row.total) },
+          { label: 'Valor perdido', className: 'text-right', render: row => money(metricNumber(row.lost_value)) },
+        ]}
+      />
+    </div>
+  )
+}
+
 function ImportModal({ open, onClose, onImport }: {
   open: boolean
   onClose: () => void
@@ -997,6 +1227,7 @@ export default function CRMPage() {
   const [users, setUsers] = useState<CrmUser[]>([])
   const [lossReasons, setLossReasons] = useState<LossReason[]>([])
   const [summary, setSummary] = useState<CrmSummary | null>(null)
+  const [analytics, setAnalytics] = useState<CrmAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
@@ -1004,30 +1235,33 @@ export default function CRMPage() {
   const [responsibleFilter, setResponsibleFilter] = useState('all')
   const [temperatureFilter, setTemperatureFilter] = useState<'all' | Temperature>('all')
   const [sourceFilter, setSourceFilter] = useState('all')
-  const [view, setView] = useState<'kanban' | 'list'>('kanban')
+  const [view, setView] = useState<'kanban' | 'list' | 'analytics'>('kanban')
   const [dragLeadId, setDragLeadId] = useState<string | null>(null)
   const [leadModalOpen, setLeadModalOpen] = useState(false)
   const [editingLead, setEditingLead] = useState<Lead | null>(null)
   const [configOpen, setConfigOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [newLeadStageId, setNewLeadStageId] = useState('')
+  const [recalculatingScores, setRecalculatingScores] = useState(false)
 
   async function loadAll() {
     setLoading(true)
     setError('')
     try {
-      const [stageRes, leadRes, userRes, reasonRes, summaryRes] = await Promise.all([
+      const [stageRes, leadRes, userRes, reasonRes, summaryRes, analyticsRes] = await Promise.all([
         apiClient.get<ApiResponse<FunnelStage[]>>('/crm/stages'),
         apiClient.get<ApiResponse<Lead[]>>('/crm/leads'),
         apiClient.get<ApiResponse<CrmUser[]>>('/crm/users'),
         apiClient.get<ApiResponse<LossReason[]>>('/crm/loss-reasons'),
         apiClient.get<ApiResponse<CrmSummary>>('/crm/summary'),
+        apiClient.get<ApiResponse<CrmAnalytics>>('/crm/analytics'),
       ])
       setStages(stageRes.data.data || [])
       setLeads(leadRes.data.data || [])
       setUsers(userRes.data.data || [])
       setLossReasons(reasonRes.data.data || [])
       setSummary(summaryRes.data.data || null)
+      setAnalytics(analyticsRes.data.data || null)
     } catch (err) {
       setError(getErrorMessage(err))
     } finally {
@@ -1178,6 +1412,16 @@ export default function CRMPage() {
     await loadAll()
   }
 
+  async function recalculateScores() {
+    setRecalculatingScores(true)
+    try {
+      await apiClient.post('/crm/leads/recalculate-scores')
+      await loadAll()
+    } finally {
+      setRecalculatingScores(false)
+    }
+  }
+
   if (loading) {
     return <div className="flex min-h-[320px] items-center justify-center text-sm text-slate-500"><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Carregando CRM...</div>
   }
@@ -1187,7 +1431,7 @@ export default function CRMPage() {
       <div className="rounded-2xl border border-red-100 bg-red-50 p-6 text-sm text-red-700">
         <p className="font-semibold">Não foi possível carregar o CRM.</p>
         <p className="mt-1">{error}</p>
-        <p className="mt-3 text-xs">Confira se as migrations <strong>migrate_crm_fase1.js</strong> e <strong>migrate_crm_fase2.js</strong> foram executadas no backend.</p>
+        <p className="mt-3 text-xs">Confira se as migrations <strong>migrate_crm_fase1.js</strong>, <strong>migrate_crm_fase2.js</strong> e <strong>migrate_crm_fase3.js</strong> foram executadas no backend.</p>
         <button onClick={loadAll} className="mt-4 rounded-xl bg-red-600 px-3 py-2 text-xs font-medium text-white">Tentar novamente</button>
       </div>
     )
@@ -1198,7 +1442,7 @@ export default function CRMPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">CRM & Funil de Vendas</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Funil configurável, tarefas, follow-up e controle de SLA comercial.</p>
+          <p className="mt-0.5 text-sm text-slate-500">Funil configurável, tarefas, inteligência comercial, scoring e relatórios de conversão.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => setConfigOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings className="h-4 w-4" /> Configurar funil</button>
@@ -1228,7 +1472,7 @@ export default function CRMPage() {
             <p className="text-sm font-semibold text-slate-900">Gestão comercial — tarefas e SLA</p>
             <p className="mt-0.5 text-xs text-slate-500">Priorize retornos, tarefas atrasadas, leads parados e etapas fora do prazo.</p>
           </div>
-          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-blue-700">Versão 0.0.3</span>
+          <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-blue-700">Versão 0.0.4</span>
         </div>
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
           {[
@@ -1299,10 +1543,13 @@ export default function CRMPage() {
         <div className="flex overflow-hidden rounded-lg border border-slate-200 bg-white">
           <button onClick={() => setView('kanban')} className={cn('px-3 py-2 text-xs font-medium', view === 'kanban' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50')}>Kanban</button>
           <button onClick={() => setView('list')} className={cn('px-3 py-2 text-xs font-medium', view === 'list' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50')}>Lista</button>
+          <button onClick={() => setView('analytics')} className={cn('px-3 py-2 text-xs font-medium', view === 'analytics' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50')}>Inteligência</button>
         </div>
       </div>
 
-      {view === 'kanban' ? (
+      {view === 'analytics' ? (
+        <AnalyticsPanel analytics={analytics} onRecalculate={recalculateScores} recalculating={recalculatingScores} />
+      ) : view === 'kanban' ? (
         <div className="flex gap-3 overflow-x-auto pb-4">
           {activeStages.map(stage => {
             const columnLeads = leadsByStage.get(stage.id) || []
