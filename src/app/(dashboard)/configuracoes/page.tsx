@@ -8,6 +8,7 @@ import {
   AlertCircle, X, Link2, Zap, ExternalLink, CheckCircle,
   UserPlus, Copy, RefreshCw, Send, ChevronDown, Loader2,
   Layers, Plus, Pencil, Trash2, Tags, Activity, SlidersHorizontal,
+  Info, Server, Database, Code2, GitBranch, CalendarDays,
 } from 'lucide-react'
 import { apiClient, useAuthStore } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
@@ -206,6 +207,7 @@ const TABS = [
   { id: 'crm_integ',    label: 'Integ. CRM',         icon: Link2 },
   { id: 'email',        label: 'E-mail',        icon: Mail },
   { id: 'notificacoes', label: 'Notificacoes',       icon: Bell },
+  { id: 'sobre',        label: 'Sobre sistema',      icon: Info },
 ]
 
 const COLOR_PRESETS = [
@@ -413,6 +415,49 @@ export default function ConfiguracoesPage() {
     details?: Record<string, unknown>
   }
 
+
+  type SystemRelease = {
+    id?: string
+    version: string
+    title: string
+    description?: string
+    released_at?: string
+    changes?: string[]
+    frontend_version?: string
+    backend_version?: string
+  }
+
+  type SystemAbout = {
+    version: string
+    released_at?: string
+    frontend: {
+      name: string
+      version: string
+      framework: string
+      language: string
+      ui: string[]
+    }
+    backend: {
+      name: string
+      version: string
+      runtime: string
+      framework: string
+      auth: string
+      email: string
+    }
+    database: {
+      engine: string
+      main_tables: string[]
+    }
+    infrastructure: {
+      deploy: string
+      proxy: string
+      storage: string
+    }
+    releases: SystemRelease[]
+    current_release?: SystemRelease | null
+  }
+
   const [allowedInviteRoles, setAllowedInviteRoles] = useState<RoleId[]>([])
   const [inviteMatrix, setInviteMatrix] = useState<Record<string, RoleId[]>>({})
   const [invitePermEditable, setInvitePermEditable] = useState(false)
@@ -426,6 +471,10 @@ export default function ConfiguracoesPage() {
   const [auditFilters, setAuditFilters] = useState({
     user_id: '', module: '', action: '', date_from: '', date_to: '', q: '',
   })
+
+
+  const [systemAbout, setSystemAbout] = useState<SystemAbout | null>(null)
+  const [systemLoading, setSystemLoading] = useState(false)
 
 
   type UserActionMode = 'menu' | 'perfil' | 'senha' | 'convite' | 'excluir'
@@ -767,6 +816,19 @@ export default function ConfiguracoesPage() {
     } catch { /* silencioso */ } finally { setAuditLoading(false) }
   }
 
+
+  async function loadSystemAbout() {
+    setSystemLoading(true)
+    try {
+      const r = await apiClient.get<{ ok: boolean; data: SystemAbout }>('/system/about')
+      if (r.data.ok) setSystemAbout(r.data.data)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setSystemLoading(false)
+    }
+  }
+
   async function resendInvite(invite: Invite) {
     setResendingId(invite.id)
     try {
@@ -923,6 +985,7 @@ export default function ConfiguracoesPage() {
   // Carrega usuários reais da API ao montar
   useEffect(() => { loadUsers(); loadProfiles(); loadInvitePermissions() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'logs') { loadAuditSettings(); loadAuditLogs() } }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === 'sobre') loadSystemAbout() }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'convites_perm') loadInvitePermissions() }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
 
   function save() {
@@ -2237,6 +2300,109 @@ export default function ConfiguracoesPage() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              </Section>
+            </>
+          )}
+
+          {/* ── Sobre o sistema ── */}
+          {tab === 'sobre' && (
+            <>
+              <Section title="Sobre o sistema" sub="Arquitetura básica, versão atual e histórico de alterações">
+                {systemLoading && !systemAbout ? (
+                  <div className="flex items-center gap-2 text-sm text-slate-400">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Carregando informações do sistema...
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-4 gap-3">
+                      <div className="rounded-xl border border-slate-100 bg-slate-50 p-4">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase">
+                          <GitBranch className="w-4 h-4" /> Versão atual
+                        </div>
+                        <p className="text-2xl font-bold text-slate-900 mt-2">v{systemAbout?.version || '0.0.1'}</p>
+                        <p className="text-xs text-slate-500 mt-1">{systemAbout?.released_at ? formatDateTimeBR(systemAbout.released_at) : 'Controle inicial'}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-100 bg-white p-4">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase">
+                          <Code2 className="w-4 h-4" /> Front-end
+                        </div>
+                        <p className="text-sm font-semibold text-slate-900 mt-2">{systemAbout?.frontend.framework || 'Next.js'}</p>
+                        <p className="text-xs text-slate-500 mt-1">{systemAbout?.frontend.language || 'TypeScript / React'}</p>
+                        <p className="text-[11px] text-slate-400 mt-1">Versão: {systemAbout?.frontend.version || '0.0.1'}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-100 bg-white p-4">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase">
+                          <Server className="w-4 h-4" /> Backend
+                        </div>
+                        <p className="text-sm font-semibold text-slate-900 mt-2">{systemAbout?.backend.framework || 'Express.js'}</p>
+                        <p className="text-xs text-slate-500 mt-1">{systemAbout?.backend.runtime || 'Node.js'}</p>
+                        <p className="text-[11px] text-slate-400 mt-1">Versão: {systemAbout?.backend.version || '0.0.1'}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-100 bg-white p-4">
+                        <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase">
+                          <Database className="w-4 h-4" /> Banco
+                        </div>
+                        <p className="text-sm font-semibold text-slate-900 mt-2">{systemAbout?.database.engine || 'PostgreSQL'}</p>
+                        <p className="text-xs text-slate-500 mt-1">Multi-tenant, permissões, auditoria e financeiro</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="rounded-xl border border-slate-100 p-4">
+                        <p className="text-xs font-semibold text-slate-500 uppercase mb-3">Camadas principais</p>
+                        <div className="space-y-2 text-sm text-slate-600">
+                          <p><strong className="text-slate-800">UI:</strong> Next.js App Router, React, TailwindCSS e Zustand.</p>
+                          <p><strong className="text-slate-800">API:</strong> Node.js com Express, JWT, rotas REST e logs de auditoria.</p>
+                          <p><strong className="text-slate-800">Banco:</strong> PostgreSQL com tabelas por domínio funcional.</p>
+                          <p><strong className="text-slate-800">E-mail:</strong> AWS SES para convites, reset de senha e comunicações transacionais.</p>
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-slate-100 p-4">
+                        <p className="text-xs font-semibold text-slate-500 uppercase mb-3">Tabelas/módulos monitorados</p>
+                        <div className="flex flex-wrap gap-2">
+                          {(systemAbout?.database.main_tables || ['hub_users', 'hub_profiles', 'hub_audit_logs', 'hub_invites', 'fin_plano_contas']).map(item => (
+                            <span key={item} className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs font-medium">{item}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </Section>
+
+              <Section title="Changelog" sub="Histórico versionado das alterações do sistema">
+                <div className="space-y-3">
+                  {(systemAbout?.releases || []).length === 0 ? (
+                    <p className="text-sm text-slate-400">Nenhuma versão cadastrada ainda.</p>
+                  ) : (systemAbout?.releases || []).map(release => (
+                    <div key={release.version} className="rounded-xl border border-slate-100 p-4 bg-white">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-bold">v{release.version}</span>
+                            <p className="font-semibold text-slate-900 text-sm">{release.title}</p>
+                          </div>
+                          {release.description && <p className="text-xs text-slate-500 mt-1">{release.description}</p>}
+                        </div>
+                        {release.released_at && (
+                          <div className="flex items-center gap-1 text-xs text-slate-400 whitespace-nowrap">
+                            <CalendarDays className="w-3.5 h-3.5" /> {formatDateTimeBR(release.released_at)}
+                          </div>
+                        )}
+                      </div>
+                      {!!release.changes?.length && (
+                        <ul className="mt-3 space-y-1.5 text-sm text-slate-600">
+                          {release.changes.map((change, idx) => (
+                            <li key={`${release.version}-${idx}`} className="flex gap-2">
+                              <CheckCircle className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
+                              <span>{change}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </Section>
             </>
