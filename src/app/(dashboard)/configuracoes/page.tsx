@@ -7,9 +7,9 @@ import {
   MoreHorizontal, Shield, Key, MapPin, Eye, EyeOff,
   AlertCircle, X, Link2, Zap, ExternalLink, CheckCircle,
   UserPlus, Copy, RefreshCw, Send, ChevronDown, Loader2,
-  Layers, Plus, Pencil, Trash2, Tags,
+  Layers, Plus, Pencil, Trash2, Tags, Activity, SlidersHorizontal,
 } from 'lucide-react'
-import { apiClient } from '@/lib/auth-store'
+import { apiClient, useAuthStore } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 import { useTenantConfig } from '@/lib/tenant-config-store'
 
@@ -19,7 +19,7 @@ interface AppUser {
   id: string
   name: string
   email: string
-  role: 'admin' | 'manager' | 'broker' | 'financial' | 'controller' | 'accountant' | 'viewer' | 'assistant' | 'supplier' | 'client' | 'consultant'
+  role: 'admin' | 'manager' | 'broker' | 'financial' | 'controller' | 'marketing' | 'accountant' | 'viewer' | 'assistant' | 'supplier' | 'client' | 'consultant'
   active: boolean
   profiles?: { id: string; name: string; color?: string }[]
   profile_ids?: string[]
@@ -103,6 +103,9 @@ function defaultPerms(role: AppUser['role']): Record<string, ModulePerms> {
   if (role === 'controller') return Object.fromEntries(allMods.map(id => [id,
     ['dashboard','fin_receber','fin_pagar','fin_boletos','fin_split','fin_sped','relatorios','controladoria','contratos'].includes(id) ? all : no
   ]))
+  if (role === 'marketing') return Object.fromEntries(allMods.map(id => [id,
+    ['dashboard','crm','landing_pages','automacoes','relatorios','configuracoes','usuarios'].includes(id) ? (['configuracoes','usuarios'].includes(id) ? ro : all) : no
+  ]))
   if (role === 'accountant') return Object.fromEntries(allMods.map(id => [id,
     ['fin_receber','fin_pagar','fin_boletos','fin_sped','relatorios','contratos'].includes(id) ? ro :
     ['dashboard','empreendimentos'].includes(id) ? ro : no
@@ -184,6 +187,8 @@ const TABS = [
   { id: 'usuarios',     label: 'Usuarios',           icon: Users },
   { id: 'perfis',       label: 'Perfis',             icon: Layers },
   { id: 'permissoes',   label: 'Permissoes',         icon: Shield },
+  { id: 'convites_perm', label: 'Perm. convite',      icon: SlidersHorizontal },
+  { id: 'logs',         label: 'Logs',               icon: Activity },
   { id: 'crm_integ',    label: 'Integ. CRM',         icon: Link2 },
   { id: 'email',        label: 'E-mail',        icon: Mail },
   { id: 'notificacoes', label: 'Notificacoes',       icon: Bell },
@@ -196,6 +201,40 @@ const COLOR_PRESETS = [
   { name: 'Laranja', primary: '#EA580C', sidebar: '#1c0a00' },
   { name: 'Cinza',   primary: '#374151', sidebar: '#111827' },
 ]
+
+const ROLE_LEVELS: Record<string, number> = {
+  super_admin: 100,
+  admin: 90,
+  manager: 80,
+  controller: 70,
+  financial: 65,
+  marketing: 55,
+  accountant: 50,
+  broker: 45,
+  consultant: 40,
+  assistant: 35,
+  supplier: 25,
+  client: 20,
+  viewer: 10,
+}
+
+function localCanManageRole(requesterRole?: string, targetRole?: string) {
+  if (!requesterRole || !targetRole) return false
+  if (requesterRole === 'super_admin') return targetRole !== 'super_admin'
+  if (requesterRole === 'admin') return targetRole !== 'super_admin'
+  return (ROLE_LEVELS[requesterRole] || 0) > (ROLE_LEVELS[targetRole] || 0)
+}
+
+function localCanInviteHierarchy(inviterRole?: string, targetRole?: string) {
+  if (!inviterRole || !targetRole) return false
+  if (inviterRole === 'super_admin') return targetRole !== 'super_admin'
+  if (inviterRole === 'admin') return targetRole !== 'super_admin'
+  return (ROLE_LEVELS[inviterRole] || 0) >= (ROLE_LEVELS[targetRole] || 0)
+}
+
+function formatDateTimeBR(value: string) {
+  try { return new Date(value).toLocaleString('pt-BR') } catch { return value }
+}
 
 function Section({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
   return (
@@ -256,6 +295,7 @@ export default function ConfiguracoesPage() {
   const setConfig     = useTenantConfig(s => s.setConfig)
   const persistConfig = useTenantConfig(s => s.persistConfig)
   const configSaving  = useTenantConfig(s => s.saving)
+  const currentUser   = useAuthStore(s => s.user)
 
   useEffect(() => { hydrate() }, [hydrate])
 
@@ -344,6 +384,34 @@ export default function ConfiguracoesPage() {
   type Invite = { id: string; name: string; email: string; role: AppUser['role']; status: string; expires_at: string; created_at: string }
   const [invites, setInvites]           = useState<Invite[]>([])
   const [resendingId, setResendingId]   = useState<string | null>(null)
+
+  type RoleId = AppUser['role']
+  type AuditLog = {
+    id: string
+    created_at: string
+    action: string
+    module: string
+    ip?: string
+    user_name?: string
+    user_email?: string
+    target_user_name?: string
+    target_user_email?: string
+    details?: Record<string, unknown>
+  }
+
+  const [allowedInviteRoles, setAllowedInviteRoles] = useState<RoleId[]>([])
+  const [inviteMatrix, setInviteMatrix] = useState<Record<string, RoleId[]>>({})
+  const [invitePermEditable, setInvitePermEditable] = useState(false)
+  const [invitePermSaving, setInvitePermSaving] = useState(false)
+  const [invitePermLoading, setInvitePermLoading] = useState(false)
+
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
+  const [auditLoading, setAuditLoading] = useState(false)
+  const [auditRetentionDays, setAuditRetentionDays] = useState(30)
+  const [auditSaving, setAuditSaving] = useState(false)
+  const [auditFilters, setAuditFilters] = useState({
+    user_id: '', module: '', action: '', date_from: '', date_to: '', q: '',
+  })
 
 
   type UserActionMode = 'menu' | 'perfil' | 'senha' | 'convite' | 'excluir'
@@ -471,6 +539,7 @@ export default function ConfiguracoesPage() {
     if (n.includes('administrador') || n.includes('admin')) return 'admin'
     if (n.includes('gerente') || n.includes('gestor')) return 'manager'
     if (n.includes('financeiro')) return 'financial'
+    if (n.includes('marketing')) return 'marketing'
     if (n.includes('controladoria')) return 'controller'
     if (n.includes('contador') || n.includes('contabil')) return 'accountant'
     if (n.includes('assistente')) return 'assistant'
@@ -484,7 +553,7 @@ export default function ConfiguracoesPage() {
   function inferRoleFromProfileIds(profileIds: string[], fallback: AppUser['role'] = 'broker'): AppUser['role'] {
     const selectedProfiles = profiles.filter(p => profileIds.includes(p.id))
     const found = selectedProfiles.map(p => roleFromProfileName(p.name)).filter(Boolean) as AppUser['role'][]
-    const priority: AppUser['role'][] = ['admin', 'manager', 'financial', 'controller', 'accountant', 'broker', 'assistant', 'consultant', 'client', 'supplier', 'viewer']
+    const priority: AppUser['role'][] = ['admin', 'manager', 'controller', 'financial', 'marketing', 'accountant', 'broker', 'assistant', 'consultant', 'client', 'supplier', 'viewer']
     return priority.find(role => found.includes(role)) || fallback
   }
 
@@ -618,6 +687,61 @@ export default function ConfiguracoesPage() {
     } catch {/* silencioso */} finally { setUsersLoading(false) }
   }
 
+
+  async function loadInvitePermissions() {
+    setInvitePermLoading(true)
+    try {
+      const r = await apiClient.get<{ ok: boolean; data: { matrix: Record<string, RoleId[]>; allowed_for_current_user: RoleId[]; editable: boolean } }>('/users/invite-permissions')
+      if (r.data.ok) {
+        setInviteMatrix(r.data.data.matrix || {})
+        setAllowedInviteRoles(r.data.data.allowed_for_current_user || [])
+        setInvitePermEditable(Boolean(r.data.data.editable))
+      }
+    } catch { /* silencioso */ } finally { setInvitePermLoading(false) }
+  }
+
+  async function saveInvitePermissions() {
+    setInvitePermSaving(true)
+    try {
+      await apiClient.put('/users/invite-permissions', { matrix: inviteMatrix })
+      await loadInvitePermissions()
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao salvar permissões de convite')
+    } finally {
+      setInvitePermSaving(false)
+    }
+  }
+
+  async function loadAuditSettings() {
+    try {
+      const r = await apiClient.get<{ ok: boolean; data: { retention_days: number } }>('/audit/settings')
+      if (r.data.ok) setAuditRetentionDays(r.data.data.retention_days || 30)
+    } catch { /* silencioso */ }
+  }
+
+  async function saveAuditSettings() {
+    setAuditSaving(true)
+    try {
+      await apiClient.put('/audit/settings', { retention_days: auditRetentionDays })
+      await loadAuditLogs()
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao salvar retenção')
+    } finally {
+      setAuditSaving(false)
+    }
+  }
+
+  async function loadAuditLogs() {
+    setAuditLoading(true)
+    try {
+      const params = new URLSearchParams()
+      Object.entries(auditFilters).forEach(([k, v]) => { if (v) params.set(k, v) })
+      params.set('limit', '100')
+      const r = await apiClient.get<{ ok: boolean; data: AuditLog[] }>(`/audit/logs?${params.toString()}`)
+      if (r.data.ok) setAuditLogs(r.data.data || [])
+    } catch { /* silencioso */ } finally { setAuditLoading(false) }
+  }
+
   async function resendInvite(invite: Invite) {
     setResendingId(invite.id)
     try {
@@ -690,6 +814,10 @@ export default function ConfiguracoesPage() {
     if (Object.keys(e).length) return
 
     const finalRole = inferRoleFromProfileIds(invProfileIds, invRole)
+    if (allowedInviteRoles.length > 0 && !allowedInviteRoles.includes(finalRole)) {
+      setInvErrors({ _geral: `Seu usuário não pode convidar perfil ${ROLE_LABELS[finalRole] || finalRole}.` })
+      return
+    }
 
     setInvSaving(true)
     try {
@@ -757,7 +885,9 @@ export default function ConfiguracoesPage() {
   }
 
   // Carrega usuários reais da API ao montar
-  useEffect(() => { loadUsers(); loadProfiles() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadUsers(); loadProfiles(); loadInvitePermissions() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === 'logs') { loadAuditSettings(); loadAuditLogs() } }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === 'convites_perm') loadInvitePermissions() }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
 
   function save() {
     const payload = { logoUrl: logoPreview, logoText, primaryColor, sidebarColor, ...creds }
@@ -774,7 +904,7 @@ export default function ConfiguracoesPage() {
 
   const ROLE_LABELS = {
     admin: 'Admin', manager: 'Gerente', broker: 'Corretor',
-    financial: 'Financeiro', controller: 'Controladoria',
+    financial: 'Financeiro', controller: 'Controladoria', marketing: 'Marketing',
     accountant: 'Contador', viewer: 'Visualizador',
     assistant: 'Assistente', supplier: 'Fornecedor',
     client: 'Cliente', consultant: 'Consultor',
@@ -782,7 +912,7 @@ export default function ConfiguracoesPage() {
   const ROLE_COLORS = {
     admin: 'bg-violet-100 text-violet-700', manager: 'bg-blue-100 text-blue-700',
     broker: 'bg-emerald-100 text-emerald-700', financial: 'bg-orange-100 text-orange-700',
-    controller: 'bg-yellow-100 text-yellow-700', accountant: 'bg-amber-100 text-amber-700',
+    controller: 'bg-yellow-100 text-yellow-700', marketing: 'bg-pink-100 text-pink-700', accountant: 'bg-amber-100 text-amber-700',
     viewer: 'bg-slate-100 text-slate-600',
     assistant: 'bg-sky-100 text-sky-700', supplier: 'bg-orange-100 text-orange-700',
     client: 'bg-teal-100 text-teal-700', consultant: 'bg-indigo-100 text-indigo-700',
@@ -794,6 +924,7 @@ export default function ConfiguracoesPage() {
     { id: 'broker', label: 'Corretor' },
     { id: 'financial', label: 'Financeiro' },
     { id: 'controller', label: 'Controladoria' },
+    { id: 'marketing', label: 'Marketing' },
     { id: 'accountant', label: 'Contador' },
     { id: 'assistant', label: 'Assistente' },
     { id: 'consultant', label: 'Consultor' },
@@ -801,6 +932,37 @@ export default function ConfiguracoesPage() {
     { id: 'client', label: 'Cliente' },
     { id: 'viewer', label: 'Visualizador' },
   ]
+
+  const currentRole = currentUser?.role || 'viewer'
+  const isAdminUser = currentRole === 'admin' || currentRole === 'super_admin'
+  const allowedRoleOptions = ROLE_OPTIONS.filter(r => isAdminUser || allowedInviteRoles.includes(r.id))
+  const editableRoleOptions = ROLE_OPTIONS.filter(r => localCanManageRole(currentRole, r.id))
+
+  function canSeeTab(tabId: string) {
+    if (['logs', 'convites_perm'].includes(tabId)) return isAdminUser
+    return true
+  }
+
+  function canManageUserRow(user: AppUser) {
+    return localCanManageRole(currentRole, user.role)
+  }
+
+  function profileAllowedForInvite(profile: Profile) {
+    const role = roleFromProfileName(profile.name) || 'viewer'
+    return isAdminUser || allowedInviteRoles.includes(role)
+  }
+
+  function toggleInviteMatrixRole(inviterRole: string, allowedRole: RoleId) {
+    setInviteMatrix(prev => {
+      const current = prev[inviterRole] || []
+      const next = current.includes(allowedRole)
+        ? current.filter(r => r !== allowedRole)
+        : [...current, allowedRole]
+      return { ...prev, [inviterRole]: next }
+    })
+  }
+
+  const auditModules = ['auth', 'usuarios', 'perfis', 'financeiro', 'cadastros', 'configuracoes', 'logs', 'sistema']
 
   return (
     <div className="space-y-5 max-w-5xl">
@@ -821,7 +983,7 @@ export default function ConfiguracoesPage() {
 
       <div className="flex gap-5">
         <div className="w-48 flex-shrink-0 space-y-0.5">
-          {TABS.map(t => (
+          {TABS.filter(t => canSeeTab(t.id)).map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className={cn('w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm transition-colors text-left',
                 tab === t.id ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
@@ -993,26 +1155,31 @@ export default function ConfiguracoesPage() {
                               <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-500 font-medium">+{linkedProfiles.length - 2}</span>
                             )}
                           </div>
+                          {canManageUserRow(u) && (
+                            <button
+                              onClick={() => { setSelectedUser(u); setTab('permissoes') }}
+                              className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-colors">
+                              <Shield className="w-3.5 h-3.5" /> Permissoes
+                            </button>
+                          )}
                           <button
-                            onClick={() => { setSelectedUser(u); setTab('permissoes') }}
-                            className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-colors">
-                            <Shield className="w-3.5 h-3.5" /> Permissoes
-                          </button>
-                          <button
-                            onClick={() => openUserActions(u)}
-                            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-                            title="Ações do usuário">
+                            onClick={() => canManageUserRow(u) && openUserActions(u)}
+                            disabled={!canManageUserRow(u)}
+                            className={cn('p-2 rounded-lg transition-colors', canManageUserRow(u) ? 'text-slate-400 hover:text-slate-700 hover:bg-slate-100' : 'text-slate-200 cursor-not-allowed')}
+                            title={canManageUserRow(u) ? 'Ações do usuário' : 'Sem permissão para alterar este usuário'}>
                             <MoreHorizontal className="w-4 h-4" />
                           </button>
                         </div>
                       )
                     })}
                 </div>
-                <button
-                  onClick={() => { resetInvite(); setShowInvite(true) }}
-                  className="flex items-center gap-2 text-sm font-medium text-white bg-[#1e3a5f] hover:bg-[#162d4a] px-4 py-2 rounded-lg mt-3 transition-colors">
-                  <UserPlus className="w-4 h-4" /> Convidar usuario
-                </button>
+                {(isAdminUser || allowedInviteRoles.length > 0) && (
+                  <button
+                    onClick={() => { resetInvite(); setInvRole((allowedInviteRoles[0] || 'broker') as AppUser['role']); setShowInvite(true) }}
+                    className="flex items-center gap-2 text-sm font-medium text-white bg-[#1e3a5f] hover:bg-[#162d4a] px-4 py-2 rounded-lg mt-3 transition-colors">
+                    <UserPlus className="w-4 h-4" /> Convidar usuario
+                  </button>
+                )}
               </Section>
 
               {/* ── Convites pendentes ── */}
@@ -1178,7 +1345,7 @@ export default function ConfiguracoesPage() {
                             </p>
                           ) : (
                             <div className="flex gap-2 flex-wrap">
-                              {profiles.map(p => {
+                              {profiles.filter(profileAllowedForInvite).map(p => {
                                 const selected = invProfileIds.includes(p.id)
                                 return (
                                   <button key={p.id}
@@ -1210,9 +1377,9 @@ export default function ConfiguracoesPage() {
                           <label className="text-xs font-medium text-slate-600">Tipo do usuário no sistema</label>
                           <select value={invRole} onChange={e => setInvRole(e.target.value as AppUser['role'])}
                             className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-2 bg-white text-slate-700 focus:outline-none focus:border-blue-400">
-                            {ROLE_OPTIONS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                            {allowedRoleOptions.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
                           </select>
-                          <p className="text-[10px] text-slate-400">Preenchido automaticamente pelo perfil selecionado, mas pode ser ajustado manualmente.</p>
+                          <p className="text-[10px] text-slate-400">Somente perfis liberados para o seu usuário aparecem aqui.</p>
                         </div>
 
                         {/* Opções */}
@@ -1361,9 +1528,9 @@ export default function ConfiguracoesPage() {
                             <label className="text-xs font-medium text-slate-600">Tipo do usuário</label>
                             <select value={editRole} onChange={e => setEditRole(e.target.value as AppUser['role'])}
                               className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-blue-400">
-                              {ROLE_OPTIONS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                              {editableRoleOptions.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
                             </select>
-                            <p className="text-[10px] text-slate-400 mt-1">Ao selecionar um perfil como Financeiro, o tipo também é ajustado automaticamente.</p>
+                            <p className="text-[10px] text-slate-400 mt-1">Você só pode aplicar perfis abaixo da sua hierarquia.</p>
                           </div>
 
                           <div>
@@ -1372,7 +1539,7 @@ export default function ConfiguracoesPage() {
                               <span className="text-[10px] text-slate-400">{editProfileIds.length} selecionado{editProfileIds.length !== 1 ? 's' : ''}</span>
                             </div>
                             <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                              {profiles.map(p => {
+                              {profiles.filter(p => localCanManageRole(currentRole, roleFromProfileName(p.name) || 'viewer')).map(p => {
                                 const selected = editProfileIds.includes(p.id)
                                 return (
                                   <label key={p.id}
@@ -1703,7 +1870,7 @@ export default function ConfiguracoesPage() {
                 <div className="flex gap-2 flex-wrap">
                   {usersLoading
                     ? <p className="text-xs text-slate-400 animate-pulse">Carregando usuários...</p>
-                    : users.map(u => (
+                    : users.filter(canManageUserRow).map(u => (
                     <button key={u.id}
                       onClick={() => { setSelectedUser(u); loadUserProfiles(u.id) }}
                       className={cn(
@@ -1752,7 +1919,7 @@ export default function ConfiguracoesPage() {
                       <p className="text-xs text-slate-400">Nenhum perfil cadastrado. Crie perfis na aba <strong>Perfis</strong>.</p>
                     ) : (
                       <div className="space-y-2">
-                        {profiles.map(p => {
+                        {profiles.filter(p => localCanManageRole(currentRole, roleFromProfileName(p.name) || 'viewer')).map(p => {
                           const active = (userProfiles[selectedUser.id] ?? []).includes(p.id)
                           return (
                             <label key={p.id}
@@ -1842,6 +2009,142 @@ export default function ConfiguracoesPage() {
                   <p className="text-sm">Selecione um usuario acima para vincular perfis</p>
                 </div>
               )}
+            </>
+          )}
+
+          {/* ── Permissões de Convite ── */}
+          {tab === 'convites_perm' && isAdminUser && (
+            <>
+              <Section title="Permissões de convite" sub="Defina quais tipos de usuário cada perfil pode convidar">
+                {invitePermLoading ? (
+                  <p className="text-xs text-slate-400 animate-pulse">Carregando permissões...</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <div className="min-w-[760px]">
+                      <div className="grid gap-2" style={{ gridTemplateColumns: `160px repeat(${ROLE_OPTIONS.length}, minmax(88px, 1fr))` }}>
+                        <div className="text-[10px] font-semibold text-slate-400 uppercase px-2 py-2">Quem convida</div>
+                        {ROLE_OPTIONS.map(r => (
+                          <div key={r.id} className="text-[10px] font-semibold text-slate-500 text-center px-1 py-2 truncate" title={r.label}>{r.label}</div>
+                        ))}
+                        {ROLE_OPTIONS.map(inviter => (
+                          <div key={inviter.id} className="contents">
+                            <div className="text-xs font-semibold text-slate-700 px-2 py-2 rounded-lg bg-slate-50">{inviter.label}</div>
+                            {ROLE_OPTIONS.map(target => {
+                              const checked = (inviteMatrix[inviter.id] || []).includes(target.id)
+                              const blockedByHierarchy = !localCanInviteHierarchy(inviter.id, target.id)
+                              return (
+                                <button key={`${inviter.id}-${target.id}`}
+                                  disabled={blockedByHierarchy || !invitePermEditable}
+                                  onClick={() => toggleInviteMatrixRole(inviter.id, target.id)}
+                                  className={cn(
+                                    'h-8 rounded-lg border text-xs flex items-center justify-center transition-colors',
+                                    checked ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-300',
+                                    blockedByHierarchy && 'bg-slate-50 text-slate-200 cursor-not-allowed',
+                                    !blockedByHierarchy && invitePermEditable && 'hover:border-blue-300'
+                                  )}
+                                  title={blockedByHierarchy ? 'Bloqueado pela hierarquia' : `${inviter.label} pode convidar ${target.label}`}>
+                                  {checked ? <Check className="w-3.5 h-3.5" /> : '—'}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                  <p className="text-xs text-slate-500">Exemplo: Marketing pode convidar Marketing, Corretor, Fornecedor e Cliente, sem subir permissões.</p>
+                  <button onClick={saveInvitePermissions} disabled={invitePermSaving || !invitePermEditable}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-[#1e3a5f] text-white hover:bg-[#162d4a] disabled:opacity-50">
+                    {invitePermSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    Salvar permissões
+                  </button>
+                </div>
+              </Section>
+            </>
+          )}
+
+          {/* ── Logs ── */}
+          {tab === 'logs' && isAdminUser && (
+            <>
+              <Section title="Retenção dos logs" sub="Somente administradores podem alterar este período">
+                <Field label="Período de retenção" sub="Padrão inicial: 30 dias">
+                  <div className="flex items-center gap-2">
+                    <Input type="number" min={1} max={3650} value={auditRetentionDays}
+                      onChange={e => setAuditRetentionDays(Number(e.target.value || 30))}
+                      className="w-32" />
+                    <span className="text-sm text-slate-500">dias</span>
+                    <button onClick={saveAuditSettings} disabled={auditSaving}
+                      className="ml-auto flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-[#1e3a5f] text-white hover:bg-[#162d4a] disabled:opacity-50">
+                      {auditSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                      Salvar retenção
+                    </button>
+                  </div>
+                </Field>
+              </Section>
+
+              <Section title="Log de ações" sub="Login, logout e alterações do sistema">
+                <div className="grid grid-cols-6 gap-2">
+                  <select value={auditFilters.user_id} onChange={e => setAuditFilters(v => ({ ...v, user_id: e.target.value }))}
+                    className="border border-slate-200 rounded-lg px-2 py-2 text-xs bg-white">
+                    <option value="">Todos usuários</option>
+                    {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                  <select value={auditFilters.module} onChange={e => setAuditFilters(v => ({ ...v, module: e.target.value }))}
+                    className="border border-slate-200 rounded-lg px-2 py-2 text-xs bg-white">
+                    <option value="">Todos módulos</option>
+                    {auditModules.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                  <Input value={auditFilters.action} onChange={e => setAuditFilters(v => ({ ...v, action: e.target.value }))} placeholder="Ação" className="text-xs" />
+                  <Input type="date" value={auditFilters.date_from} onChange={e => setAuditFilters(v => ({ ...v, date_from: e.target.value }))} className="text-xs" />
+                  <Input type="date" value={auditFilters.date_to} onChange={e => setAuditFilters(v => ({ ...v, date_to: e.target.value }))} className="text-xs" />
+                  <button onClick={loadAuditLogs} disabled={auditLoading}
+                    className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 disabled:opacity-50">
+                    {auditLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    Filtrar
+                  </button>
+                </div>
+                <div className="mt-2">
+                  <Input value={auditFilters.q} onChange={e => setAuditFilters(v => ({ ...v, q: e.target.value }))} placeholder="Buscar por usuário, e-mail, ação ou detalhe..." className="text-xs" />
+                </div>
+
+                <div className="overflow-x-auto border border-slate-100 rounded-xl mt-4">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 text-slate-500">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-semibold">Data</th>
+                        <th className="text-left px-3 py-2 font-semibold">Usuário</th>
+                        <th className="text-left px-3 py-2 font-semibold">Módulo</th>
+                        <th className="text-left px-3 py-2 font-semibold">Ação</th>
+                        <th className="text-left px-3 py-2 font-semibold">IP</th>
+                        <th className="text-left px-3 py-2 font-semibold">Detalhes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {auditLoading ? (
+                        <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">Carregando logs...</td></tr>
+                      ) : auditLogs.length === 0 ? (
+                        <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">Nenhum log encontrado</td></tr>
+                      ) : auditLogs.map(log => (
+                        <tr key={log.id} className="border-t border-slate-50 align-top">
+                          <td className="px-3 py-2 whitespace-nowrap text-slate-500">{formatDateTimeBR(log.created_at)}</td>
+                          <td className="px-3 py-2">
+                            <p className="font-medium text-slate-700">{log.user_name || 'Sistema'}</p>
+                            {log.user_email && <p className="text-[10px] text-slate-400">{log.user_email}</p>}
+                          </td>
+                          <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{log.module || 'sistema'}</span></td>
+                          <td className="px-3 py-2 font-medium text-slate-700">{log.action}</td>
+                          <td className="px-3 py-2 text-slate-500">{log.ip || '—'}</td>
+                          <td className="px-3 py-2 max-w-[260px]">
+                            <pre className="text-[10px] text-slate-500 whitespace-pre-wrap break-words bg-slate-50 rounded-lg p-2 max-h-24 overflow-auto">{JSON.stringify(log.details || {}, null, 2)}</pre>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Section>
             </>
           )}
 
