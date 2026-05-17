@@ -19,7 +19,7 @@ export default function LarmLoginPage() {
     e.preventDefault()
     setError('')
     setLoading(true)
-    const result = await login(email.trim(), password)
+    const result = await login(email.trim(), password, 'larm')
     setLoading(false)
     if (result.ok) {
       const user = useAuthStore.getState().user

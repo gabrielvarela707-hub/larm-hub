@@ -15,6 +15,19 @@ import { useTenantConfig } from '@/lib/tenant-config-store'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+type PortalId = 'santa_clara' | 'larm'
+
+const PORTAL_OPTIONS: { id: PortalId; label: string; description: string }[] = [
+  { id: 'santa_clara', label: 'Santa Clara HUB', description: 'Loteadora, corretores, clientes e boletos' },
+  { id: 'larm', label: 'LARM HUB', description: 'Governança, financeiro e operações' },
+]
+
+function normalizePortalAccess(value?: PortalId[] | string[] | null): PortalId[] {
+  const arr = Array.isArray(value) ? value : []
+  const valid = arr.filter((v): v is PortalId => v === 'santa_clara' || v === 'larm')
+  return valid.length ? Array.from(new Set(valid)) : ['santa_clara']
+}
+
 interface AppUser {
   id: string
   name: string
@@ -23,6 +36,7 @@ interface AppUser {
   active: boolean
   profiles?: { id: string; name: string; color?: string }[]
   profile_ids?: string[]
+  allowed_hubs?: PortalId[]
 }
 
 type Profile = {
@@ -381,7 +395,7 @@ export default function ConfiguracoesPage() {
   const [perms, setPerms]       = useState<PermsMap>({})
 
   // Convites pendentes
-  type Invite = { id: string; name: string; email: string; role: AppUser['role']; status: string; expires_at: string; created_at: string }
+  type Invite = { id: string; name: string; email: string; role: AppUser['role']; status: string; expires_at: string; created_at: string; allowed_hubs?: PortalId[] }
   const [invites, setInvites]           = useState<Invite[]>([])
   const [resendingId, setResendingId]   = useState<string | null>(null)
 
@@ -421,6 +435,7 @@ export default function ConfiguracoesPage() {
   const [actionMessage, setActionMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
   const [editRole, setEditRole]           = useState<AppUser['role']>('broker')
   const [editProfileIds, setEditProfileIds] = useState<string[]>([])
+  const [editAllowedHubs, setEditAllowedHubs] = useState<PortalId[]>(['santa_clara'])
   const [resetTempPassword, setResetTempPassword] = useState('')
   const [resendInviteUrl, setResendInviteUrl]     = useState('')
 
@@ -566,6 +581,7 @@ export default function ConfiguracoesPage() {
     setResendInviteUrl('')
     setEditRole(user.role)
     setEditProfileIds(profileIds)
+    setEditAllowedHubs(normalizePortalAccess(user.allowed_hubs))
     if (!userProfiles[user.id]) {
       setUserProfiles(prev => ({ ...prev, [user.id]: profileIds }))
       loadUserProfiles(user.id)
@@ -591,16 +607,24 @@ export default function ConfiguracoesPage() {
     })
   }
 
+  function toggleEditAllowedHub(hub: PortalId) {
+    setEditAllowedHubs(prev => {
+      const exists = prev.includes(hub)
+      const next = exists ? prev.filter(h => h !== hub) : [...prev, hub]
+      return next.length ? next : prev
+    })
+  }
+
   async function saveUserAccess() {
     if (!actionUser) return
     setActionLoading(true)
     setActionMessage(null)
     try {
-      await apiClient.put(`/users/${actionUser.id}`, { role: editRole })
+      await apiClient.put(`/users/${actionUser.id}`, { role: editRole, allowed_hubs: editAllowedHubs })
       await apiClient.put(`/users/${actionUser.id}/profiles`, { profileIds: editProfileIds })
       setUserProfiles(prev => ({ ...prev, [actionUser.id]: editProfileIds }))
-      setUsers(prev => prev.map(u => u.id === actionUser.id ? { ...u, role: editRole, profile_ids: editProfileIds } : u))
-      setActionUser(prev => prev ? { ...prev, role: editRole, profile_ids: editProfileIds } : prev)
+      setUsers(prev => prev.map(u => u.id === actionUser.id ? { ...u, role: editRole, profile_ids: editProfileIds, allowed_hubs: editAllowedHubs } : u))
+      setActionUser(prev => prev ? { ...prev, role: editRole, profile_ids: editProfileIds, allowed_hubs: editAllowedHubs } : prev)
       setActionMessage({ type: 'ok', text: 'Perfil atualizado com sucesso.' })
       await loadUsers()
     } catch (err: unknown) {
@@ -641,7 +665,8 @@ export default function ConfiguracoesPage() {
     try {
       const r = await apiClient.post(`/users/${actionUser.id}/reset-password`, {})
       setResetTempPassword(r.data.data?.temp_password || '')
-      setActionMessage({ type: 'ok', text: 'Senha temporária gerada. O usuário deverá trocá-la no próximo acesso.' })
+      const sent = Boolean(r.data.data?.email_sent)
+      setActionMessage({ type: 'ok', text: sent ? 'Senha temporária gerada e enviada por e-mail. O usuário deverá trocá-la no próximo acesso.' : 'Senha temporária gerada, mas o e-mail não foi enviado. Copie e envie manualmente.' })
       await loadUsers()
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao resetar senha'
@@ -672,13 +697,13 @@ export default function ConfiguracoesPage() {
     setUsersLoading(true)
     try {
       const [usersRes, invitesRes] = await Promise.all([
-        apiClient.get<{ ok: boolean; data: { id: string; name: string; email: string; role: AppUser['role']; is_active: boolean; profiles?: AppUser['profiles']; profile_ids?: string[] }[] }>('/users'),
+        apiClient.get<{ ok: boolean; data: { id: string; name: string; email: string; role: AppUser['role']; is_active: boolean; profiles?: AppUser['profiles']; profile_ids?: string[]; allowed_hubs?: PortalId[] }[] }>('/users'),
         apiClient.get<{ ok: boolean; data: Invite[] }>('/users/invites'),
       ])
       if (usersRes.data.ok) {
         const loaded: AppUser[] = usersRes.data.data.map(u => ({
           id: u.id, name: u.name, email: u.email, role: u.role, active: u.is_active,
-          profiles: u.profiles || [], profile_ids: u.profile_ids || [],
+          profiles: u.profiles || [], profile_ids: u.profile_ids || [], allowed_hubs: normalizePortalAccess(u.allowed_hubs),
         }))
         setUsers(loaded)
         setPerms(Object.fromEntries(loaded.map(u => [u.id, defaultPerms(u.role)])))
@@ -735,7 +760,7 @@ export default function ConfiguracoesPage() {
     setAuditLoading(true)
     try {
       const params = new URLSearchParams()
-      Object.entries(auditFilters).forEach(([k, v]) => { if (v) params.set(k, v) })
+      Object.entries(auditFilters).forEach(([k, v]) => { if (v) params.set(k, String(v)) })
       params.set('limit', '100')
       const r = await apiClient.get<{ ok: boolean; data: AuditLog[] }>(`/audit/logs?${params.toString()}`)
       if (r.data.ok) setAuditLogs(r.data.data || [])
@@ -759,6 +784,7 @@ export default function ConfiguracoesPage() {
   const [invEmail,        setInvEmail]        = useState('')
   const [invRole,         setInvRole]         = useState<AppUser['role']>('broker')
   const [invProfileIds,   setInvProfileIds]   = useState<string[]>([])
+  const [invAllowedHubs,  setInvAllowedHubs]  = useState<PortalId[]>(['santa_clara'])
   const [invAutoActivate, setInvAutoActivate] = useState(true)
   const [invUseTempPw,    setInvUseTempPw]    = useState(false)
   const [invMsgMode,      setInvMsgMode]      = useState<'padrao'|'custom'>('padrao')
@@ -791,7 +817,7 @@ export default function ConfiguracoesPage() {
   }
 
   function resetInvite() {
-    setInvName(''); setInvEmail(''); setInvRole('broker'); setInvProfileIds([])
+    setInvName(''); setInvEmail(''); setInvRole('broker'); setInvProfileIds([]); setInvAllowedHubs(['santa_clara'])
     setInvAutoActivate(true); setInvUseTempPw(false)
     setInvMsgMode('padrao'); setInvCustomMsg('')
     setInvResult(null); setInvErrors({})
@@ -804,12 +830,21 @@ export default function ConfiguracoesPage() {
     })
   }
 
+  function toggleInviteAllowedHub(hub: PortalId) {
+    setInvAllowedHubs(prev => {
+      const exists = prev.includes(hub)
+      const next = exists ? prev.filter(h => h !== hub) : [...prev, hub]
+      return next.length ? next : prev
+    })
+  }
+
   async function sendInvite() {
     const e: Record<string, string> = {}
     if (!invName.trim())  e.name  = 'Obrigatório'
     if (!invEmail.trim()) e.email = 'Obrigatório'
     if (!/^[^@]+@[^@]+\.[^@]+$/.test(invEmail)) e.email = 'E-mail inválido'
     if (invProfileIds.length === 0) e.profiles = 'Selecione ao menos um perfil'
+    if (invAllowedHubs.length === 0) e.allowed_hubs = 'Selecione ao menos um portal'
     setInvErrors(e)
     if (Object.keys(e).length) return
 
@@ -826,6 +861,7 @@ export default function ConfiguracoesPage() {
         email:            invEmail.trim().toLowerCase(),
         role:             finalRole,
         profile_ids:      invProfileIds,
+        allowed_hubs:     invAllowedHubs,
         auto_activate:    invAutoActivate,
         use_temp_password: invUseTempPw,
         custom_message:   invMsgMode === 'custom' ? invCustomMsg.trim() : null,
@@ -1154,6 +1190,11 @@ export default function ConfiguracoesPage() {
                             {linkedProfiles.length > 2 && (
                               <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-500 font-medium">+{linkedProfiles.length - 2}</span>
                             )}
+                            {normalizePortalAccess(u.allowed_hubs).map(hub => (
+                              <span key={hub} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium">
+                                {hub === 'larm' ? 'LARM' : 'Santa Clara'}
+                              </span>
+                            ))}
                           </div>
                           {canManageUserRow(u) && (
                             <button
@@ -1382,6 +1423,33 @@ export default function ConfiguracoesPage() {
                           <p className="text-[10px] text-slate-400">Somente perfis liberados para o seu usuário aparecem aqui.</p>
                         </div>
 
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-medium text-slate-600">Portais de acesso</label>
+                            <span className="text-[10px] text-slate-400">Pode marcar os dois</span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {PORTAL_OPTIONS.map(portal => {
+                              const selected = invAllowedHubs.includes(portal.id)
+                              return (
+                                <label key={portal.id}
+                                  className={cn('flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors',
+                                    selected ? 'border-blue-200 bg-blue-50' : 'border-slate-100 hover:bg-slate-50'
+                                  )}>
+                                  <input type="checkbox" checked={selected}
+                                    onChange={() => toggleInviteAllowedHub(portal.id)}
+                                    className="mt-0.5 w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                                  <div>
+                                    <p className="text-sm font-medium text-slate-800">{portal.label}</p>
+                                    <p className="text-xs text-slate-500">{portal.description}</p>
+                                  </div>
+                                </label>
+                              )
+                            })}
+                          </div>
+                          {invErrors.allowed_hubs && <p className="text-xs text-red-500">{invErrors.allowed_hubs}</p>}
+                        </div>
+
                         {/* Opções */}
                         <div className="space-y-3 bg-slate-50 rounded-xl p-4">
                           <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Opções de acesso</p>
@@ -1560,6 +1628,32 @@ export default function ConfiguracoesPage() {
                             </div>
                           </div>
 
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="text-xs font-medium text-slate-600">Portais de acesso</label>
+                              <span className="text-[10px] text-slate-400">Pode marcar os dois</span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {PORTAL_OPTIONS.map(portal => {
+                                const selected = editAllowedHubs.includes(portal.id)
+                                return (
+                                  <label key={portal.id}
+                                    className={cn('flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors',
+                                      selected ? 'border-blue-200 bg-blue-50' : 'border-slate-100 hover:bg-slate-50'
+                                    )}>
+                                    <input type="checkbox" checked={selected}
+                                      onChange={() => toggleEditAllowedHub(portal.id)}
+                                      className="mt-0.5 w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                                    <div>
+                                      <p className="text-sm font-medium text-slate-800">{portal.label}</p>
+                                      <p className="text-xs text-slate-500">{portal.description}</p>
+                                    </div>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+
                           <div className="flex gap-2 pt-1">
                             <button onClick={() => setActionMode('menu')}
                               className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
@@ -1686,7 +1780,7 @@ export default function ConfiguracoesPage() {
                         <p className="text-sm font-semibold text-slate-800">{p.name}</p>
                         {p.description && <p className="text-xs text-slate-500 truncate">{p.description}</p>}
                         <p className="text-[11px] text-slate-400 mt-0.5">
-                          {Object.values(p.permissions ?? {}).filter(v => v.read).length} módulos com acesso
+                          {Object.values(p.permissions ?? {}).filter((v): v is ModulePerms => Boolean((v as ModulePerms).read)).length} módulos com acesso
                           {p.user_count ? ` · ${p.user_count} usuario(s)` : ''}
                         </p>
                       </div>
