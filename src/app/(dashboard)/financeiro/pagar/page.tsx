@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Plus, Search, X, Check, FileText, Loader2, Sparkles, Pencil, Trash2, ChevronsUpDown } from 'lucide-react'
 import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
+import { BANCOS_BR } from '@/lib/bancos-br'
 import FornecedorFormModal from '@/components/financeiro/FornecedorFormModal'
 
 interface Fornecedor { id: number; razao_social: string; empresa: string; cnpj_cpf?: string | null; nome_fantasia?: string | null }
