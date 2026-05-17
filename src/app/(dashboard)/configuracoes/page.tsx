@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { useState, useRef, useEffect } from 'react'
 import {
   Save, Check, Upload, Palette, Globe, Mail, Users, Bell,
-  CreditCard, Shield, Key, MapPin, Eye, EyeOff,
+  MoreHorizontal, Shield, Key, MapPin, Eye, EyeOff,
   AlertCircle, X, Link2, Zap, ExternalLink, CheckCircle,
   UserPlus, Copy, RefreshCw, Send, ChevronDown, Loader2,
   Layers, Plus, Pencil, Trash2, Tags,
@@ -19,8 +19,10 @@ interface AppUser {
   id: string
   name: string
   email: string
-  role: 'admin' | 'manager' | 'broker' | 'accountant' | 'viewer' | 'assistant' | 'supplier' | 'client' | 'consultant'
+  role: 'admin' | 'manager' | 'broker' | 'financial' | 'controller' | 'accountant' | 'viewer' | 'assistant' | 'supplier' | 'client' | 'consultant'
   active: boolean
+  profiles?: { id: string; name: string; color?: string }[]
+  profile_ids?: string[]
 }
 
 type Profile = {
@@ -94,6 +96,12 @@ function defaultPerms(role: AppUser['role']): Record<string, ModulePerms> {
   if (role === 'broker')    return Object.fromEntries(allMods.map(id => [id,
     ['crm','simulador','contratos','mapa','dashboard','empreendimentos'].includes(id) ? (id === 'contratos' ? ro : all) :
     ['relatorios'].includes(id) ? ro : no
+  ]))
+  if (role === 'financial') return Object.fromEntries(allMods.map(id => [id,
+    ['dashboard','fin_receber','fin_pagar','fin_boletos','fin_split','relatorios','contratos'].includes(id) ? all : no
+  ]))
+  if (role === 'controller') return Object.fromEntries(allMods.map(id => [id,
+    ['dashboard','fin_receber','fin_pagar','fin_boletos','fin_split','fin_sped','relatorios','controladoria','contratos'].includes(id) ? all : no
   ]))
   if (role === 'accountant') return Object.fromEntries(allMods.map(id => [id,
     ['fin_receber','fin_pagar','fin_boletos','fin_sped','relatorios','contratos'].includes(id) ? ro :
@@ -179,7 +187,6 @@ const TABS = [
   { id: 'crm_integ',    label: 'Integ. CRM',         icon: Link2 },
   { id: 'email',        label: 'E-mail',        icon: Mail },
   { id: 'notificacoes', label: 'Notificacoes',       icon: Bell },
-  { id: 'plano',        label: 'Plano',              icon: CreditCard },
 ]
 
 const COLOR_PRESETS = [
@@ -338,6 +345,17 @@ export default function ConfiguracoesPage() {
   const [invites, setInvites]           = useState<Invite[]>([])
   const [resendingId, setResendingId]   = useState<string | null>(null)
 
+
+  type UserActionMode = 'menu' | 'perfil' | 'senha' | 'convite' | 'excluir'
+  const [actionUser, setActionUser]       = useState<AppUser | null>(null)
+  const [actionMode, setActionMode]       = useState<UserActionMode>('menu')
+  const [actionLoading, setActionLoading] = useState(false)
+  const [actionMessage, setActionMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
+  const [editRole, setEditRole]           = useState<AppUser['role']>('broker')
+  const [editProfileIds, setEditProfileIds] = useState<string[]>([])
+  const [resetTempPassword, setResetTempPassword] = useState('')
+  const [resendInviteUrl, setResendInviteUrl]     = useState('')
+
   // ── Perfis ────────────────────────────────────────────────────────────────
   const allModIds = MODULE_GROUPS.flatMap(g => g.modules.map(m => m.id))
   const emptyPerms = () => Object.fromEntries(allModIds.map(id => [id, { read: false, write: false }]))
@@ -440,16 +458,158 @@ export default function ConfiguracoesPage() {
     } catch { /* silencioso */ } finally { setTogglingProfile(null) }
   }
 
+
+  function normalizeRoleText(text: string) {
+    return text
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+  }
+
+  function roleFromProfileName(name: string): AppUser['role'] | null {
+    const n = normalizeRoleText(name)
+    if (n.includes('administrador') || n.includes('admin')) return 'admin'
+    if (n.includes('gerente') || n.includes('gestor')) return 'manager'
+    if (n.includes('financeiro')) return 'financial'
+    if (n.includes('controladoria')) return 'controller'
+    if (n.includes('contador') || n.includes('contabil')) return 'accountant'
+    if (n.includes('assistente')) return 'assistant'
+    if (n.includes('consultor')) return 'consultant'
+    if (n.includes('cliente')) return 'client'
+    if (n.includes('fornecedor')) return 'supplier'
+    if (n.includes('corretor') || n.includes('broker')) return 'broker'
+    return null
+  }
+
+  function inferRoleFromProfileIds(profileIds: string[], fallback: AppUser['role'] = 'broker'): AppUser['role'] {
+    const selectedProfiles = profiles.filter(p => profileIds.includes(p.id))
+    const found = selectedProfiles.map(p => roleFromProfileName(p.name)).filter(Boolean) as AppUser['role'][]
+    const priority: AppUser['role'][] = ['admin', 'manager', 'financial', 'controller', 'accountant', 'broker', 'assistant', 'consultant', 'client', 'supplier', 'viewer']
+    return priority.find(role => found.includes(role)) || fallback
+  }
+
+  function openUserActions(user: AppUser) {
+    const profileIds = userProfiles[user.id] ?? user.profile_ids ?? []
+    setActionUser(user)
+    setActionMode('menu')
+    setActionMessage(null)
+    setResetTempPassword('')
+    setResendInviteUrl('')
+    setEditRole(user.role)
+    setEditProfileIds(profileIds)
+    if (!userProfiles[user.id]) {
+      setUserProfiles(prev => ({ ...prev, [user.id]: profileIds }))
+      loadUserProfiles(user.id)
+    }
+  }
+
+  function closeUserActions() {
+    setActionUser(null)
+    setActionMode('menu')
+    setActionMessage(null)
+    setResetTempPassword('')
+    setResendInviteUrl('')
+    setActionLoading(false)
+  }
+
+  function toggleEditProfile(profileId: string) {
+    setEditProfileIds(prev => {
+      const next = prev.includes(profileId)
+        ? prev.filter(id => id !== profileId)
+        : [...prev, profileId]
+      setEditRole(inferRoleFromProfileIds(next, editRole))
+      return next
+    })
+  }
+
+  async function saveUserAccess() {
+    if (!actionUser) return
+    setActionLoading(true)
+    setActionMessage(null)
+    try {
+      await apiClient.put(`/users/${actionUser.id}`, { role: editRole })
+      await apiClient.put(`/users/${actionUser.id}/profiles`, { profileIds: editProfileIds })
+      setUserProfiles(prev => ({ ...prev, [actionUser.id]: editProfileIds }))
+      setUsers(prev => prev.map(u => u.id === actionUser.id ? { ...u, role: editRole, profile_ids: editProfileIds } : u))
+      setActionUser(prev => prev ? { ...prev, role: editRole, profile_ids: editProfileIds } : prev)
+      setActionMessage({ type: 'ok', text: 'Perfil atualizado com sucesso.' })
+      await loadUsers()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao atualizar perfil'
+      setActionMessage({ type: 'error', text: msg })
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function resendUserInvite() {
+    if (!actionUser) return
+    setActionLoading(true)
+    setActionMessage(null)
+    setResendInviteUrl('')
+    try {
+      const r = await apiClient.post(`/users/${actionUser.id}/resend-invite`, {})
+      const rawUrl: string = r.data.data?.invite_url || ''
+      const fixedUrl = rawUrl.startsWith('undefined')
+        ? `${window.location.origin}/convite/${rawUrl.split('/convite/')[1]}`
+        : rawUrl
+      setResendInviteUrl(fixedUrl)
+      setActionMessage({ type: 'ok', text: 'Convite reenviado. Copie o link abaixo se precisar enviar manualmente.' })
+      await loadUsers()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao reenviar convite'
+      setActionMessage({ type: 'error', text: msg })
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function resetUserPassword() {
+    if (!actionUser) return
+    setActionLoading(true)
+    setActionMessage(null)
+    setResetTempPassword('')
+    try {
+      const r = await apiClient.post(`/users/${actionUser.id}/reset-password`, {})
+      setResetTempPassword(r.data.data?.temp_password || '')
+      setActionMessage({ type: 'ok', text: 'Senha temporária gerada. O usuário deverá trocá-la no próximo acesso.' })
+      await loadUsers()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao resetar senha'
+      setActionMessage({ type: 'error', text: msg })
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function deactivateUser() {
+    if (!actionUser) return
+    setActionLoading(true)
+    setActionMessage(null)
+    try {
+      await apiClient.delete(`/users/${actionUser.id}`)
+      setUsers(prev => prev.map(u => u.id === actionUser.id ? { ...u, active: false } : u))
+      setActionMessage({ type: 'ok', text: 'Usuário inativado com sucesso.' })
+      await loadUsers()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao inativar usuário'
+      setActionMessage({ type: 'error', text: msg })
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   async function loadUsers() {
     setUsersLoading(true)
     try {
       const [usersRes, invitesRes] = await Promise.all([
-        apiClient.get<{ ok: boolean; data: { id: string; name: string; email: string; role: AppUser['role']; is_active: boolean }[] }>('/users'),
+        apiClient.get<{ ok: boolean; data: { id: string; name: string; email: string; role: AppUser['role']; is_active: boolean; profiles?: AppUser['profiles']; profile_ids?: string[] }[] }>('/users'),
         apiClient.get<{ ok: boolean; data: Invite[] }>('/users/invites'),
       ])
       if (usersRes.data.ok) {
         const loaded: AppUser[] = usersRes.data.data.map(u => ({
           id: u.id, name: u.name, email: u.email, role: u.role, active: u.is_active,
+          profiles: u.profiles || [], profile_ids: u.profile_ids || [],
         }))
         setUsers(loaded)
         setPerms(Object.fromEntries(loaded.map(u => [u.id, defaultPerms(u.role)])))
@@ -529,12 +689,14 @@ export default function ConfiguracoesPage() {
     setInvErrors(e)
     if (Object.keys(e).length) return
 
+    const finalRole = inferRoleFromProfileIds(invProfileIds, invRole)
+
     setInvSaving(true)
     try {
       const r = await apiClient.post('/users/invite', {
         name:             invName.trim(),
         email:            invEmail.trim().toLowerCase(),
-        role:             invRole,
+        role:             finalRole,
         profile_ids:      invProfileIds,
         auto_activate:    invAutoActivate,
         use_temp_password: invUseTempPw,
@@ -612,17 +774,33 @@ export default function ConfiguracoesPage() {
 
   const ROLE_LABELS = {
     admin: 'Admin', manager: 'Gerente', broker: 'Corretor',
+    financial: 'Financeiro', controller: 'Controladoria',
     accountant: 'Contador', viewer: 'Visualizador',
     assistant: 'Assistente', supplier: 'Fornecedor',
     client: 'Cliente', consultant: 'Consultor',
   }
   const ROLE_COLORS = {
     admin: 'bg-violet-100 text-violet-700', manager: 'bg-blue-100 text-blue-700',
-    broker: 'bg-emerald-100 text-emerald-700', accountant: 'bg-amber-100 text-amber-700',
+    broker: 'bg-emerald-100 text-emerald-700', financial: 'bg-orange-100 text-orange-700',
+    controller: 'bg-yellow-100 text-yellow-700', accountant: 'bg-amber-100 text-amber-700',
     viewer: 'bg-slate-100 text-slate-600',
     assistant: 'bg-sky-100 text-sky-700', supplier: 'bg-orange-100 text-orange-700',
     client: 'bg-teal-100 text-teal-700', consultant: 'bg-indigo-100 text-indigo-700',
   }
+
+  const ROLE_OPTIONS: { id: AppUser['role']; label: string }[] = [
+    { id: 'admin', label: 'Admin' },
+    { id: 'manager', label: 'Gerente' },
+    { id: 'broker', label: 'Corretor' },
+    { id: 'financial', label: 'Financeiro' },
+    { id: 'controller', label: 'Controladoria' },
+    { id: 'accountant', label: 'Contador' },
+    { id: 'assistant', label: 'Assistente' },
+    { id: 'consultant', label: 'Consultor' },
+    { id: 'supplier', label: 'Fornecedor' },
+    { id: 'client', label: 'Cliente' },
+    { id: 'viewer', label: 'Visualizador' },
+  ]
 
   return (
     <div className="space-y-5 max-w-5xl">
@@ -780,30 +958,55 @@ export default function ConfiguracoesPage() {
                 <div className="space-y-1">
                   {usersLoading
                     ? <p className="text-xs text-slate-400 animate-pulse py-4 text-center">Carregando usuários...</p>
-                    : users.map(u => (
-                    <div key={u.id} className={cn('flex items-center gap-3 py-3 border-b border-slate-50 last:border-0', !u.active && 'opacity-50')}>
-                      <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                        <span className="text-blue-700 text-xs font-semibold">
-                          {u.name.split(' ').slice(0,2).map(n => n[0]).join('')}
-                        </span>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-slate-900">{u.name}</p>
-                          {!u.active && <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">Inativo</span>}
+                    : users.map(u => {
+                      const linkedProfileIds = userProfiles[u.id] ?? u.profile_ids ?? []
+                      const linkedProfiles = linkedProfileIds.length
+                        ? profiles.filter(p => linkedProfileIds.includes(p.id))
+                        : (u.profiles || [])
+                      const visibleProfiles = linkedProfiles.slice(0, 2)
+                      return (
+                        <div key={u.id} className={cn('flex items-center gap-3 py-3 border-b border-slate-50 last:border-0', !u.active && 'opacity-50')}>
+                          <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                            <span className="text-blue-700 text-xs font-semibold">
+                              {u.name.split(' ').slice(0,2).map(n => n[0]).join('')}
+                            </span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium text-slate-900">{u.name}</p>
+                              {!u.active && <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">Inativo</span>}
+                            </div>
+                            <p className="text-xs text-slate-500">{u.email}</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap justify-end max-w-[260px]">
+                            {visibleProfiles.length > 0 ? visibleProfiles.map(p => (
+                              <span key={p.id} className="text-xs px-2.5 py-1 rounded-full font-medium text-white"
+                                style={{ background: p.color || '#2563EB' }}>
+                                {p.name}
+                              </span>
+                            )) : (
+                              <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium', ROLE_COLORS[u.role])}>
+                                {ROLE_LABELS[u.role]}
+                              </span>
+                            )}
+                            {linkedProfiles.length > 2 && (
+                              <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-500 font-medium">+{linkedProfiles.length - 2}</span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => { setSelectedUser(u); setTab('permissoes') }}
+                            className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-colors">
+                            <Shield className="w-3.5 h-3.5" /> Permissoes
+                          </button>
+                          <button
+                            onClick={() => openUserActions(u)}
+                            className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                            title="Ações do usuário">
+                            <MoreHorizontal className="w-4 h-4" />
+                          </button>
                         </div>
-                        <p className="text-xs text-slate-500">{u.email}</p>
-                      </div>
-                      <span className={cn('text-xs px-2.5 py-1 rounded-full font-medium', ROLE_COLORS[u.role])}>
-                        {ROLE_LABELS[u.role]}
-                      </span>
-                      <button
-                        onClick={() => { setSelectedUser(u); setTab('permissoes') }}
-                        className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-colors">
-                        <Shield className="w-3.5 h-3.5" /> Permissoes
-                      </button>
-                    </div>
-                  ))}
+                      )
+                    })}
                 </div>
                 <button
                   onClick={() => { resetInvite(); setShowInvite(true) }}
@@ -979,11 +1182,13 @@ export default function ConfiguracoesPage() {
                                 const selected = invProfileIds.includes(p.id)
                                 return (
                                   <button key={p.id}
-                                    onClick={() => setInvProfileIds(prev =>
-                                      prev.includes(p.id)
+                                    onClick={() => setInvProfileIds(prev => {
+                                      const next = prev.includes(p.id)
                                         ? prev.filter(id => id !== p.id)
                                         : [...prev, p.id]
-                                    )}
+                                      setInvRole(inferRoleFromProfileIds(next, invRole))
+                                      return next
+                                    })}
                                     className={cn(
                                       'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border',
                                       selected ? 'border-transparent text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
@@ -999,6 +1204,15 @@ export default function ConfiguracoesPage() {
                           {invProfileIds.length === 0 && profiles.length > 0 && (
                             <p className="text-[10px] text-amber-600">Selecione ao menos um perfil</p>
                           )}
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-medium text-slate-600">Tipo do usuário no sistema</label>
+                          <select value={invRole} onChange={e => setInvRole(e.target.value as AppUser['role'])}
+                            className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-2 bg-white text-slate-700 focus:outline-none focus:border-blue-400">
+                            {ROLE_OPTIONS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                          </select>
+                          <p className="text-[10px] text-slate-400">Preenchido automaticamente pelo perfil selecionado, mas pode ser ajustado manualmente.</p>
                         </div>
 
                         {/* Opções */}
@@ -1086,6 +1300,184 @@ export default function ConfiguracoesPage() {
                         </div>
                       </div>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Modal de ações do usuário ── */}
+              {actionUser && (
+                <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 pt-16 overflow-y-auto">
+                  <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl">
+                    <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                      <div>
+                        <h2 className="text-base font-bold text-slate-800">Ações do usuário</h2>
+                        <p className="text-xs text-slate-500 mt-0.5">{actionUser.name} · {actionUser.email}</p>
+                      </div>
+                      <button onClick={closeUserActions}
+                        className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="px-6 py-5 space-y-4">
+                      {actionMessage && (
+                        <div className={cn('border rounded-xl px-3 py-2 text-xs',
+                          actionMessage.type === 'ok'
+                            ? 'bg-green-50 border-green-200 text-green-700'
+                            : 'bg-red-50 border-red-200 text-red-600'
+                        )}>
+                          {actionMessage.text}
+                        </div>
+                      )}
+
+                      {actionMode === 'menu' && (
+                        <div className="grid grid-cols-2 gap-3">
+                          <button onClick={() => setActionMode('perfil')}
+                            className="text-left p-4 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors">
+                            <p className="text-sm font-semibold text-slate-800">Alterar perfil</p>
+                            <p className="text-xs text-slate-500 mt-1">Mudar perfil de acesso e tipo do usuário.</p>
+                          </button>
+                          <button onClick={() => { setActionMode('convite'); resendUserInvite() }} disabled={actionLoading}
+                            className="text-left p-4 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-60">
+                            <p className="text-sm font-semibold text-slate-800">Reenviar convite</p>
+                            <p className="text-xs text-slate-500 mt-1">Gera um novo link de convite para o usuário.</p>
+                          </button>
+                          <button onClick={() => setActionMode('senha')}
+                            className="text-left p-4 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors">
+                            <p className="text-sm font-semibold text-slate-800">Reset de senha</p>
+                            <p className="text-xs text-slate-500 mt-1">Gerar senha temporária e obrigar troca.</p>
+                          </button>
+                          <button onClick={() => setActionMode('excluir')}
+                            className="text-left p-4 rounded-xl border border-red-100 hover:bg-red-50 transition-colors">
+                            <p className="text-sm font-semibold text-red-700">Excluir usuário</p>
+                            <p className="text-xs text-red-500 mt-1">Inativa o usuário, sem apagar histórico.</p>
+                          </button>
+                        </div>
+                      )}
+
+                      {actionMode === 'perfil' && (
+                        <div className="space-y-4">
+                          <div>
+                            <label className="text-xs font-medium text-slate-600">Tipo do usuário</label>
+                            <select value={editRole} onChange={e => setEditRole(e.target.value as AppUser['role'])}
+                              className="mt-1 w-full border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:border-blue-400">
+                              {ROLE_OPTIONS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+                            </select>
+                            <p className="text-[10px] text-slate-400 mt-1">Ao selecionar um perfil como Financeiro, o tipo também é ajustado automaticamente.</p>
+                          </div>
+
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="text-xs font-medium text-slate-600">Perfis de acesso</label>
+                              <span className="text-[10px] text-slate-400">{editProfileIds.length} selecionado{editProfileIds.length !== 1 ? 's' : ''}</span>
+                            </div>
+                            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                              {profiles.map(p => {
+                                const selected = editProfileIds.includes(p.id)
+                                return (
+                                  <label key={p.id}
+                                    className={cn('flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors',
+                                      selected ? 'border-blue-200 bg-blue-50' : 'border-slate-100 hover:bg-slate-50'
+                                    )}>
+                                    <input type="checkbox" checked={selected}
+                                      onChange={() => toggleEditProfile(p.id)}
+                                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: p.color }} />
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium text-slate-800">{p.name}</p>
+                                      {p.description && <p className="text-xs text-slate-500 truncate">{p.description}</p>}
+                                    </div>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2 pt-1">
+                            <button onClick={() => setActionMode('menu')}
+                              className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
+                              Voltar
+                            </button>
+                            <button onClick={saveUserAccess} disabled={actionLoading}
+                              className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold text-white bg-[#1e3a5f] hover:bg-[#162d4a] rounded-lg transition-colors disabled:opacity-60">
+                              {actionLoading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Salvando…</> : 'Salvar perfil'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {actionMode === 'convite' && (
+                        <div className="space-y-4">
+                          {actionLoading && <p className="text-xs text-slate-400 animate-pulse">Gerando novo convite...</p>}
+                          {resendInviteUrl && (
+                            <div>
+                              <p className="text-xs font-medium text-slate-600 mb-1.5">Link do convite</p>
+                              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                                <p className="flex-1 text-xs text-slate-600 truncate font-mono">{resendInviteUrl}</p>
+                                <button onClick={() => copyToClipboard(resendInviteUrl, 'user-invite')}
+                                  className="shrink-0 flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                                  {invCopied === 'user-invite' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                                  {invCopied === 'user-invite' ? 'Copiado!' : 'Copiar'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          <button onClick={() => setActionMode('menu')}
+                            className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
+                            Voltar
+                          </button>
+                        </div>
+                      )}
+
+                      {actionMode === 'senha' && (
+                        <div className="space-y-4">
+                          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 text-xs text-amber-700">
+                            Isso gera uma senha temporária e ativa a obrigação de troca no próximo acesso.
+                          </div>
+                          {resetTempPassword && (
+                            <div>
+                              <p className="text-xs font-medium text-slate-600 mb-1.5">Senha temporária</p>
+                              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                                <p className="flex-1 text-sm font-mono font-bold text-slate-800 tracking-widest">{resetTempPassword}</p>
+                                <button onClick={() => copyToClipboard(resetTempPassword, 'reset-pw')}
+                                  className="shrink-0 flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                                  {invCopied === 'reset-pw' ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                                  {invCopied === 'reset-pw' ? 'Copiado!' : 'Copiar'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex gap-2">
+                            <button onClick={() => setActionMode('menu')}
+                              className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
+                              Voltar
+                            </button>
+                            <button onClick={resetUserPassword} disabled={actionLoading}
+                              className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold text-white bg-[#1e3a5f] hover:bg-[#162d4a] rounded-lg transition-colors disabled:opacity-60">
+                              {actionLoading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Gerando…</> : 'Gerar senha temporária'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {actionMode === 'excluir' && (
+                        <div className="space-y-4">
+                          <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-red-600">
+                            O usuário será inativado. O histórico de lançamentos e ações será mantido.
+                          </div>
+                          <div className="flex gap-2">
+                            <button onClick={() => setActionMode('menu')}
+                              className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
+                              Cancelar
+                            </button>
+                            <button onClick={deactivateUser} disabled={actionLoading || !actionUser.active}
+                              className="flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-60">
+                              {actionLoading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Inativando…</> : actionUser.active ? 'Inativar usuário' : 'Usuário já está inativo'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1703,17 +2095,6 @@ export default function ConfiguracoesPage() {
             </Section>
           )}
 
-          {tab === 'plano' && (
-            <Section title="Plano atual">
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-semibold text-blue-900">Plano Premium</span>
-                  <span className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded-full">Ativo</span>
-                </div>
-                <p className="text-sm text-blue-800">Adesao: R$ 10.000,00 · Mensalidade: R$ 2.590,00</p>
-              </div>
-            </Section>
-          )}
 
           {tab === 'email' && (
             <Section title="E-mail (SES)">

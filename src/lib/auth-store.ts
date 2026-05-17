@@ -24,6 +24,8 @@ export interface AuthUser {
   tenantSlug: string
   hubType:    'santa_clara' | 'larm' | 'generic'
   mustChangePassword: boolean
+  profiles?: Array<{ id: string; name: string; color?: string }>
+  permissions?: Record<string, { read: boolean; write: boolean }>
 }
 
 interface AuthState {
