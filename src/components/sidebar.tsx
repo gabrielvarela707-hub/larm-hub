@@ -56,6 +56,7 @@ const NAV: NavItem[] = [
     label: "Cadastros Auxiliares", icon: Tag,
     children: [
       { label: "Tipo de Documento", href: "/cadastros/tipo-documento" },
+      { label: "Plano de Contas", href: "/cadastros/plano-contas" },
     ],
   },
   { label: 'Relatorios',        href: '/relatorios',     icon: BarChart3,
@@ -81,7 +82,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname    = usePathname()
   const hydrate     = useTenantConfig(s => s.hydrate)
   const config      = useTenantConfig(s => s.config)
-  const [openGroups, setOpenGroups] = useState<string[]>(['CRM & Funil', 'Financeiro'])
+  const [openGroups, setOpenGroups] = useState<string[]>(['CRM & Funil', 'Financeiro', 'Cadastros Auxiliares'])
 
   useEffect(() => { hydrate() }, [hydrate])
 
