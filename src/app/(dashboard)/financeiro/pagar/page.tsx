@@ -171,6 +171,58 @@ function BancoSelect({ value, onChange, inp }: { value: string; onChange: (v: st
   )
 }
 
+
+// ─── PlanoContasSelect ───────────────────────────────────────────────────────
+function PlanoContasSelect({ value, onChange, contas, inp }: { value: string; onChange: (v: string) => void; contas: PlanoConta[]; inp: string }) {
+  const [open, setOpen] = useState(false)
+  const [busca, setBusca] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+  const termo = busca.toLowerCase().trim()
+  const filtered = contas.filter(c =>
+    c.codigo.includes(busca) || c.descricao.toLowerCase().includes(termo)
+  ).slice(0, 80)
+  const selected = contas.find(c => c.codigo === value)
+
+  useEffect(() => {
+    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', fn)
+    return () => document.removeEventListener('mousedown', fn)
+  }, [])
+
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className={cn(inp, 'flex items-center justify-between gap-2 text-left')}>
+        <span className={cn('truncate', selected ? 'text-slate-700' : 'text-slate-400')}>
+          {selected ? `${selected.codigo} — ${selected.descricao}` : 'Selecione o plano…'}
+        </span>
+        <ChevronsUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-[70] w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl">
+          <div className="p-2 border-b border-slate-100">
+            <input autoFocus value={busca} onChange={e => setBusca(e.target.value)}
+              placeholder="Buscar por código ou descrição…"
+              className="w-full px-2 py-1.5 text-xs rounded border border-slate-200 bg-white outline-none" />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            <button type="button" onClick={() => { onChange(''); setOpen(false); setBusca('') }}
+              className="w-full text-left px-3 py-2 text-xs text-slate-400 hover:bg-slate-50">— Nenhum —</button>
+            {filtered.map(c => (
+              <button key={c.codigo} type="button"
+                onClick={() => { onChange(c.codigo); setOpen(false); setBusca('') }}
+                className={cn('w-full text-left px-3 py-2 text-xs hover:bg-blue-50', value === c.codigo && 'bg-blue-50 font-medium')}>
+                <span className="font-mono text-blue-600 mr-2">{c.codigo}</span>{c.descricao}
+              </button>
+            ))}
+            {filtered.length === 0 && <p className="px-3 py-4 text-xs text-slate-400 text-center">Nenhum plano encontrado</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function PagarPage() {
   const [lista,     setLista]     = useState<Lancamento[]>([])
   const [total,     setTotal]     = useState(0)
@@ -972,10 +1024,7 @@ export default function PagarPage() {
                     {fDocumentoErro && <p className="text-[10px] text-red-500">{fDocumentoErro}</p>}
                   </F>
                   <F label="Plano de Contas" name="conta_contabil">
-                    <select className={inp} value={fConta} onChange={e => setFConta(e.target.value)}>
-                      <option value="">Selecione</option>
-                      {plano.map(c => <option key={c.codigo} value={c.codigo}>{c.codigo} – {c.descricao}</option>)}
-                    </select>
+                    <PlanoContasSelect value={fConta} onChange={setFConta} contas={plano} inp={inp} />
                   </F>
                   <F label="Banco para Pagamento" name="banco_conta_id">
                     <BancoSelect
