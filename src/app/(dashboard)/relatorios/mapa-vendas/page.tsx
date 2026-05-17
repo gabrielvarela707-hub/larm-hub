@@ -52,7 +52,7 @@ interface ObraFilter { codigo: number; nome: string; empresa?: string }
 interface Resumo {
   por_ano: Array<{ ano: number; contratos: number; total_prazo: number; total_vista: number; total_entrada: number; area_total: number; preco_m2_medio: number }>
   por_empresa: Array<{ empresa: string; contratos: number; total_prazo: number; total_vista: number; area_total: number }>
-  recentes: Array<{ id: number; data_venda: string; empresa: string; unidade: string; cliente_nome: string; valor_prazo: number; entrada: number; num_parcelas: number }>
+  recentes: Array<{ id: number; data_venda: string; obra_id?: number | null; obra?: string | null; empresa: string; unidade: string; cliente_nome: string; valor_prazo: number; entrada: number; num_parcelas: number }>
   total: { total_contratos: number; total_prazo: number; total_entrada: number; area_total: number; primeira_venda: string; ultima_venda: string }
 }
 
