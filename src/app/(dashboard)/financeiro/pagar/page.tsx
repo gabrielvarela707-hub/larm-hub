@@ -11,7 +11,7 @@ interface Fornecedor { id: number; razao_social: string; empresa: string; cnpj_c
 interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null }
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
 interface TipoDocumento { id: number; nome: string }
-interface Parcela     { id?: number; numero: number; valor: number; vencimento: string; status: string; acrescimo?: number; multa?: number; juros?: number; desconto?: number; valor_final?: number }
+interface Parcela     { id?: number; numero: number; valor: number | string; vencimento: string; status: string; acrescimo?: number | string; multa?: number | string; juros?: number | string; desconto?: number | string; valor_final?: number | string }
 interface NovoFornecedorForm {
   razao_social: string
   nome_fantasia: string
@@ -126,10 +126,12 @@ const toFiniteNumber = (v: string | number | null | undefined, fallback = 0) => 
   const n = moneyToNumber(v)
   return Number.isFinite(n) ? n : fallback
 }
-const numberInputValue = (v: string | number | null | undefined) => {
+const decimalInputValue = (v: string | number | null | undefined) => {
+  if (v === undefined || v === null || v === '') return ''
+  if (typeof v === 'string') return v
   const n = toFiniteNumber(v, 0)
   if (n === 0) return ''
-  return Number(n.toFixed(2)).toString()
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 const calculaValorFinalParcela = (p: Pick<Parcela, 'valor' | 'acrescimo' | 'multa' | 'juros' | 'desconto'>) =>
   Math.max(0, toFiniteNumber(p.valor) + toFiniteNumber(p.acrescimo) + toFiniteNumber(p.multa) + toFiniteNumber(p.juros) - toFiniteNumber(p.desconto))
@@ -389,7 +391,7 @@ export default function PagarPage() {
       return
     }
 
-    const vlr = parseFloat(fValor) || 0
+    const vlr = moneyToNumber(fValor) || 0
     const n   = fNParc || 1
     if (vlr <= 0) { setParcelas([]); return }
     const ps: Parcela[] = Array.from({ length: n }, (_, i) => {
@@ -513,7 +515,7 @@ export default function PagarPage() {
     const e: Record<string, string> = {}
     if (!fEmp)       e.empresa   = 'Obrigatório'
     if (!fHistorico) e.historico = 'Obrigatório'
-    if (!fValor || parseFloat(fValor) <= 0) e.valor = 'Informe um valor válido'
+    if (!fValor || moneyToNumber(fValor) <= 0) e.valor = 'Informe um valor válido'
     if (fNF && fNF.replace(/\D/g, '').length > 0 && fNF.replace(/\D/g, '').length < 9)
       e.nf_doc = 'Mínimo 9 dígitos numéricos'
     setErrors(e)
@@ -653,7 +655,7 @@ export default function PagarPage() {
       setFTipoDoc(d.tipo_documento_id ? String(d.tipo_documento_id) : '')
       setFNF(d.nf_doc || '')
       setFEmissao(dateOnly(d.dt_emissao) || todayISO())
-      setFValor(numberInputValue(d.valor_total))
+      setFValor(decimalInputValue(d.valor_total))
       setFNParc(d.qtd_parcelas || 1)
       setFConta(d.conta_contabil || '')
       setFCC(d.centro_custo || '')
@@ -710,7 +712,7 @@ export default function PagarPage() {
         documento_mime:  fDocumentoMime   || null,
         documento_base64:fDocumentoBase64 || null,
         dt_emissao:      dateOnly(fEmissao) || null,
-        valor_total:     parseFloat(fValor),
+        valor_total:     moneyToNumber(fValor),
         qtd_parcelas:    fNParc,
         centro_custo:    fCC      || null,
         obs:             fObs     || null,
@@ -1142,7 +1144,7 @@ export default function PagarPage() {
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Valor e Parcelas</p>
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <F label="Valor Total (R$)" name="valor" required>
-                    <input className={inp} type="number" step="0.01" min="0"
+                    <input className={inp} type="text" inputMode="decimal"
                       value={fValor} onChange={e => setFValor(e.target.value)} placeholder="0,00" />
                   </F>
                   <F label="Número de Parcelas" name="qtd_parcelas">
@@ -1172,25 +1174,25 @@ export default function PagarPage() {
                           </div>
                           <div>
                             <label className="block text-[10px] text-slate-500 mb-1">Valor</label>
-                            <input type="number" step="0.01" value={numberInputValue(p.valor)}
+                            <input type="text" inputMode="decimal" value={decimalInputValue(p.valor)}
                               onChange={e => updateParcela(i, 'valor', e.target.value)}
                               className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-red-400 mb-1">Multa</label>
-                            <input type="number" step="0.01" min="0" value={numberInputValue(p.multa)} placeholder="0,00"
+                            <input type="text" inputMode="decimal" value={decimalInputValue(p.multa)} placeholder="0,00"
                               onChange={e => updateParcela(i, 'multa', e.target.value)}
                               className="text-xs border border-red-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-red-600" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-orange-400 mb-1">Juros</label>
-                            <input type="number" step="0.01" min="0" value={numberInputValue(p.juros)} placeholder="0,00"
+                            <input type="text" inputMode="decimal" value={decimalInputValue(p.juros)} placeholder="0,00"
                               onChange={e => updateParcela(i, 'juros', e.target.value)}
                               className="text-xs border border-orange-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-orange-600" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-green-500 mb-1">Desconto</label>
-                            <input type="number" step="0.01" min="0" value={numberInputValue(p.desconto)} placeholder="0,00"
+                            <input type="text" inputMode="decimal" value={decimalInputValue(p.desconto)} placeholder="0,00"
                               onChange={e => updateParcela(i, 'desconto', e.target.value)}
                               className="text-xs border border-green-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-green-700" />
                           </div>
@@ -1250,7 +1252,7 @@ export default function PagarPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-slate-600">Valor da parcela</label>
-                  <input className={inp} type="number" step="0.01" min="0"
+                  <input className={inp} type="text" inputMode="decimal"
                     value={baixaForm.valor_parcela} onChange={e => updateBaixaForm('valor_parcela', e.target.value)} />
                 </div>
                 <div>
@@ -1261,28 +1263,28 @@ export default function PagarPage() {
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Acréscimos</label>
-                  <input className={inp} type="number" step="0.01" min="0"
+                  <input className={inp} type="text" inputMode="decimal"
                     value={baixaForm.acrescimo} onChange={e => updateBaixaForm('acrescimo', e.target.value)} />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Descontos</label>
-                  <input className={inp} type="number" step="0.01" min="0"
+                  <input className={inp} type="text" inputMode="decimal"
                     value={baixaForm.desconto} onChange={e => updateBaixaForm('desconto', e.target.value)} />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Juros</label>
-                  <input className={inp} type="number" step="0.01" min="0"
+                  <input className={inp} type="text" inputMode="decimal"
                     value={baixaForm.juros} onChange={e => updateBaixaForm('juros', e.target.value)} />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Multa</label>
-                  <input className={inp} type="number" step="0.01" min="0"
+                  <input className={inp} type="text" inputMode="decimal"
                     value={baixaForm.multa} onChange={e => updateBaixaForm('multa', e.target.value)} />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Valor final</label>
                   <input className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50 text-slate-700 focus:outline-none"
-                    type="number" step="0.01" value={baixaForm.valor_final} readOnly />
+                    type="text" inputMode="decimal" value={baixaForm.valor_final} readOnly />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Forma de pagamento <span className="text-red-500">*</span></label>
