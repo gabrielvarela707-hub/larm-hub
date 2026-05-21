@@ -1,25 +1,17 @@
 /**
  * server/src/routes/fornecedores_bancos.js
  * Fornecedores, Bancos/Contas, Plano de Contas, Lançamentos CP
- *
- * ALTERAÇÕES v2:
- * - POST/PUT /fornecedores: adicionado codigo_banco, digito, tipo_pix, codigo (min 6 dígitos)
- * - POST /lancamentos-cp: nf_doc validação mín. 9 dígitos; parcelas com multa/juros/desconto
- * - PUT /lancamentos-cp/:id  — NOVO: edita lançamento + parcelas pendentes
- * - DELETE /lancamentos-cp/:id — NOVO: exclui se não houver parcelas pagas
  */
 
 const express          = require('express')
 const { query }        = require('../config/database')
 const { authenticate } = require('../middleware/authenticate')
 const logger           = require('../config/logger')
+const { PLANO_CONTAS_SEED } = require('../data/plano_contas_seed')
 
 const router = express.Router()
 router.use(authenticate)
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Helpers IA (sem alterações)
-// ──────────────────────────────────────────────────────────────────────────────
 
 const AI_JSON_SCHEMA_PROMPT = `
 Você é um extrator de dados financeiros para Contas a Pagar no Brasil.
@@ -40,6 +32,7 @@ Formato obrigatório:
     { "numero": number, "valor": number, "vencimento": "YYYY-MM-DD" }
   ]
 }
+
 Regras:
 - valor_total deve ser número em reais, usando ponto decimal.
 - datas devem estar em ISO YYYY-MM-DD.
@@ -52,7 +45,8 @@ function extractTextFromOpenAIResponse(json) {
   const out = Array.isArray(json.output) ? json.output : []
   return out.flatMap(item => Array.isArray(item.content) ? item.content : [])
     .map(part => part.text || part.value || '')
-    .filter(Boolean).join('\n')
+    .filter(Boolean)
+    .join('\n')
 }
 
 function extractTextFromGeminiResponse(json) {
@@ -63,24 +57,27 @@ function extractTextFromGeminiResponse(json) {
 function parseAiJson(text) {
   const cleaned = String(text || '').trim()
   if (!cleaned) throw new Error('A IA não retornou conteúdo')
+
   const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i)
   const candidate = fenced?.[1] || cleaned
   try { return JSON.parse(candidate) } catch {}
+
   const first = candidate.indexOf('{')
-  const last  = candidate.lastIndexOf('}')
+  const last = candidate.lastIndexOf('}')
   if (first >= 0 && last > first) return JSON.parse(candidate.slice(first, last + 1))
+
   throw new Error('A IA não retornou um JSON válido')
 }
 
 function normalizeAiResult(raw) {
-  const toStr   = v => (v === undefined || v === null || v === '') ? null : String(v)
-  const toNum   = v => {
+  const toStringOrNull = (v) => v === undefined || v === null || v === '' ? null : String(v)
+  const toNumberOrNull = (v) => {
     if (v === undefined || v === null || v === '') return null
     if (typeof v === 'number') return Number.isFinite(v) ? v : null
-    const n = Number(String(v).replace(/\./g,'').replace(',','.').replace(/[^0-9.-]/g,''))
+    const n = Number(String(v).replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, ''))
     return Number.isFinite(n) ? n : null
   }
-  const toDate  = v => {
+  const isoDateOrNull = (v) => {
     if (!v) return null
     const s = String(v).trim()
     if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
@@ -88,19 +85,24 @@ function normalizeAiResult(raw) {
     if (br) return `${br[3]}-${br[2]}-${br[1]}`
     return null
   }
+
   const parcelas = Array.isArray(raw?.parcelas)
-    ? raw.parcelas.map((p,i) => ({ numero: Number(p?.numero)||i+1, valor: toNum(p?.valor), vencimento: toDate(p?.vencimento) }))
-        .filter(p => p.valor !== null && p.vencimento)
+    ? raw.parcelas.map((p, idx) => ({
+        numero: Number(p?.numero) || idx + 1,
+        valor: toNumberOrNull(p?.valor),
+        vencimento: isoDateOrNull(p?.vencimento),
+      })).filter(p => p.valor !== null && p.vencimento)
     : []
+
   return {
-    fornecedor_nome: toStr(raw?.fornecedor_nome),
-    fornecedor_cnpj: toStr(raw?.fornecedor_cnpj),
-    tipo_documento:  toStr(raw?.tipo_documento),
-    numero_documento:toStr(raw?.numero_documento),
-    historico:       toStr(raw?.historico),
-    data_emissao:    toDate(raw?.data_emissao),
-    data_vencimento: toDate(raw?.data_vencimento),
-    valor_total:     toNum(raw?.valor_total),
+    fornecedor_nome: toStringOrNull(raw?.fornecedor_nome),
+    fornecedor_cnpj: toStringOrNull(raw?.fornecedor_cnpj),
+    tipo_documento: toStringOrNull(raw?.tipo_documento),
+    numero_documento: toStringOrNull(raw?.numero_documento),
+    historico: toStringOrNull(raw?.historico),
+    data_emissao: isoDateOrNull(raw?.data_emissao),
+    data_vencimento: isoDateOrNull(raw?.data_vencimento),
+    valor_total: toNumberOrNull(raw?.valor_total),
     parcelas,
   }
 }
@@ -108,66 +110,116 @@ function normalizeAiResult(raw) {
 function parseMoney(value, fallback = 0) {
   if (value === undefined || value === null || value === '') return fallback
   if (typeof value === 'number') return Number.isFinite(value) ? value : fallback
-  const n = Number(String(value).replace(/\./g,'').replace(',','.').replace(/[^0-9.-]/g,''))
+  const n = Number(String(value).replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, ''))
   return Number.isFinite(n) ? n : fallback
 }
 
 function splitDateParts(dateValue) {
   const dt = new Date(`${dateValue}T00:00:00`)
-  return { dia: dt.getUTCDate(), mes: dt.getUTCMonth()+1, ano: dt.getUTCFullYear() }
+  return {
+    dia: dt.getUTCDate(),
+    mes: dt.getUTCMonth() + 1,
+    ano: dt.getUTCFullYear(),
+  }
 }
 
+
 function bancoLancamentoLabel(tipo) {
-  return ({ saldo_inicial:'Saldo Inicial', taxa:'Taxa Bancária', rendimento:'Rendimento', aplicacao:'Aplicação' })[tipo] || 'Lançamento Bancário'
+  const labels = {
+    saldo_inicial: 'Saldo Inicial',
+    taxa: 'Taxa Bancária',
+    rendimento: 'Rendimento',
+    aplicacao: 'Aplicação',
+  }
+  return labels[tipo] || 'Lançamento Bancário'
 }
 
 async function inserirMovimentoBanco(client, { conta, tipo, descricao, valor, data, movimentoId = null }) {
-  const valorNum  = parseMoney(valor)
-  const pd        = splitDateParts(data)
-  const saida     = tipo === 'taxa' || valorNum < 0
-  const valorAbs  = Math.abs(valorNum)
-  const label     = bancoLancamentoLabel(tipo)
-  const historico = `${label}: ${descricao || [conta?.banco_nome, conta?.agencia, conta?.conta].filter(Boolean).join(' / ')}`.trim()
-  const payload   = [
-    data, conta?.empresa||null, conta?.banco_nome||null,
-    saida ? 0 : valorAbs, saida ? valorAbs : 0,
-    null, historico, null, label, null, null, null, null,
-    pd.dia, pd.mes, pd.ano, null, 'financeiro', null, null, conta?.id||null,
+  const valorNum = parseMoney(valor)
+  const partesData = splitDateParts(data)
+  const saida = tipo === 'taxa' || valorNum < 0
+  const valorAbs = Math.abs(valorNum)
+  const entradas = saida ? 0 : valorAbs
+  const saidas = saida ? valorAbs : 0
+  const label = bancoLancamentoLabel(tipo)
+  const contaLabel = [conta?.banco_nome, conta?.agencia, conta?.conta].filter(Boolean).join(' / ')
+  const historico = `${label}: ${descricao || contaLabel || ''}`.trim()
+
+  const payload = [
+    data,
+    conta?.empresa || null,
+    conta?.banco_nome || null,
+    entradas,
+    saidas,
+    null,
+    historico,
+    null,
+    label,
+    null,
+    null,
+    null,
+    null,
+    partesData.dia,
+    partesData.mes,
+    partesData.ano,
+    null,
+    'financeiro',
+    null,
+    null,
+    conta?.id || null,
   ]
+
   if (movimentoId) {
     await client.query(
-      `UPDATE fin_movimento SET data=$1,empresa=$2,banco=$3,entradas=$4,saidas=$5,fornecedor=$6,
-       historico=$7,nf_doc=$8,conta_contabil=$9,centro_custo=$10,obra=$11,natureza_financeira=$12,
-       n_cheque=$13,dia=$14,mes=$15,ano=$16,saldo=$17,tipo_lancamento=$18,vencimento=$19,
-       fornecedor_id=$20,banco_conta_id=$21 WHERE id=$22`,
+      `UPDATE fin_movimento
+       SET data=$1, empresa=$2, banco=$3, entradas=$4, saidas=$5, fornecedor=$6,
+           historico=$7, nf_doc=$8, conta_contabil=$9, centro_custo=$10, obra=$11,
+           natureza_financeira=$12, n_cheque=$13, dia=$14, mes=$15, ano=$16,
+           saldo=$17, tipo_lancamento=$18, vencimento=$19, fornecedor_id=$20, banco_conta_id=$21
+       WHERE id=$22`,
       [...payload, movimentoId]
     )
     return movimentoId
   }
+
   const { rows } = await client.query(
-    `INSERT INTO fin_movimento (data,empresa,banco,entradas,saidas,fornecedor,historico,nf_doc,
-     conta_contabil,centro_custo,obra,natureza_financeira,n_cheque,dia,mes,ano,saldo,
-     tipo_lancamento,vencimento,fornecedor_id,banco_conta_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING id`,
+    `INSERT INTO fin_movimento
+      (data, empresa, banco, entradas, saidas, fornecedor, historico, nf_doc,
+       conta_contabil, centro_custo, obra, natureza_financeira, n_cheque,
+       dia, mes, ano, saldo, tipo_lancamento, vencimento, fornecedor_id, banco_conta_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+     RETURNING id`,
     payload
   )
   return rows[0]?.id || null
 }
 
 async function analyzeWithOpenAI({ apiKey, documento_nome, documento_mime, documento_base64 }) {
-  const dataUrl  = `data:${documento_mime};base64,${documento_base64}`
+  const dataUrl = `data:${documento_mime};base64,${documento_base64}`
   const filePart = documento_mime === 'application/pdf'
-    ? { type:'input_file', filename: documento_nome||'documento.pdf', file_data: dataUrl }
-    : { type:'input_image', image_url: dataUrl }
+    ? { type: 'input_file', filename: documento_nome || 'documento.pdf', file_data: dataUrl }
+    : { type: 'input_image', image_url: dataUrl }
+
   const resp = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
-    headers: { Authorization:`Bearer ${apiKey}`, 'Content-Type':'application/json' },
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
       model: process.env.OPENAI_VISION_MODEL || 'gpt-4.1-mini',
-      input: [{ role:'user', content:[{ type:'input_text', text:AI_JSON_SCHEMA_PROMPT }, filePart] }],
-      temperature: 0.1, max_output_tokens: 1200,
+      input: [{
+        role: 'user',
+        content: [
+          { type: 'input_text', text: AI_JSON_SCHEMA_PROMPT },
+          filePart,
+        ],
+      }],
+      temperature: 0.1,
+      max_output_tokens: 1200,
     }),
   })
+
   const json = await resp.json().catch(() => ({}))
   if (!resp.ok) throw new Error(json?.error?.message || 'Erro ao consultar OpenAI')
   return parseAiJson(extractTextFromOpenAIResponse(json))
@@ -175,16 +227,29 @@ async function analyzeWithOpenAI({ apiKey, documento_nome, documento_mime, docum
 
 async function analyzeWithGemini({ apiKey, documento_mime, documento_base64 }) {
   const model = process.env.GEMINI_VISION_MODEL || 'gemini-1.5-flash'
-  const resp  = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+  const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
     method: 'POST',
-    headers: { 'Content-Type':'application/json' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents:[{ role:'user', parts:[{ text:AI_JSON_SCHEMA_PROMPT },{ inline_data:{ mime_type:documento_mime, data:documento_base64 } }] }],
-      generationConfig:{ temperature:0.1, response_mime_type:'application/json' },
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: AI_JSON_SCHEMA_PROMPT },
+          { inline_data: { mime_type: documento_mime, data: documento_base64 } },
+        ],
+      }],
+      generationConfig: {
+        temperature: 0.1,
+        response_mime_type: 'application/json',
+      },
     }),
   })
+
   const json = await resp.json().catch(() => ({}))
-  if (!resp.ok) throw new Error(json?.error?.message || 'Erro ao consultar Gemini')
+  if (!resp.ok) {
+    const msg = json?.error?.message || 'Erro ao consultar Gemini'
+    throw new Error(msg)
+  }
   return parseAiJson(extractTextFromGeminiResponse(json))
 }
 
@@ -192,593 +257,1045 @@ async function analyzeWithGemini({ apiKey, documento_mime, documento_base64 }) {
 // FORNECEDORES
 // ══════════════════════════════════════════════════════════════════════════════
 
+// GET /fornecedores — lista com filtros
 router.get('/fornecedores', async (req, res) => {
   const { empresa, categoria, busca, ativo = 'true', page = 1, limit = 50 } = req.query
-  const conditions = [], params = []
-  if (ativo !== 'all') { params.push(ativo === 'true'); conditions.push(`ativo = $${params.length}`) }
-  if (empresa && empresa !== 'TODOS') { params.push(empresa.toUpperCase()); conditions.push(`(empresa = $${params.length} OR empresa = 'TODOS')`) }
-  if (categoria) { params.push(categoria); conditions.push(`categoria = $${params.length}`) }
-  if (busca) { params.push(`%${busca}%`); conditions.push(`(razao_social ILIKE $${params.length} OR nome_fantasia ILIKE $${params.length} OR cnpj_cpf ILIKE $${params.length} OR COALESCE(codigo,'') ILIKE $${params.length})`) }
+  const conditions = []
+  const params = []
+
+  if (ativo !== 'all') {
+    params.push(ativo === 'true')
+    conditions.push(`ativo = $${params.length}`)
+  }
+  if (empresa && empresa !== 'TODOS') {
+    params.push(empresa.toUpperCase())
+    conditions.push(`(empresa = $${params.length} OR empresa = 'TODOS')`)
+  }
+  if (categoria) {
+    params.push(categoria)
+    conditions.push(`categoria = $${params.length}`)
+  }
+  if (busca) {
+    params.push(`%${busca}%`)
+    conditions.push(`(razao_social ILIKE $${params.length} OR nome_fantasia ILIKE $${params.length} OR cnpj_cpf ILIKE $${params.length})`)
+  }
+
   const where  = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-  const offset = (parseInt(page)-1)*parseInt(limit)
+  const offset = (parseInt(page) - 1) * parseInt(limit)
   params.push(parseInt(limit), offset)
+
   try {
-    const { rows } = await query(`SELECT * FROM fin_fornecedores ${where} ORDER BY razao_social LIMIT $${params.length-1} OFFSET $${params.length}`, params)
-    const ct = await query(`SELECT COUNT(*) FROM fin_fornecedores ${where}`, params.slice(0,-2))
-    return res.json({ ok:true, data:rows, total:parseInt(ct.rows[0].count) })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    const { rows } = await query(
+      `SELECT * FROM fin_fornecedores ${where}
+       ORDER BY razao_social
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    )
+    const ct = await query(`SELECT COUNT(*) FROM fin_fornecedores ${where}`, params.slice(0, -2))
+    return res.json({ ok: true, data: rows, total: parseInt(ct.rows[0].count) })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+// GET /fornecedores/select — para dropdowns (id + nome)
 router.get('/fornecedores/select', async (req, res) => {
   const { empresa } = req.query
   const params = []
   let where = 'WHERE ativo = true'
-  if (empresa && empresa !== 'TODOS') { params.push(empresa.toUpperCase()); where += ` AND (empresa = $${params.length} OR empresa = 'TODOS')` }
+  if (empresa && empresa !== 'TODOS') {
+    params.push(empresa.toUpperCase())
+    where += ` AND (empresa = $${params.length} OR empresa = 'TODOS')`
+  }
   try {
     const { rows } = await query(
-      `SELECT id, razao_social, nome_fantasia, cnpj_cpf, empresa, codigo FROM fin_fornecedores ${where} ORDER BY razao_social`, params
+      `SELECT id, razao_social, nome_fantasia, cnpj_cpf, empresa FROM fin_fornecedores ${where} ORDER BY razao_social`,
+      params
     )
-    return res.json({ ok:true, data:rows })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    return res.json({ ok: true, data: rows })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+// GET /fornecedores/:id
 router.get('/fornecedores/:id', async (req, res) => {
   try {
     const { rows } = await query('SELECT * FROM fin_fornecedores WHERE id = $1', [req.params.id])
-    if (!rows.length) return res.status(404).json({ ok:false, message:'Não encontrado' })
-    return res.json({ ok:true, data:rows[0] })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    if (!rows.length) return res.status(404).json({ ok: false, message: 'Não encontrado' })
+    return res.json({ ok: true, data: rows[0] })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
 // POST /fornecedores
 router.post('/fornecedores', async (req, res) => {
   const {
-    razao_social, nome_fantasia, cnpj_cpf, tipo_pessoa='PJ', categoria,
-    email, telefone, empresa='TODOS', cep, endereco, cidade_uf,
-    banco_nome, codigo_banco, agencia, conta, digito, tipo_conta='Corrente',
-    chave_pix, tipo_pix, obs, codigo,
+    razao_social, nome_fantasia, cnpj_cpf, tipo_pessoa = 'PJ', categoria,
+    email, telefone, empresa = 'TODOS', cep, endereco, cidade_uf,
+    banco_nome, agencia, conta, tipo_conta = 'Corrente', chave_pix, obs
   } = req.body
-  if (!razao_social) return res.status(400).json({ ok:false, message:'razao_social obrigatório' })
-  if (!empresa)      return res.status(400).json({ ok:false, message:'empresa obrigatória' })
-  if (codigo && String(codigo).replace(/\D/g,'').length < 6)
-    return res.status(400).json({ ok:false, message:'Código do fornecedor deve ter no mínimo 6 dígitos' })
+
+  if (!razao_social) return res.status(400).json({ ok: false, message: 'razao_social obrigatório' })
+  if (!empresa)      return res.status(400).json({ ok: false, message: 'empresa obrigatória' })
+
   try {
     const { rows } = await query(
       `INSERT INTO fin_fornecedores
-         (razao_social,nome_fantasia,cnpj_cpf,tipo_pessoa,categoria,email,telefone,empresa,
-          cep,endereco,cidade_uf,banco_nome,codigo_banco,agencia,conta,digito,tipo_conta,
-          chave_pix,tipo_pix,obs,codigo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+         (razao_social, nome_fantasia, cnpj_cpf, tipo_pessoa, categoria,
+          email, telefone, empresa, cep, endereco, cidade_uf,
+          banco_nome, agencia, conta, tipo_conta, chave_pix, obs)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        RETURNING *`,
-      [razao_social,nome_fantasia,cnpj_cpf,tipo_pessoa,categoria,email,telefone,
-       empresa.toUpperCase(),cep,endereco,cidade_uf,banco_nome,codigo_banco||null,
-       agencia,conta,digito||null,tipo_conta,chave_pix,tipo_pix||null,obs,codigo||null]
+      [razao_social, nome_fantasia, cnpj_cpf, tipo_pessoa, categoria,
+       email, telefone, empresa.toUpperCase(), cep, endereco, cidade_uf,
+       banco_nome, agencia, conta, tipo_conta, chave_pix, obs]
     )
-    return res.status(201).json({ ok:true, data:rows[0] })
+    return res.status(201).json({ ok: true, data: rows[0] })
   } catch (err) {
-    if (err.code==='23505') return res.status(409).json({ ok:false, message:'CNPJ/CPF já cadastrado' })
-    return res.status(500).json({ ok:false, message:err.message })
+    if (err.code === '23505') return res.status(409).json({ ok: false, message: 'CNPJ/CPF já cadastrado' })
+    return res.status(500).json({ ok: false, message: err.message })
   }
 })
 
 // PUT /fornecedores/:id
 router.put('/fornecedores/:id', async (req, res) => {
   const {
-    razao_social,nome_fantasia,cnpj_cpf,tipo_pessoa,categoria,email,telefone,empresa,
-    cep,endereco,cidade_uf,banco_nome,codigo_banco,agencia,conta,digito,tipo_conta,
-    chave_pix,tipo_pix,obs,ativo,codigo,
+    razao_social, nome_fantasia, cnpj_cpf, tipo_pessoa, categoria,
+    email, telefone, empresa, cep, endereco, cidade_uf,
+    banco_nome, agencia, conta, tipo_conta, chave_pix, obs, ativo
   } = req.body
-  if (codigo && String(codigo).replace(/\D/g,'').length < 6)
-    return res.status(400).json({ ok:false, message:'Código do fornecedor deve ter no mínimo 6 dígitos' })
   try {
     const { rows } = await query(
       `UPDATE fin_fornecedores SET
-         razao_social=$1,nome_fantasia=$2,cnpj_cpf=$3,tipo_pessoa=$4,categoria=$5,
-         email=$6,telefone=$7,empresa=$8,cep=$9,endereco=$10,cidade_uf=$11,
-         banco_nome=$12,codigo_banco=$13,agencia=$14,conta=$15,digito=$16,
-         tipo_conta=$17,chave_pix=$18,tipo_pix=$19,obs=$20,ativo=$21,
-         codigo=$22,updated_at=NOW()
-       WHERE id=$23 RETURNING *`,
-      [razao_social,nome_fantasia,cnpj_cpf,tipo_pessoa,categoria,email,telefone,
-       empresa?.toUpperCase(),cep,endereco,cidade_uf,banco_nome,codigo_banco||null,
-       agencia,conta,digito||null,tipo_conta,chave_pix,tipo_pix||null,obs,ativo??true,
-       codigo||null,req.params.id]
+         razao_social=$1, nome_fantasia=$2, cnpj_cpf=$3, tipo_pessoa=$4, categoria=$5,
+         email=$6, telefone=$7, empresa=$8, cep=$9, endereco=$10, cidade_uf=$11,
+         banco_nome=$12, agencia=$13, conta=$14, tipo_conta=$15, chave_pix=$16,
+         obs=$17, ativo=$18, updated_at=NOW()
+       WHERE id=$19 RETURNING *`,
+      [razao_social, nome_fantasia, cnpj_cpf, tipo_pessoa, categoria,
+       email, telefone, empresa?.toUpperCase(), cep, endereco, cidade_uf,
+       banco_nome, agencia, conta, tipo_conta, chave_pix, obs, ativo ?? true, req.params.id]
     )
-    if (!rows.length) return res.status(404).json({ ok:false, message:'Não encontrado' })
-    return res.json({ ok:true, data:rows[0] })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    if (!rows.length) return res.status(404).json({ ok: false, message: 'Não encontrado' })
+    return res.json({ ok: true, data: rows[0] })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+// DELETE /fornecedores/:id  (soft delete)
 router.delete('/fornecedores/:id', async (req, res) => {
   try {
     await query('UPDATE fin_fornecedores SET ativo=false, updated_at=NOW() WHERE id=$1', [req.params.id])
-    return res.json({ ok:true })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    return res.json({ ok: true })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
 // ══════════════════════════════════════════════════════════════════════════════
 // BANCOS / CONTAS
 // ══════════════════════════════════════════════════════════════════════════════
 
+// GET /bancos — lista todas as contas bancárias das empresas
 router.get('/bancos', async (req, res) => {
   const { empresa } = req.query
   const params = []
   let where = 'WHERE ativo = true'
-  if (empresa) { params.push(empresa.toUpperCase()); where += ` AND empresa = $${params.length}` }
+  if (empresa) {
+    params.push(empresa.toUpperCase())
+    where += ` AND empresa = $${params.length}`
+  }
   try {
-    const { rows } = await query(`SELECT * FROM fin_bancos_contas ${where} ORDER BY empresa, banco_nome`, params)
-    return res.json({ ok:true, data:rows })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    const { rows } = await query(
+      `SELECT * FROM fin_bancos_contas ${where} ORDER BY empresa, banco_nome`,
+      params
+    )
+    return res.json({ ok: true, data: rows })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+// GET /bancos/select — para dropdowns
 router.get('/bancos/select', async (req, res) => {
   const { empresa } = req.query
   const params = []
   let where = 'WHERE ativo = true'
-  if (empresa) { params.push(empresa.toUpperCase()); where += ` AND empresa = $${params.length}` }
+  if (empresa) {
+    params.push(empresa.toUpperCase())
+    where += ` AND empresa = $${params.length}`
+  }
   try {
     const { rows } = await query(
-      `SELECT id, empresa, banco_nome, codigo_banco, agencia, conta, saldo_inicial FROM fin_bancos_contas ${where} ORDER BY empresa, banco_nome`, params
+      `SELECT id, empresa, banco_nome, agencia, conta, saldo_inicial FROM fin_bancos_contas ${where} ORDER BY empresa, banco_nome`,
+      params
     )
-    return res.json({ ok:true, data:rows })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    return res.json({ ok: true, data: rows })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+// GET /bancos/:id
 router.get('/bancos/:id', async (req, res) => {
   try {
     const { rows } = await query('SELECT * FROM fin_bancos_contas WHERE id = $1', [req.params.id])
-    if (!rows.length) return res.status(404).json({ ok:false, message:'Não encontrado' })
-    return res.json({ ok:true, data:rows[0] })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    if (!rows.length) return res.status(404).json({ ok: false, message: 'Não encontrado' })
+    return res.json({ ok: true, data: rows[0] })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+// POST /bancos
 router.post('/bancos', async (req, res) => {
   const { tenant_id } = req.user
-  const { empresa, banco_nome, codigo_banco, agencia, conta, digito, tipo_conta='Corrente', saldo_inicial=0, data_saldo_inicial, obs } = req.body
-  if (!empresa)    return res.status(400).json({ ok:false, message:'empresa obrigatória' })
-  if (!banco_nome) return res.status(400).json({ ok:false, message:'banco_nome obrigatório' })
+  const {
+    empresa, banco_nome, codigo_banco, agencia, conta, digito,
+    tipo_conta = 'Corrente', saldo_inicial = 0, data_saldo_inicial, obs
+  } = req.body
+
+  if (!empresa)    return res.status(400).json({ ok: false, message: 'empresa obrigatória' })
+  if (!banco_nome) return res.status(400).json({ ok: false, message: 'banco_nome obrigatório' })
+
   const client = await require('../config/database').pool.connect()
   try {
     await client.query('BEGIN')
+
     const { rows } = await client.query(
-      `INSERT INTO fin_bancos_contas (empresa,banco_nome,codigo_banco,agencia,conta,digito,tipo_conta,saldo_inicial,data_saldo_inicial,obs)
+      `INSERT INTO fin_bancos_contas
+         (empresa, banco_nome, codigo_banco, agencia, conta, digito, tipo_conta, saldo_inicial, data_saldo_inicial, obs)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [empresa.toUpperCase(),banco_nome,codigo_banco,agencia,conta,digito,tipo_conta,saldo_inicial||0,data_saldo_inicial||null,obs]
+      [empresa.toUpperCase(), banco_nome, codigo_banco, agencia, conta, digito,
+       tipo_conta, saldo_inicial || 0, data_saldo_inicial || null, obs]
     )
-    const banco    = rows[0]
+
+    const banco = rows[0]
     const saldoNum = parseMoney(saldo_inicial)
     if (saldoNum !== 0) {
-      const dataMov     = data_saldo_inicial || new Date().toISOString().split('T')[0]
-      const movimentoId = await inserirMovimentoBanco(client,{ conta:banco, tipo:'saldo_inicial', descricao:'Saldo inicial da conta', valor:saldoNum, data:dataMov })
+      const dataMov = data_saldo_inicial || new Date().toISOString().split('T')[0]
+      const movimentoId = await inserirMovimentoBanco(client, {
+        conta: banco,
+        tipo: 'saldo_inicial',
+        descricao: 'Saldo inicial da conta',
+        valor: saldoNum,
+        data: dataMov,
+      })
       await client.query(
-        `INSERT INTO fin_bancos_lancamentos (tenant_id,conta_id,tipo,descricao,valor,data,obs,movimento_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [tenant_id,banco.id,'saldo_inicial','Saldo inicial da conta',saldoNum,dataMov,obs||null,movimentoId]
+        `INSERT INTO fin_bancos_lancamentos (tenant_id, conta_id, tipo, descricao, valor, data, obs, movimento_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [tenant_id, banco.id, 'saldo_inicial', 'Saldo inicial da conta', saldoNum, dataMov, obs || null, movimentoId]
       )
     }
+
     await client.query('COMMIT')
-    return res.status(201).json({ ok:true, data:banco })
-  } catch (err) { await client.query('ROLLBACK'); return res.status(500).json({ ok:false, message:err.message }) }
-  finally { client.release() }
+    return res.status(201).json({ ok: true, data: banco })
+  } catch (err) {
+    await client.query('ROLLBACK')
+    return res.status(500).json({ ok: false, message: err.message })
+  } finally {
+    client.release()
+  }
 })
 
+// PUT /bancos/:id
 router.put('/bancos/:id', async (req, res) => {
-  const { empresa, banco_nome, codigo_banco, agencia, conta, digito, tipo_conta, saldo_inicial, data_saldo_inicial, obs, ativo } = req.body
+  const {
+    empresa, banco_nome, codigo_banco, agencia, conta, digito,
+    tipo_conta, saldo_inicial, data_saldo_inicial, obs, ativo
+  } = req.body
   try {
     const { rows } = await query(
-      `UPDATE fin_bancos_contas SET empresa=$1,banco_nome=$2,codigo_banco=$3,agencia=$4,conta=$5,digito=$6,
-       tipo_conta=$7,saldo_inicial=$8,data_saldo_inicial=$9,obs=$10,ativo=$11 WHERE id=$12 RETURNING *`,
-      [empresa?.toUpperCase(),banco_nome,codigo_banco,agencia,conta,digito,tipo_conta,saldo_inicial,data_saldo_inicial||null,obs,ativo??true,req.params.id]
+      `UPDATE fin_bancos_contas SET
+         empresa=$1, banco_nome=$2, codigo_banco=$3, agencia=$4, conta=$5, digito=$6,
+         tipo_conta=$7, saldo_inicial=$8, data_saldo_inicial=$9, obs=$10, ativo=$11
+       WHERE id=$12 RETURNING *`,
+      [empresa?.toUpperCase(), banco_nome, codigo_banco, agencia, conta, digito,
+       tipo_conta, saldo_inicial, data_saldo_inicial || null, obs, ativo ?? true, req.params.id]
     )
-    if (!rows.length) return res.status(404).json({ ok:false, message:'Não encontrado' })
-    return res.json({ ok:true, data:rows[0] })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    if (!rows.length) return res.status(404).json({ ok: false, message: 'Não encontrado' })
+    return res.json({ ok: true, data: rows[0] })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+// DELETE /bancos/:id (soft)
 router.delete('/bancos/:id', async (req, res) => {
   try {
     await query('UPDATE fin_bancos_contas SET ativo=false WHERE id=$1', [req.params.id])
-    return res.json({ ok:true })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    return res.json({ ok: true })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
 // ══════════════════════════════════════════════════════════════════════════════
 // PLANO DE CONTAS
 // ══════════════════════════════════════════════════════════════════════════════
 
+function sanitizePlanoTipo(tipo) {
+  const t = String(tipo || 'A').trim().toUpperCase()
+  return ['T', 'S', 'A'].includes(t) ? t : 'A'
+}
+
+async function resolvePlanoPaiId(paiId, codigoAtual = null) {
+  if (!paiId) return null
+
+  const { rows } = await query(
+    'SELECT id, codigo FROM fin_plano_contas WHERE id=$1 LIMIT 1',
+    [parseInt(paiId)]
+  )
+
+  if (!rows.length) return null
+  if (codigoAtual && rows[0].codigo === codigoAtual) return null
+  return rows[0].id
+}
+
+async function seedPlanoContasFromExcel() {
+  let upserts = 0
+
+  for (const item of PLANO_CONTAS_SEED) {
+    await query(
+      `INSERT INTO fin_plano_contas (codigo, descricao, tipo, ativo)
+       VALUES ($1, $2, $3, true)
+       ON CONFLICT (codigo) DO UPDATE
+          SET descricao = EXCLUDED.descricao,
+              tipo = EXCLUDED.tipo,
+              ativo = true`,
+      [item.codigo, item.descricao, sanitizePlanoTipo(item.tipo)]
+    )
+    upserts++
+  }
+
+  for (const item of PLANO_CONTAS_SEED) {
+    if (!item.pai_codigo) {
+      await query('UPDATE fin_plano_contas SET pai_id=NULL WHERE codigo=$1', [item.codigo])
+      continue
+    }
+
+    await query(
+      `UPDATE fin_plano_contas filho
+          SET pai_id = pai.id
+         FROM fin_plano_contas pai
+        WHERE filho.codigo = $1
+          AND pai.codigo = $2
+          AND filho.id <> pai.id`,
+      [item.codigo, item.pai_codigo]
+    )
+  }
+
+  return upserts
+}
+
+// GET /plano-contas
 router.get('/plano-contas', async (req, res) => {
+  const { busca, tipo, ativo = '1' } = req.query
+
   try {
-    const { rows } = await query(`SELECT id, codigo, descricao, tipo, pai_id FROM fin_plano_contas WHERE ativo=true ORDER BY codigo`)
-    return res.json({ ok:true, data:rows })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    const conditions = []
+    const params = []
+
+    if (ativo !== 'todos') {
+      params.push(ativo === '0' ? false : true)
+      conditions.push(`c.ativo = $${params.length}`)
+    }
+
+    if (tipo && tipo !== 'todos') {
+      params.push(sanitizePlanoTipo(tipo))
+      conditions.push(`c.tipo = $${params.length}`)
+    }
+
+    if (busca) {
+      params.push(`%${busca}%`)
+      conditions.push(`(c.codigo ILIKE $${params.length} OR c.descricao ILIKE $${params.length})`)
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+
+    const { rows } = await query(
+      `SELECT
+         c.id,
+         c.codigo,
+         c.descricao,
+         c.tipo,
+         c.pai_id,
+         c.ativo,
+         p.codigo AS pai_codigo,
+         p.descricao AS pai_descricao
+       FROM fin_plano_contas c
+       LEFT JOIN fin_plano_contas p ON p.id = c.pai_id
+       ${where}
+       ORDER BY string_to_array(regexp_replace(c.codigo, '\\.$', ''), '.')::int[] NULLS LAST, c.codigo`,
+      params
+    )
+
+    return res.json({ ok: true, data: rows })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+// POST /plano-contas/seed
+router.post('/plano-contas/seed', async (req, res) => {
+  try {
+    const total = await seedPlanoContasFromExcel()
+    logger.info(`Plano de contas seed atualizado: ${total} contas`)
+    return res.json({ ok: true, total })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+// POST /plano-contas
+router.post('/plano-contas', async (req, res) => {
+  const { codigo, descricao, tipo = 'A', pai_id, ativo = true } = req.body
+
+  if (!String(codigo || '').trim()) {
+    return res.status(400).json({ ok: false, message: 'Código obrigatório' })
+  }
+  if (!String(descricao || '').trim()) {
+    return res.status(400).json({ ok: false, message: 'Descrição obrigatória' })
+  }
+
+  try {
+    const codigoLimpo = String(codigo).trim()
+    const paiId = await resolvePlanoPaiId(pai_id, codigoLimpo)
+
+    const { rows } = await query(
+      `INSERT INTO fin_plano_contas (codigo, descricao, tipo, pai_id, ativo)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, codigo, descricao, tipo, pai_id, ativo`,
+      [codigoLimpo, String(descricao).trim(), sanitizePlanoTipo(tipo), paiId, ativo !== false]
+    )
+
+    return res.status(201).json({ ok: true, data: rows[0] })
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ ok: false, message: 'Já existe uma conta com este código' })
+    }
+    return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+// PUT /plano-contas/:id
+router.put('/plano-contas/:id', async (req, res) => {
+  const { codigo, descricao, tipo = 'A', pai_id, ativo = true } = req.body
+
+  if (!String(codigo || '').trim()) {
+    return res.status(400).json({ ok: false, message: 'Código obrigatório' })
+  }
+  if (!String(descricao || '').trim()) {
+    return res.status(400).json({ ok: false, message: 'Descrição obrigatória' })
+  }
+
+  try {
+    const codigoLimpo = String(codigo).trim()
+    const paiId = await resolvePlanoPaiId(pai_id, codigoLimpo)
+
+    const { rows } = await query(
+      `UPDATE fin_plano_contas
+          SET codigo=$1,
+              descricao=$2,
+              tipo=$3,
+              pai_id=$4,
+              ativo=$5
+        WHERE id=$6
+        RETURNING id, codigo, descricao, tipo, pai_id, ativo`,
+      [codigoLimpo, String(descricao).trim(), sanitizePlanoTipo(tipo), paiId, ativo !== false, req.params.id]
+    )
+
+    if (!rows.length) return res.status(404).json({ ok: false, message: 'Não encontrado' })
+    return res.json({ ok: true, data: rows[0] })
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ ok: false, message: 'Já existe uma conta com este código' })
+    }
+    return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+// DELETE /plano-contas/:id
+router.delete('/plano-contas/:id', async (req, res) => {
+  try {
+    await query('UPDATE fin_plano_contas SET ativo=false WHERE id=$1', [req.params.id])
+    return res.json({ ok: true })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
 // ══════════════════════════════════════════════════════════════════════════════
 // LANÇAMENTOS CONTAS A PAGAR
 // ══════════════════════════════════════════════════════════════════════════════
 
+// GET /lancamentos-cp — lista com filtros
 router.get('/lancamentos-cp', async (req, res) => {
-  const { empresa, status, fornecedor_id, tipo_documento_id, busca, page=1, limit=50, dt_inicio, dt_fim, venc_inicio, venc_fim } = req.query
-  const conditions = [], params = []
-  if (empresa)           { params.push(empresa.toUpperCase()); conditions.push(`l.empresa = $${params.length}`) }
-  if (status)            { params.push(status); conditions.push(`p.status = $${params.length}`) }
-  if (fornecedor_id)     { params.push(parseInt(fornecedor_id)); conditions.push(`l.fornecedor_id = $${params.length}`) }
-  if (tipo_documento_id) { params.push(parseInt(tipo_documento_id)); conditions.push(`l.tipo_documento_id = $${params.length}`) }
-  if (busca)             { params.push(`%${busca}%`); conditions.push(`(f.razao_social ILIKE $${params.length} OR l.historico ILIKE $${params.length} OR l.nf_doc ILIKE $${params.length} OR td.nome ILIKE $${params.length})`) }
-  if (dt_inicio)         { params.push(dt_inicio); conditions.push(`l.dt_emissao >= $${params.length}`) }
-  if (dt_fim)            { params.push(dt_fim); conditions.push(`l.dt_emissao <= $${params.length}`) }
-  if (venc_inicio)       { params.push(venc_inicio); conditions.push(`p.vencimento >= $${params.length}`) }
-  if (venc_fim)          { params.push(venc_fim); conditions.push(`p.vencimento <= $${params.length}`) }
+  const { empresa, status, fornecedor_id, tipo_documento_id, busca, page = 1, limit = 50,
+          dt_inicio, dt_fim, venc_inicio, venc_fim } = req.query
+  const conditions = []
+  const params = []
+
+  if (empresa) {
+    params.push(empresa.toUpperCase())
+    conditions.push(`l.empresa = $${params.length}`)
+  }
+  if (status) {
+    params.push(status)
+    conditions.push(`p.status = $${params.length}`)
+  }
+  if (fornecedor_id) {
+    params.push(parseInt(fornecedor_id))
+    conditions.push(`l.fornecedor_id = $${params.length}`)
+  }
+  if (tipo_documento_id) {
+    params.push(parseInt(tipo_documento_id))
+    conditions.push(`l.tipo_documento_id = $${params.length}`)
+  }
+  if (busca) {
+    params.push(`%${busca}%`)
+    conditions.push(`(f.razao_social ILIKE $${params.length} OR l.historico ILIKE $${params.length} OR l.nf_doc ILIKE $${params.length} OR td.nome ILIKE $${params.length})`)
+  }
+  if (dt_inicio) {
+    params.push(dt_inicio)
+    conditions.push(`l.dt_emissao >= $${params.length}`)
+  }
+  if (dt_fim) {
+    params.push(dt_fim)
+    conditions.push(`l.dt_emissao <= $${params.length}`)
+  }
+  if (venc_inicio) {
+    params.push(venc_inicio)
+    conditions.push(`p.vencimento >= $${params.length}`)
+  }
+  if (venc_fim) {
+    params.push(venc_fim)
+    conditions.push(`p.vencimento <= $${params.length}`)
+  }
+
   const where  = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-  const offset = (parseInt(page)-1)*parseInt(limit)
+  const offset = (parseInt(page) - 1) * parseInt(limit)
   params.push(parseInt(limit), offset)
+
   try {
     const { rows } = await query(
-      `SELECT l.*,
-         f.razao_social AS fornecedor_nome, f.cnpj_cpf AS fornecedor_cnpj,
-         td.nome AS tipo_documento_nome,
-         b.banco_nome, b.agencia AS banco_agencia, b.conta AS banco_conta,
-         p.id AS parcela_id, p.numero AS parcela_numero, p.valor AS parcela_valor,
-         p.vencimento AS parcela_vencimento, p.dt_pagamento AS parcela_dt_pagamento,
-         p.status AS parcela_status, p.motivo_baixa AS parcela_motivo_baixa,
-         p.acrescimo AS parcela_acrescimo, p.desconto AS parcela_desconto,
-         p.juros AS parcela_juros, p.multa AS parcela_multa,
-         p.valor_final AS parcela_valor_final, p.forma_pagamento AS parcela_forma_pagamento,
+      `SELECT
+         l.*,
+         f.razao_social AS fornecedor_nome,
+         f.cnpj_cpf     AS fornecedor_cnpj,
+         td.nome        AS tipo_documento_nome,
+         b.banco_nome   AS banco_nome,
+         b.agencia      AS banco_agencia,
+         b.conta        AS banco_conta,
+         p.id           AS parcela_id,
+         p.numero       AS parcela_numero,
+         p.valor        AS parcela_valor,
+         p.vencimento   AS parcela_vencimento,
+         p.dt_pagamento AS parcela_dt_pagamento,
+         p.status       AS parcela_status,
+         p.motivo_baixa AS parcela_motivo_baixa,
+         p.acrescimo    AS parcela_acrescimo,
+         p.desconto     AS parcela_desconto,
+         p.juros        AS parcela_juros,
+         p.multa        AS parcela_multa,
+         p.valor_final  AS parcela_valor_final,
+         p.forma_pagamento AS parcela_forma_pagamento,
          (SELECT MIN(px.vencimento) FROM fin_parcelas_cp px WHERE px.lancamento_id = l.id AND px.status = 'pendente') AS proximo_venc
        FROM fin_lancamentos_cp l
-       LEFT JOIN fin_fornecedores   f  ON f.id  = l.fornecedor_id
+       LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
        LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
-       LEFT JOIN fin_bancos_contas   b  ON b.id  = l.banco_conta_id
-       LEFT JOIN fin_parcelas_cp     p  ON p.lancamento_id = l.id
+       LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
+       LEFT JOIN fin_parcelas_cp p ON p.lancamento_id = l.id
        ${where}
        ORDER BY l.created_at DESC, p.numero ASC
-       LIMIT $${params.length-1} OFFSET $${params.length}`,
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     )
     const ct = await query(
-      `SELECT COUNT(*), COALESCE(SUM(COALESCE(p.valor,l.valor_total)),0) AS total_valor
+      `SELECT COUNT(*), COALESCE(SUM(COALESCE(p.valor, l.valor_total)),0) AS total_valor
        FROM fin_lancamentos_cp l
-       LEFT JOIN fin_fornecedores   f  ON f.id  = l.fornecedor_id
+       LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
        LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
-       LEFT JOIN fin_parcelas_cp     p  ON p.lancamento_id = l.id
-       ${where}`, params.slice(0,-2)
+       LEFT JOIN fin_parcelas_cp p ON p.lancamento_id = l.id
+       ${where}`,
+      params.slice(0, -2)
     )
-    return res.json({ ok:true, data:rows, total:parseInt(ct.rows[0].count), total_valor:parseFloat(ct.rows[0].total_valor) })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    return res.json({
+      ok: true, data: rows,
+      total: parseInt(ct.rows[0].count),
+      total_valor: parseFloat(ct.rows[0].total_valor),
+    })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+// GET /lancamentos-cp/:id (com parcelas)
 router.get('/lancamentos-cp/:id', async (req, res) => {
   try {
-    const { rows:[lanc] } = await query(
+    const { rows: [lanc] } = await query(
       `SELECT l.*, f.razao_social AS fornecedor_nome, td.nome AS tipo_documento_nome, b.banco_nome, b.agencia, b.conta
        FROM fin_lancamentos_cp l
-       LEFT JOIN fin_fornecedores   f  ON f.id  = l.fornecedor_id
+       LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
        LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
-       LEFT JOIN fin_bancos_contas   b  ON b.id  = l.banco_conta_id
+       LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
        WHERE l.id = $1`, [req.params.id]
     )
-    if (!lanc) return res.status(404).json({ ok:false, message:'Não encontrado' })
-    const { rows:parcelas } = await query('SELECT * FROM fin_parcelas_cp WHERE lancamento_id = $1 ORDER BY numero', [req.params.id])
-    return res.json({ ok:true, data:{ ...lanc, parcelas } })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    if (!lanc) return res.status(404).json({ ok: false, message: 'Não encontrado' })
+
+    const { rows: parcelas } = await query(
+      'SELECT * FROM fin_parcelas_cp WHERE lancamento_id = $1 ORDER BY numero',
+      [req.params.id]
+    )
+    return res.json({ ok: true, data: { ...lanc, parcelas } })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
-// POST /lancamentos-cp/analisar-documento
+
+// POST /lancamentos-cp/analisar-documento — lê PDF/imagem com IA e sugere campos
 router.post('/lancamentos-cp/analisar-documento', async (req, res) => {
   const { tenant_id } = req.user
   const { documento_nome, documento_mime, documento_base64 } = req.body
-  if (!documento_base64 || !documento_mime) return res.status(400).json({ ok:false, message:'Envie o documento em base64 e o mime type' })
+
+  if (!documento_base64 || !documento_mime) {
+    return res.status(400).json({ ok: false, message: 'Envie o documento em base64 e o mime type' })
+  }
+
   const mimeOk = documento_mime === 'application/pdf' || String(documento_mime).startsWith('image/')
-  if (!mimeOk) return res.status(400).json({ ok:false, message:'A IA aceita apenas PDF ou imagem' })
-  if (String(documento_base64).length > 7*1024*1024) return res.status(413).json({ ok:false, message:'Arquivo muito grande. Limite: 5MB' })
+  if (!mimeOk) {
+    return res.status(400).json({ ok: false, message: 'A IA aceita apenas PDF ou imagem' })
+  }
+
+  if (String(documento_base64).length > 7 * 1024 * 1024) {
+    return res.status(413).json({ ok: false, message: 'Arquivo muito grande para análise. Limite sugerido: 5MB' })
+  }
+
   try {
-    const { rows } = await query(`SELECT ai_provider, openai_api_key, gemini_api_key FROM hub_tenant_configs WHERE tenant_id=$1 LIMIT 1`, [tenant_id])
-    const cfg      = rows[0] || {}
-    const provider = ['openai','gemini'].includes(cfg.ai_provider) ? cfg.ai_provider : 'openai'
-    const apiKey   = provider === 'gemini' ? cfg.gemini_api_key : cfg.openai_api_key
-    if (!apiKey) return res.status(422).json({ ok:false, message: provider==='gemini' ? 'Configure a Gemini API Key em Configurações > Credenciais' : 'Configure a OpenAI API Key em Configurações > Credenciais' })
+    const { rows } = await query(
+      `SELECT ai_provider, openai_api_key, gemini_api_key
+       FROM hub_tenant_configs
+       WHERE tenant_id = $1
+       LIMIT 1`,
+      [tenant_id]
+    )
+
+    const cfg = rows[0] || {}
+    const provider = ['openai', 'gemini'].includes(cfg.ai_provider) ? cfg.ai_provider : 'openai'
+    const apiKey = provider === 'gemini' ? cfg.gemini_api_key : cfg.openai_api_key
+
+    if (!apiKey) {
+      return res.status(422).json({
+        ok: false,
+        message: provider === 'gemini'
+          ? 'Configure a Gemini API Key em Configurações > Credenciais'
+          : 'Configure a OpenAI API Key em Configurações > Credenciais',
+      })
+    }
+
     const raw = provider === 'gemini'
       ? await analyzeWithGemini({ apiKey, documento_mime, documento_base64 })
       : await analyzeWithOpenAI({ apiKey, documento_nome, documento_mime, documento_base64 })
-    return res.json({ ok:true, provider, data:normalizeAiResult(raw) })
-  } catch (err) { return res.status(502).json({ ok:false, message:err.message||'Erro ao analisar documento com IA' }) }
+
+    return res.json({ ok: true, provider, data: normalizeAiResult(raw) })
+  } catch (err) {
+    return res.status(502).json({ ok: false, message: err.message || 'Erro ao analisar documento com IA' })
+  }
 })
 
 // POST /lancamentos-cp — cria lançamento + parcelas
 router.post('/lancamentos-cp', async (req, res) => {
   const {
     empresa, fornecedor_id, banco_conta_id, conta_contabil, descricao_conta,
-    historico, tipo_documento_id, produto_servico, nf_doc,
-    documento_nome, documento_mime, documento_base64,
-    dt_emissao, valor_total, qtd_parcelas=1,
-    centro_custo, obra, n_cheque, obs, parcelas,
+    historico, tipo_documento_id, produto_servico, nf_doc, documento_nome, documento_mime, documento_base64,
+    dt_emissao, valor_total, qtd_parcelas = 1,
+    centro_custo, obra, n_cheque, obs,
+    parcelas  // array [{ vencimento, valor }] — opcional, gera automaticamente se omitido
   } = req.body
-  if (!empresa)     return res.status(400).json({ ok:false, message:'empresa obrigatória' })
-  if (!historico)   return res.status(400).json({ ok:false, message:'historico obrigatório' })
-  if (!valor_total) return res.status(400).json({ ok:false, message:'valor_total obrigatório' })
 
-  // ▶ nf_doc mínimo 9 dígitos numéricos
-  if (nf_doc && String(nf_doc).replace(/\D/g,'').length < 9)
-    return res.status(400).json({ ok:false, message:'Número do documento deve ter no mínimo 9 dígitos' })
+  if (!empresa)    return res.status(400).json({ ok: false, message: 'empresa obrigatória' })
+  if (!historico)  return res.status(400).json({ ok: false, message: 'historico obrigatório' })
+  if (!valor_total) return res.status(400).json({ ok: false, message: 'valor_total obrigatório' })
 
   const client = await require('../config/database').pool.connect()
   try {
     await client.query('BEGIN')
-    const { rows:[lanc] } = await client.query(
+
+    // Insere lançamento
+    const { rows: [lanc] } = await client.query(
       `INSERT INTO fin_lancamentos_cp
-         (empresa,fornecedor_id,banco_conta_id,conta_contabil,descricao_conta,
-          historico,tipo_documento_id,produto_servico,nf_doc,
-          documento_nome,documento_mime,documento_base64,
-          dt_emissao,valor_total,qtd_parcelas,centro_custo,obra,n_cheque,obs)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
-      [empresa.toUpperCase(),fornecedor_id||null,banco_conta_id||null,
-       conta_contabil,descricao_conta,historico,tipo_documento_id||null,produto_servico,nf_doc,
-       documento_nome||null,documento_mime||null,documento_base64||null,
-       dt_emissao||null,valor_total,qtd_parcelas,centro_custo,obra,n_cheque,obs]
+         (empresa, fornecedor_id, banco_conta_id, conta_contabil, descricao_conta,
+          historico, tipo_documento_id, produto_servico, nf_doc, documento_nome, documento_mime, documento_base64,
+          dt_emissao, valor_total, qtd_parcelas,
+          centro_custo, obra, n_cheque, obs)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       RETURNING *`,
+      [empresa.toUpperCase(), fornecedor_id || null, banco_conta_id || null,
+       conta_contabil, descricao_conta, historico, tipo_documento_id || null, produto_servico, nf_doc,
+       documento_nome || null, documento_mime || null, documento_base64 || null,
+       dt_emissao || null, valor_total, qtd_parcelas,
+       centro_custo, obra, n_cheque, obs]
     )
-    const n    = parseInt(qtd_parcelas)||1
+
+    // Gera parcelas
+    const n    = parseInt(qtd_parcelas) || 1
     const vlr  = parseFloat(valor_total)
     const base = dt_emissao ? new Date(dt_emissao) : new Date()
+
     const parcs = parcelas?.length === n
       ? parcelas
-      : Array.from({ length:n }, (_,i) => {
-          const d = new Date(base); d.setMonth(d.getMonth()+i+1)
-          return { numero:i+1, valor:parseFloat((vlr/n).toFixed(2)), vencimento:d.toISOString().split('T')[0] }
+      : Array.from({ length: n }, (_, i) => {
+          const d = new Date(base)
+          d.setMonth(d.getMonth() + i + 1)
+          return { numero: i + 1, valor: parseFloat((vlr / n).toFixed(2)), vencimento: d.toISOString().split('T')[0] }
         })
+
     for (const p of parcs) {
-      const multa    = parseMoney(p.multa,    0)
-      const juros    = parseMoney(p.juros,    0)
-      const desconto = parseMoney(p.desconto, 0)
-      const valorFinal = parseMoney(p.valor) + multa + juros - desconto
       await client.query(
-        `INSERT INTO fin_parcelas_cp (lancamento_id,numero,valor,vencimento,status,multa,juros,desconto,valor_final)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [lanc.id, p.numero||parcs.indexOf(p)+1, p.valor, p.vencimento, p.status||'pendente', multa, juros, desconto, valorFinal]
+        'INSERT INTO fin_parcelas_cp (lancamento_id, numero, valor, vencimento, status) VALUES ($1,$2,$3,$4,$5)',
+        [lanc.id, p.numero || parcs.indexOf(p) + 1, p.valor, p.vencimento, p.status || 'pendente']
       )
     }
+
     await client.query('COMMIT')
-    return res.status(201).json({ ok:true, data:{ ...lanc, parcelas:parcs } })
-  } catch (err) { await client.query('ROLLBACK'); return res.status(500).json({ ok:false, message:err.message }) }
-  finally { client.release() }
+    return res.status(201).json({ ok: true, data: { ...lanc, parcelas: parcs } })
+  } catch (err) {
+    await client.query('ROLLBACK')
+    return res.status(500).json({ ok: false, message: err.message })
+  } finally {
+    client.release()
+  }
 })
 
-// ▶ PUT /lancamentos-cp/:id — NOVO: edita lançamento + parcelas pendentes
-router.put('/lancamentos-cp/:id', async (req, res) => {
-  const {
-    empresa, fornecedor_id, banco_conta_id, conta_contabil, descricao_conta,
-    historico, tipo_documento_id, produto_servico, nf_doc,
-    dt_emissao, valor_total, qtd_parcelas,
-    centro_custo, obra, n_cheque, obs, parcelas,
-  } = req.body
-
-  if (nf_doc && String(nf_doc).replace(/\D/g,'').length < 9)
-    return res.status(400).json({ ok:false, message:'Número do documento deve ter no mínimo 9 dígitos' })
-
-  const client = await require('../config/database').pool.connect()
-  try {
-    await client.query('BEGIN')
-    const { rows:ex } = await client.query('SELECT id FROM fin_lancamentos_cp WHERE id=$1', [req.params.id])
-    if (!ex.length) { await client.query('ROLLBACK'); return res.status(404).json({ ok:false, message:'Lançamento não encontrado' }) }
-
-    const { rows:[lanc] } = await client.query(
-      `UPDATE fin_lancamentos_cp SET
-         empresa=$1,fornecedor_id=$2,banco_conta_id=$3,conta_contabil=$4,descricao_conta=$5,
-         historico=$6,tipo_documento_id=$7,produto_servico=$8,nf_doc=$9,
-         dt_emissao=$10,valor_total=$11,qtd_parcelas=$12,
-         centro_custo=$13,obra=$14,n_cheque=$15,obs=$16,updated_at=NOW()
-       WHERE id=$17 RETURNING *`,
-      [empresa?.toUpperCase(),fornecedor_id||null,banco_conta_id||null,
-       conta_contabil,descricao_conta,historico,tipo_documento_id||null,
-       produto_servico,nf_doc,dt_emissao||null,valor_total,qtd_parcelas||1,
-       centro_custo,obra,n_cheque,obs,req.params.id]
-    )
-
-    if (Array.isArray(parcelas) && parcelas.length > 0) {
-      for (const p of parcelas) {
-        if (!p.id) continue
-        const multa      = parseMoney(p.multa,    0)
-        const juros      = parseMoney(p.juros,    0)
-        const desconto   = parseMoney(p.desconto, 0)
-        const valorFinal = parseMoney(p.valor) + multa + juros - desconto
-        await client.query(
-          `UPDATE fin_parcelas_cp
-           SET valor=$1,vencimento=$2,multa=$3,juros=$4,desconto=$5,valor_final=$6
-           WHERE id=$7 AND status IN ('pendente','vencido','aberto')`,
-          [p.valor, p.vencimento, multa, juros, desconto, valorFinal, p.id]
-        )
-      }
-    }
-    await client.query('COMMIT')
-    const { rows:parcelas_atuais } = await query('SELECT * FROM fin_parcelas_cp WHERE lancamento_id=$1 ORDER BY numero', [req.params.id])
-    return res.json({ ok:true, data:{ ...lanc, parcelas:parcelas_atuais } })
-  } catch (err) { await client.query('ROLLBACK'); return res.status(500).json({ ok:false, message:err.message }) }
-  finally { client.release() }
-})
-
-// ▶ DELETE /lancamentos-cp/:id — NOVO: exclui se não há parcelas pagas
-router.delete('/lancamentos-cp/:id', async (req, res) => {
-  const client = await require('../config/database').pool.connect()
-  try {
-    await client.query('BEGIN')
-    const { rows:pagas } = await client.query(
-      `SELECT COUNT(*) AS cnt FROM fin_parcelas_cp WHERE lancamento_id=$1 AND status='pago'`, [req.params.id]
-    )
-    if (parseInt(pagas[0].cnt) > 0) {
-      await client.query('ROLLBACK')
-      return res.status(409).json({ ok:false, message:'Não é possível excluir: existem parcelas já pagas.' })
-    }
-    await client.query(
-      `DELETE FROM fin_movimento WHERE id IN (SELECT movimento_id FROM fin_parcelas_cp WHERE lancamento_id=$1 AND movimento_id IS NOT NULL)`,
-      [req.params.id]
-    )
-    await client.query('DELETE FROM fin_parcelas_cp WHERE lancamento_id=$1', [req.params.id])
-    const { rowCount } = await client.query('DELETE FROM fin_lancamentos_cp WHERE id=$1', [req.params.id])
-    if (rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ ok:false, message:'Lançamento não encontrado' }) }
-    await client.query('COMMIT')
-    logger.info(`Lançamento CP excluído: id=${req.params.id}`)
-    return res.json({ ok:true, message:'Lançamento excluído com sucesso' })
-  } catch (err) { await client.query('ROLLBACK'); return res.status(500).json({ ok:false, message:err.message }) }
-  finally { client.release() }
-})
-
+// PUT /lancamentos-cp/:id/status — atualiza status
 router.put('/lancamentos-cp/:id/status', async (req, res) => {
   const { status } = req.body
-  if (!status) return res.status(400).json({ ok:false, message:'status obrigatório' })
+  if (!status) return res.status(400).json({ ok: false, message: 'status obrigatório' })
   try {
-    const { rows } = await query(`UPDATE fin_lancamentos_cp SET status=$1,updated_at=NOW() WHERE id=$2 RETURNING *`, [status,req.params.id])
-    if (!rows.length) return res.status(404).json({ ok:false, message:'Não encontrado' })
-    return res.json({ ok:true, data:rows[0] })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    const { rows } = await query(
+      `UPDATE fin_lancamentos_cp SET status=$1, updated_at=NOW() WHERE id=$2 RETURNING *`,
+      [status, req.params.id]
+    )
+    if (!rows.length) return res.status(404).json({ ok: false, message: 'Não encontrado' })
+    return res.json({ ok: true, data: rows[0] })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+// PUT /lancamentos-cp/:id/parcelas/:parcId/pagar — baixa parcela e gera movimento bancário
 router.put('/lancamentos-cp/:id/parcelas/:parcId/pagar', async (req, res) => {
-  const { dt_pagamento, motivo_baixa, acrescimo=0, desconto=0, juros=0, multa=0, valor_final, forma_pagamento } = req.body
+  const {
+    dt_pagamento,
+    motivo_baixa,
+    acrescimo = 0,
+    desconto = 0,
+    juros = 0,
+    multa = 0,
+    valor_final,
+    forma_pagamento,
+  } = req.body
+
   const dataPagamento = dt_pagamento || new Date().toISOString().split('T')[0]
-  if (!forma_pagamento) return res.status(400).json({ ok:false, message:'forma_pagamento obrigatório' })
+  if (!forma_pagamento) return res.status(400).json({ ok: false, message: 'forma_pagamento obrigatório' })
+
   const client = await require('../config/database').pool.connect()
   try {
     await client.query('BEGIN')
+
     const { rows } = await client.query(
-      `SELECT p.*, l.empresa,l.fornecedor_id,l.banco_conta_id,l.conta_contabil,l.descricao_conta,
-              l.historico,l.nf_doc,l.centro_custo,l.obra,l.n_cheque,
-              f.razao_social AS fornecedor_nome, b.banco_nome
+      `SELECT
+         p.*,
+         l.empresa, l.fornecedor_id, l.banco_conta_id, l.conta_contabil, l.descricao_conta,
+         l.historico, l.nf_doc, l.centro_custo, l.obra, l.n_cheque,
+         f.razao_social AS fornecedor_nome,
+         b.banco_nome   AS banco_nome
        FROM fin_parcelas_cp p
        JOIN fin_lancamentos_cp l ON l.id = p.lancamento_id
        LEFT JOIN fin_fornecedores f ON f.id = l.fornecedor_id
        LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
-       WHERE l.id=$1 AND p.id=$2 FOR UPDATE OF p`,
+       WHERE l.id = $1 AND p.id = $2
+       FOR UPDATE OF p`,
       [req.params.id, req.params.parcId]
     )
+
     const parc = rows[0]
-    if (!parc) { await client.query('ROLLBACK'); return res.status(404).json({ ok:false, message:'Parcela não encontrada' }) }
+    if (!parc) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ ok: false, message: 'Parcela não encontrada' })
+    }
+
     const valorParcela = parseMoney(parc.valor)
     const acrescimoNum = parseMoney(acrescimo)
-    const descontoNum  = parseMoney(desconto)
-    const jurosNum     = parseMoney(juros)
-    const multaNum     = parseMoney(multa)
-    const valorFinalNum= parseMoney(valor_final, valorParcela+acrescimoNum+jurosNum+multaNum-descontoNum)
-    const pd           = splitDateParts(dataPagamento)
-    let movimentoId    = parc.movimento_id || null
-    const movPayload   = [
-      dataPagamento, parc.empresa, parc.banco_nome||null, 0, valorFinalNum,
-      parc.fornecedor_nome||null,
-      `Baixa CP ${parc.numero}/${parc.lancamento_id} - ${parc.historico||''}`.trim(),
-      parc.nf_doc||null, parc.descricao_conta||parc.conta_contabil||null,
-      parc.centro_custo||null, parc.obra||null, parc.conta_contabil||null, parc.n_cheque||null,
-      pd.dia, pd.mes, pd.ano, 'financeiro', parc.vencimento, parc.fornecedor_id||null, parc.banco_conta_id||null,
+    const descontoNum = parseMoney(desconto)
+    const jurosNum = parseMoney(juros)
+    const multaNum = parseMoney(multa)
+    const valorFinalNum = parseMoney(valor_final, valorParcela + acrescimoNum + jurosNum + multaNum - descontoNum)
+    const partesData = splitDateParts(dataPagamento)
+
+    let movimentoId = parc.movimento_id || null
+    const movimentoPayload = [
+      dataPagamento,
+      parc.empresa,
+      parc.banco_nome || null,
+      0,
+      valorFinalNum,
+      parc.fornecedor_nome || null,
+      `Baixa CP ${parc.numero}/${parc.lancamento_id} - ${parc.historico || ''}`.trim(),
+      parc.nf_doc || null,
+      parc.descricao_conta || parc.conta_contabil || null,
+      parc.centro_custo || null,
+      parc.obra || null,
+      parc.conta_contabil || null,
+      parc.n_cheque || null,
+      partesData.dia,
+      partesData.mes,
+      partesData.ano,
+      'financeiro',
+      parc.vencimento,
+      parc.fornecedor_id || null,
+      parc.banco_conta_id || null,
     ]
+
     if (movimentoId) {
       await client.query(
-        `UPDATE fin_movimento SET data=$1,empresa=$2,banco=$3,entradas=$4,saidas=$5,fornecedor=$6,
-         historico=$7,nf_doc=$8,conta_contabil=$9,centro_custo=$10,obra=$11,natureza_financeira=$12,
-         n_cheque=$13,dia=$14,mes=$15,ano=$16,tipo_lancamento=$17,vencimento=$18,fornecedor_id=$19,
-         banco_conta_id=$20 WHERE id=$21`, [...movPayload, movimentoId]
+        `UPDATE fin_movimento
+         SET data=$1, empresa=$2, banco=$3, entradas=$4, saidas=$5, fornecedor=$6,
+             historico=$7, nf_doc=$8, conta_contabil=$9, centro_custo=$10, obra=$11,
+             natureza_financeira=$12, n_cheque=$13, dia=$14, mes=$15, ano=$16,
+             tipo_lancamento=$17, vencimento=$18, fornecedor_id=$19, banco_conta_id=$20
+         WHERE id=$21`,
+        [...movimentoPayload, movimentoId]
       )
     } else {
-      const { rows:mr } = await client.query(
-        `INSERT INTO fin_movimento (data,empresa,banco,entradas,saidas,fornecedor,historico,nf_doc,
-         conta_contabil,centro_custo,obra,natureza_financeira,n_cheque,dia,mes,ano,tipo_lancamento,
-         vencimento,fornecedor_id,banco_conta_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`,
-        movPayload
+      const { rows: movRows } = await client.query(
+        `INSERT INTO fin_movimento
+          (data, empresa, banco, entradas, saidas, fornecedor, historico, nf_doc,
+           conta_contabil, centro_custo, obra, natureza_financeira, n_cheque,
+           dia, mes, ano, tipo_lancamento, vencimento, fornecedor_id, banco_conta_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+         RETURNING id`,
+        movimentoPayload
       )
-      movimentoId = mr[0]?.id || null
+      movimentoId = movRows[0]?.id || null
     }
+
     await client.query(
-      `UPDATE fin_parcelas_cp SET status='pago',dt_pagamento=$1,motivo_baixa=$2,
-       acrescimo=$3,desconto=$4,juros=$5,multa=$6,valor_final=$7,forma_pagamento=$8,movimento_id=$9
+      `UPDATE fin_parcelas_cp
+       SET status='pago', dt_pagamento=$1, motivo_baixa=$2,
+           acrescimo=$3, desconto=$4, juros=$5, multa=$6,
+           valor_final=$7, forma_pagamento=$8, movimento_id=$9
        WHERE id=$10`,
-      [dataPagamento,motivo_baixa||null,acrescimoNum,descontoNum,jurosNum,multaNum,valorFinalNum,forma_pagamento,movimentoId,req.params.parcId]
+      [dataPagamento, motivo_baixa || null, acrescimoNum, descontoNum, jurosNum, multaNum,
+       valorFinalNum, forma_pagamento, movimentoId, req.params.parcId]
     )
-    const { rows:pend } = await client.query(`SELECT COUNT(*) FROM fin_parcelas_cp WHERE lancamento_id=$1 AND status != 'pago'`, [req.params.id])
-    await client.query(`UPDATE fin_lancamentos_cp SET status=$1,updated_at=NOW() WHERE id=$2`, [parseInt(pend[0].count)===0?'pago':'pendente',req.params.id])
+
+    // Se todas as parcelas estão pagas, marca o lançamento como pago. Caso contrário, mantém pendente.
+    const { rows: pend } = await client.query(
+      `SELECT COUNT(*) FROM fin_parcelas_cp WHERE lancamento_id=$1 AND status != 'pago'`,
+      [req.params.id]
+    )
+    await client.query(
+      `UPDATE fin_lancamentos_cp SET status=$1, updated_at=NOW() WHERE id=$2`,
+      [parseInt(pend[0].count) === 0 ? 'pago' : 'pendente', req.params.id]
+    )
+
     await client.query('COMMIT')
-    return res.json({ ok:true, movimento_id:movimentoId })
-  } catch (err) { await client.query('ROLLBACK'); return res.status(500).json({ ok:false, message:err.message }) }
-  finally { client.release() }
+    return res.json({ ok: true, movimento_id: movimentoId })
+  } catch (err) {
+    await client.query('ROLLBACK')
+    return res.status(500).json({ ok: false, message: err.message })
+  } finally {
+    client.release()
+  }
 })
 
-// ── Auxiliares ─────────────────────────────────────────────────────────────
+
+// ── GET /financeiro/fornecedores/check-cnpj — verifica unicidade ─────────────
 router.get('/financeiro/fornecedores/check-cnpj', async (req, res) => {
   const { tenant_id } = req.user
   const { cnpj, exclude_id } = req.query
-  if (!cnpj) return res.json({ ok:true, exists:false })
-  const digits = cnpj.replace(/\D/g,'')
+  if (!cnpj) return res.json({ ok: true, exists: false })
+  const digits = cnpj.replace(/\D/g, '')
   try {
     const { rows } = await query(
-      `SELECT id FROM fin_fornecedores WHERE tenant_id=$1 AND REGEXP_REPLACE(cnpj_cpf,'[^0-9]','','g')=$2 AND ($3::int IS NULL OR id != $3::int)`,
+      `SELECT id FROM fin_fornecedores
+       WHERE tenant_id=$1
+         AND REGEXP_REPLACE(cnpj_cpf,'[^0-9]','','g') = $2
+         AND ($3::int IS NULL OR id != $3::int)`,
       [tenant_id, digits, exclude_id ? parseInt(exclude_id) : null]
     )
-    return res.json({ ok:true, exists:rows.length > 0 })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    return res.json({ ok: true, exists: rows.length > 0 })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+// ── GET /financeiro/fornecedores/:id/historico ────────────────────────────────
 router.get('/financeiro/fornecedores/:id/historico', async (req, res) => {
   const { tenant_id } = req.user
   try {
-    const { rows:lancamentos } = await query(
-      `SELECT l.id,l.descricao,l.empresa, p.id AS parcela_id,p.vencimento,p.valor,p.status,p.dt_pagamento AS pago_em
-       FROM fin_lancamentos_cp l JOIN fin_parcelas_cp p ON p.lancamento_id=l.id
-       WHERE l.tenant_id=$1 AND l.fornecedor_id=$2 ORDER BY p.vencimento DESC LIMIT 200`,
+    // Busca lançamentos vinculados ao fornecedor
+    const { rows: lancamentos } = await query(
+      `SELECT
+         l.id, l.descricao, l.empresa,
+         p.id AS parcela_id,
+         p.vencimento, p.valor, p.status, p.dt_pagamento AS pago_em
+       FROM fin_lancamentos_cp l
+       JOIN fin_parcelas_cp p ON p.lancamento_id = l.id
+       WHERE l.tenant_id = $1
+         AND l.fornecedor_id = $2
+       ORDER BY p.vencimento DESC
+       LIMIT 200`,
       [tenant_id, req.params.id]
     )
-    return res.json({ ok:true, data:{
-      total_contas: new Set(lancamentos.map(r=>r.id)).size,
-      total_pago:   lancamentos.filter(r=>r.status==='pago').reduce((s,r)=>s+parseFloat(r.valor),0),
-      total_aberto: lancamentos.filter(r=>r.status==='aberto').reduce((s,r)=>s+parseFloat(r.valor),0),
-      total_vencido:lancamentos.filter(r=>r.status==='vencido').reduce((s,r)=>s+parseFloat(r.valor),0),
-      itens: lancamentos.map(r=>({ id:r.parcela_id, descricao:r.descricao, vencimento:r.vencimento, valor:parseFloat(r.valor), status:r.status, pago_em:r.pago_em, empresa:r.empresa })),
-    }})
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+
+    const total_contas = new Set(lancamentos.map(r => r.id)).size
+    const total_pago   = lancamentos.filter(r => r.status === 'pago').reduce((s, r) => s + parseFloat(r.valor), 0)
+    const total_aberto = lancamentos.filter(r => r.status === 'aberto').reduce((s, r) => s + parseFloat(r.valor), 0)
+    const total_vencido= lancamentos.filter(r => r.status === 'vencido').reduce((s, r) => s + parseFloat(r.valor), 0)
+
+    return res.json({
+      ok: true,
+      data: {
+        total_contas,
+        total_pago,
+        total_aberto,
+        total_vencido,
+        itens: lancamentos.map(r => ({
+          id:         r.parcela_id,
+          descricao:  r.descricao,
+          vencimento: r.vencimento,
+          valor:      parseFloat(r.valor),
+          status:     r.status,
+          pago_em:    r.pago_em,
+          empresa:    r.empresa,
+        })),
+      },
+    })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+
+// ── GET /financeiro/bancos/:id/lancamentos ─────────────────────────────────
 router.get('/financeiro/bancos/:id/lancamentos', async (req, res) => {
   const { tenant_id } = req.user
   try {
-    const { rows } = await query(`SELECT * FROM fin_bancos_lancamentos WHERE conta_id=$1 AND tenant_id=$2 ORDER BY data DESC, created_at DESC`, [req.params.id,tenant_id])
-    return res.json({ ok:true, data:rows })
-  } catch (err) { return res.status(500).json({ ok:false, message:err.message }) }
+    const { rows } = await query(
+      `SELECT * FROM fin_bancos_lancamentos
+       WHERE conta_id = $1 AND tenant_id = $2
+       ORDER BY data DESC, created_at DESC`,
+      [req.params.id, tenant_id]
+    )
+    return res.json({ ok: true, data: rows })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
 })
 
+// ── POST /financeiro/bancos/:id/lancamentos ────────────────────────────────
 router.post('/financeiro/bancos/:id/lancamentos', async (req, res) => {
   const { tenant_id } = req.user
   const { tipo, descricao, valor, data, obs } = req.body
-  const TIPOS_VALIDOS = ['saldo_inicial','taxa','rendimento','aplicacao']
-  if (!TIPOS_VALIDOS.includes(tipo)) return res.status(400).json({ ok:false, message:'Tipo inválido' })
-  if (!descricao?.trim()) return res.status(400).json({ ok:false, message:'Descrição obrigatória' })
-  if (valor===undefined||valor===null||valor===''||Number.isNaN(Number(valor))) return res.status(400).json({ ok:false, message:'Valor obrigatório' })
-  if (!data) return res.status(400).json({ ok:false, message:'Data obrigatória' })
+
+  const TIPOS_VALIDOS = ['saldo_inicial', 'taxa', 'rendimento', 'aplicacao']
+  if (!TIPOS_VALIDOS.includes(tipo)) {
+    return res.status(400).json({ ok: false, message: 'Tipo inválido' })
+  }
+  if (!descricao?.trim()) return res.status(400).json({ ok: false, message: 'Descrição obrigatória' })
+  if (valor === undefined || valor === null || valor === '' || Number.isNaN(Number(valor))) {
+    return res.status(400).json({ ok: false, message: 'Valor obrigatório' })
+  }
+  if (!data) return res.status(400).json({ ok: false, message: 'Data obrigatória' })
+
   const client = await require('../config/database').pool.connect()
   try {
     await client.query('BEGIN')
-    const { rows:[contaBanco] } = await client.query(`SELECT * FROM fin_bancos_contas WHERE id=$1 FOR UPDATE`, [req.params.id])
-    if (!contaBanco) { await client.query('ROLLBACK'); return res.status(404).json({ ok:false, message:'Conta bancária não encontrada' }) }
-    const valorNum    = parseMoney(valor)
-    const movimentoId = await inserirMovimentoBanco(client,{ conta:contaBanco, tipo, descricao:descricao.trim(), valor:valorNum, data })
-    const { rows:[lanc] } = await client.query(
-      `INSERT INTO fin_bancos_lancamentos (tenant_id,conta_id,tipo,descricao,valor,data,obs,movimento_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [tenant_id,req.params.id,tipo,descricao.trim(),valorNum,data,obs||null,movimentoId]
+
+    const { rows: [contaBanco] } = await client.query(
+      `SELECT * FROM fin_bancos_contas WHERE id = $1 FOR UPDATE`,
+      [req.params.id]
     )
-    await client.query(`UPDATE fin_bancos_contas SET saldo_inicial=COALESCE(saldo_inicial,0)+$1,updated_at=NOW() WHERE id=$2`, [valorNum,req.params.id])
+    if (!contaBanco) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ ok: false, message: 'Conta bancária não encontrada' })
+    }
+
+    const valorNum = parseMoney(valor)
+    const movimentoId = await inserirMovimentoBanco(client, {
+      conta: contaBanco,
+      tipo,
+      descricao: descricao.trim(),
+      valor: valorNum,
+      data,
+    })
+
+    const { rows: [lanc] } = await client.query(
+      `INSERT INTO fin_bancos_lancamentos (tenant_id, conta_id, tipo, descricao, valor, data, obs, movimento_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [tenant_id, req.params.id, tipo, descricao.trim(), valorNum, data, obs || null, movimentoId]
+    )
+
+    await client.query(
+      `UPDATE fin_bancos_contas
+       SET saldo_inicial = COALESCE(saldo_inicial, 0) + $1, updated_at = NOW()
+       WHERE id = $2`,
+      [valorNum, req.params.id]
+    )
+
     await client.query('COMMIT')
     logger.info(`Lançamento bancário: conta=${req.params.id} tipo=${tipo} valor=${valorNum}`)
-    return res.status(201).json({ ok:true, data:lanc })
-  } catch (err) { await client.query('ROLLBACK'); return res.status(500).json({ ok:false, message:err.message }) }
-  finally { client.release() }
+    return res.status(201).json({ ok: true, data: lanc })
+  } catch (err) {
+    await client.query('ROLLBACK')
+    return res.status(500).json({ ok: false, message: err.message })
+  } finally {
+    client.release()
+  }
 })
 
+// ── DELETE /financeiro/bancos/:id/lancamentos/:lancId ─────────────────────
 router.delete('/financeiro/bancos/:id/lancamentos/:lancId', async (req, res) => {
   const { tenant_id } = req.user
   const client = await require('../config/database').pool.connect()
   try {
     await client.query('BEGIN')
-    const { rows:[lanc] } = await client.query('SELECT valor,movimento_id FROM fin_bancos_lancamentos WHERE id=$1 AND tenant_id=$2', [req.params.lancId,tenant_id])
-    if (!lanc) { await client.query('ROLLBACK'); return res.status(404).json({ ok:false, message:'Lançamento não encontrado' }) }
+
+    const { rows: [lanc] } = await client.query(
+      'SELECT valor, movimento_id FROM fin_bancos_lancamentos WHERE id=$1 AND tenant_id=$2',
+      [req.params.lancId, tenant_id]
+    )
+    if (!lanc) {
+      await client.query('ROLLBACK')
+      return res.status(404).json({ ok: false, message: 'Lançamento não encontrado' })
+    }
+
     await client.query('DELETE FROM fin_bancos_lancamentos WHERE id=$1', [req.params.lancId])
-    if (lanc.movimento_id) await client.query('DELETE FROM fin_movimento WHERE id=$1', [lanc.movimento_id])
-    await client.query(`UPDATE fin_bancos_contas SET saldo_inicial=COALESCE(saldo_inicial,0)-$1,updated_at=NOW() WHERE id=$2`, [parseMoney(lanc.valor),req.params.id])
+    if (lanc.movimento_id) {
+      await client.query('DELETE FROM fin_movimento WHERE id=$1', [lanc.movimento_id])
+    }
+
+    await client.query(
+      `UPDATE fin_bancos_contas
+       SET saldo_inicial = COALESCE(saldo_inicial, 0) - $1, updated_at = NOW()
+       WHERE id = $2`,
+      [parseMoney(lanc.valor), req.params.id]
+    )
+
     await client.query('COMMIT')
-    return res.json({ ok:true })
-  } catch (err) { await client.query('ROLLBACK'); return res.status(500).json({ ok:false, message:err.message }) }
-  finally { client.release() }
+    return res.json({ ok: true })
+  } catch (err) {
+    await client.query('ROLLBACK')
+    return res.status(500).json({ ok: false, message: err.message })
+  } finally {
+    client.release()
+  }
 })
 
 module.exports = router

@@ -11,6 +11,8 @@ const { v4: uuidv4 } = require('uuid')
 const { query }      = require('../config/database')
 const { authenticate } = require('../middleware/authenticate')
 const logger         = require('../config/logger')
+const { logAudit } = require('../services/auditService')
+const { isAdminRole, canManageRole, canSetRole, getRoleFromProfileIds } = require('../services/permissionService')
 
 const router = express.Router()
 router.use(authenticate)
@@ -44,7 +46,7 @@ router.get('/profiles', async (req, res) => {
 // ── POST /profiles ────────────────────────────────────────────────────────────
 router.post('/profiles', async (req, res) => {
   const { tenant_id, role } = req.user
-  if (!['admin', 'super_admin'].includes(role)) {
+  if (!isAdminRole(role)) {
     return res.status(403).json({ ok: false, message: 'Sem permissão' })
   }
 
@@ -64,7 +66,7 @@ router.post('/profiles', async (req, res) => {
 // ── PUT /profiles/:id ─────────────────────────────────────────────────────────
 router.put('/profiles/:id', async (req, res) => {
   const { tenant_id, role } = req.user
-  if (!['admin', 'super_admin'].includes(role)) {
+  if (!isAdminRole(role)) {
     return res.status(403).json({ ok: false, message: 'Sem permissão' })
   }
 
@@ -94,7 +96,7 @@ router.put('/profiles/:id', async (req, res) => {
 // ── DELETE /profiles/:id ──────────────────────────────────────────────────────
 router.delete('/profiles/:id', async (req, res) => {
   const { tenant_id, role } = req.user
-  if (!['admin', 'super_admin'].includes(role)) {
+  if (!isAdminRole(role)) {
     return res.status(403).json({ ok: false, message: 'Sem permissão' })
   }
 
@@ -122,16 +124,27 @@ router.get('/users/:userId/profiles', async (req, res) => {
 // ── POST /users/:userId/profiles ─────────────────────────────────────────────
 router.post('/users/:userId/profiles', async (req, res) => {
   const { tenant_id, role } = req.user
-  if (!['admin', 'super_admin'].includes(role)) {
-    return res.status(403).json({ ok: false, message: 'Sem permissão' })
-  }
 
   const { profileId } = req.body
   if (!profileId) return res.status(400).json({ ok: false, message: 'profileId obrigatório' })
 
+  const { rows: [target] } = await query(
+    'SELECT id, role FROM hub_users WHERE id=$1 AND tenant_id=$2',
+    [req.params.userId, tenant_id]
+  )
+  if (!target) return res.status(404).json({ ok: false, message: 'Usuário não encontrado' })
+  if (!canManageRole(role, target.role)) {
+    return res.status(403).json({ ok: false, message: 'Você não pode alterar perfil de usuário igual ou superior ao seu' })
+  }
+
   // Garante que o perfil pertence ao tenant
   const { rows } = await query('SELECT id FROM hub_profiles WHERE id=$1 AND tenant_id=$2', [profileId, tenant_id])
   if (!rows.length) return res.status(404).json({ ok: false, message: 'Perfil não encontrado' })
+
+  const inferredRole = await getRoleFromProfileIds(tenant_id, [profileId], target.role)
+  if (!canSetRole(role, inferredRole)) {
+    return res.status(403).json({ ok: false, message: 'Você não pode aplicar perfil igual ou superior ao seu' })
+  }
 
   await query(
     `INSERT INTO hub_user_profiles (user_id, profile_id)
@@ -142,11 +155,77 @@ router.post('/users/:userId/profiles', async (req, res) => {
   return res.json({ ok: true })
 })
 
+// ── PUT /users/:userId/profiles — substitui perfis do usuário ──────────────────
+router.put('/users/:userId/profiles', async (req, res) => {
+  const { id: requesterId, tenant_id, role } = req.user
+  const profileIds = Array.isArray(req.body.profileIds) ? req.body.profileIds : []
+
+  const { rows: [targetUser] } = await query(
+    'SELECT id, email, role FROM hub_users WHERE id=$1 AND tenant_id=$2',
+    [req.params.userId, tenant_id]
+  )
+  if (!targetUser) return res.status(404).json({ ok: false, message: 'Usuário não encontrado' })
+
+  if (!canManageRole(role, targetUser.role)) {
+    return res.status(403).json({ ok: false, message: 'Você não pode alterar perfil de usuário igual ou superior ao seu' })
+  }
+
+  let validIds = []
+  if (profileIds.length > 0) {
+    const { rows } = await query(
+      'SELECT id FROM hub_profiles WHERE tenant_id=$1 AND id = ANY($2::uuid[])',
+      [tenant_id, profileIds]
+    )
+    validIds = rows.map(r => r.id)
+  }
+
+  const inferredRole = await getRoleFromProfileIds(tenant_id, validIds, targetUser.role)
+  if (!canSetRole(role, inferredRole)) {
+    return res.status(403).json({ ok: false, message: 'Você não pode aplicar perfil igual ou superior ao seu' })
+  }
+
+  await query('DELETE FROM hub_user_profiles WHERE user_id=$1', [req.params.userId])
+
+  for (const profileId of validIds) {
+    await query(
+      `INSERT INTO hub_user_profiles (user_id, profile_id)
+       VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+      [req.params.userId, profileId]
+    )
+  }
+
+  await query(
+    'UPDATE hub_users SET role=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3',
+    [inferredRole, req.params.userId, tenant_id]
+  )
+
+  await logAudit({
+    tenantId: tenant_id,
+    userId: requesterId,
+    action: 'user_profiles_update',
+    module: 'usuarios',
+    entityType: 'hub_users',
+    entityId: req.params.userId,
+    targetUserId: req.params.userId,
+    ip: req.ip || req.socket?.remoteAddress,
+    userAgent: req.headers['user-agent'] || '',
+    details: { email: targetUser.email, before_role: targetUser.role, after_role: inferredRole, profile_ids: validIds },
+  })
+
+  return res.json({ ok: true, data: validIds, role: inferredRole })
+})
+
 // ── DELETE /users/:userId/profiles/:profileId ─────────────────────────────────
 router.delete('/users/:userId/profiles/:profileId', async (req, res) => {
-  const { role } = req.user
-  if (!['admin', 'super_admin'].includes(role)) {
-    return res.status(403).json({ ok: false, message: 'Sem permissão' })
+  const { tenant_id, role } = req.user
+
+  const { rows: [target] } = await query(
+    'SELECT id, role FROM hub_users WHERE id=$1 AND tenant_id=$2',
+    [req.params.userId, tenant_id]
+  )
+  if (!target) return res.status(404).json({ ok: false, message: 'Usuário não encontrado' })
+  if (!canManageRole(role, target.role)) {
+    return res.status(403).json({ ok: false, message: 'Você não pode alterar perfil de usuário igual ou superior ao seu' })
   }
 
   await query(

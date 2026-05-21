@@ -11,6 +11,7 @@ const router = express.Router()
 const loginSchema = Joi.object({
   email:    Joi.string().required().messages({ 'any.required': 'E-mail obrigatório' }),
   password: Joi.string().required().messages({ 'any.required': 'Senha obrigatória' }),
+  hub:      Joi.string().valid('santa_clara', 'larm').optional(),
 })
 
 const refreshSchema = Joi.object({
@@ -26,7 +27,7 @@ router.post('/login', authLimiter, async (req, res, next) => {
   const ip        = req.ip || req.socket?.remoteAddress
   const userAgent = req.headers['user-agent'] || ''
 
-  const result = await authService.login(value.email, value.password, ip, userAgent)
+  const result = await authService.login(value.email, value.password, ip, userAgent, value.hub)
 
   if (!result.ok) {
     return res.status(401).json({ ok: false, message: result.message })
@@ -54,7 +55,11 @@ router.post('/refresh', async (req, res) => {
 
 router.post('/logout', async (req, res) => {
   const { refreshToken } = req.body
-  const result = await authService.logout(refreshToken)
+  const result = await authService.logout(
+    refreshToken,
+    req.ip || req.socket?.remoteAddress,
+    req.headers['user-agent'] || ''
+  )
   return res.json(result)
 })
 

@@ -14,7 +14,7 @@ const logger = require('../src/config/logger')
 // ─── Definição dos módulos (mesma lista do frontend) ──────────────────────────
 const ALL_MODS = [
   'dashboard','empreendimentos','mapa',
-  'crm','simulador','contratos','landing',
+  'crm','simulador','contratos','landing','landing_pages','automacoes',
   'fin_receber','fin_pagar','fin_boletos','fin_split','fin_sped',
   'obras','relatorios','controladoria','ia',
   'configuracoes','usuarios',
@@ -50,6 +50,15 @@ const DEFAULT_PROFILES = [
     permissions: perms(
       ['dashboard','empreendimentos','mapa','crm','simulador','contratos','landing'],
       ['crm','simulador','landing']
+    ),
+  },
+  {
+    name: 'Marketing',
+    description: 'CRM, landing pages, automações e convites limitados',
+    color: '#DB2777',
+    permissions: perms(
+      ['dashboard','crm','landing_pages','automacoes','relatorios','configuracoes','usuarios'],
+      ['crm','landing_pages','automacoes','usuarios']
     ),
   },
   {

@@ -3,6 +3,22 @@ const jwt    = require('jsonwebtoken')
 const { v4: uuidv4 } = require('uuid')
 const { query, transaction } = require('../config/database')
 const logger = require('../config/logger')
+const { logAudit } = require('./auditService')
+
+const PORTAL_OPTIONS = {
+  santa_clara: 'Santa Clara HUB',
+  larm: 'LARM HUB',
+}
+
+function normalizeAllowedHubs(value) {
+  let hubs = value
+  if (typeof hubs === 'string') {
+    try { hubs = JSON.parse(hubs) } catch { hubs = hubs.split(',') }
+  }
+  if (!Array.isArray(hubs)) hubs = []
+  const valid = [...new Set(hubs.filter(h => PORTAL_OPTIONS[h]))]
+  return valid.length ? valid : ['santa_clara', 'larm']
+}
 
 // ─── Token helpers ─────────────────────────────────────────────────────────────
 
@@ -27,9 +43,27 @@ function generateRefreshToken(user) {
   )
 }
 
+
+function mergeProfilePermissions(profileRows = []) {
+  const merged = {}
+
+  for (const profile of profileRows) {
+    const permissions = profile.permissions || {}
+    for (const [moduleId, perm] of Object.entries(permissions)) {
+      const current = merged[moduleId] || { read: false, write: false }
+      merged[moduleId] = {
+        read: Boolean(current.read || perm?.read),
+        write: Boolean(current.write || perm?.write),
+      }
+    }
+  }
+
+  return merged
+}
+
 // ─── Login ─────────────────────────────────────────────────────────────────────
 
-async function login(email, password, ip, userAgent) {
+async function login(email, password, ip, userAgent, requestedHub = null) {
   // 1. Busca usuário
   const { rows } = await query(
     `SELECT u.*, t.slug AS tenant_slug, t.name AS tenant_name, t.hub_type
@@ -44,24 +78,51 @@ async function login(email, password, ip, userAgent) {
   // 2. Usuário não existe — delay para evitar timing attack
   if (!user) {
     await new Promise(r => setTimeout(r, 400))
-    await logAudit(null, 'login_failed', ip, userAgent, { email, reason: 'user_not_found' })
+    await logAudit({ action: 'login_failed', module: 'auth', ip, userAgent, details: { email, reason: 'user_not_found' } })
     return { ok: false, message: 'E-mail ou senha incorretos' }
   }
 
   // 3. Verifica se está ativo
   if (!user.is_active) {
-    await logAudit(user.id, 'login_blocked', ip, userAgent, { reason: 'inactive' })
+    await logAudit({ tenantId: user.tenant_id, userId: user.id, action: 'login_blocked', module: 'auth', ip, userAgent, details: { reason: 'inactive' } })
     return { ok: false, message: 'Usuário inativo. Entre em contato com o suporte.' }
   }
 
   // 4. Verifica senha
   const passwordOk = await bcrypt.compare(password, user.password_hash)
   if (!passwordOk) {
-    await logAudit(user.id, 'login_failed', ip, userAgent, { reason: 'wrong_password' })
+    await logAudit({ tenantId: user.tenant_id, userId: user.id, action: 'login_failed', module: 'auth', ip, userAgent, details: { reason: 'wrong_password' } })
     return { ok: false, message: 'E-mail ou senha incorretos' }
   }
 
-  // 5. Gera tokens
+  const requestedPortal = PORTAL_OPTIONS[requestedHub] ? requestedHub : null
+  const allowedHubs = normalizeAllowedHubs(user.allowed_hubs)
+  if (requestedPortal && !allowedHubs.includes(requestedPortal)) {
+    await logAudit({
+      tenantId: user.tenant_id,
+      userId: user.id,
+      action: 'login_blocked',
+      module: 'auth',
+      ip,
+      userAgent,
+      details: { reason: 'portal_denied', requested_hub: requestedPortal, allowed_hubs: allowedHubs },
+    })
+    return { ok: false, message: `Seu usuário não tem acesso ao ${PORTAL_OPTIONS[requestedPortal]}.` }
+  }
+
+  // 5. Busca perfis/permissões vinculados ao usuário
+  const { rows: profileRows } = await query(
+    `SELECT p.id, p.name, p.color, p.permissions
+       FROM hub_user_profiles up
+       JOIN hub_profiles p ON p.id = up.profile_id
+      WHERE up.user_id = $1
+        AND p.tenant_id = $2
+      ORDER BY p.name`,
+    [user.id, user.tenant_id]
+  )
+  const permissions = mergeProfilePermissions(profileRows)
+
+  // 6. Gera tokens
   const accessToken  = generateAccessToken(user)
   const refreshToken = generateRefreshToken(user)
 
@@ -79,7 +140,7 @@ async function login(email, password, ip, userAgent) {
     )
   })
 
-  await logAudit(user.id, 'login_success', ip, userAgent, {})
+  await logAudit({ tenantId: user.tenant_id, userId: user.id, action: 'login_success', module: 'auth', ip, userAgent, details: { requested_hub: requestedPortal || null } })
 
   logger.info(`Login: ${user.email} [${user.role}] tenant:${user.tenant_slug}`)
 
@@ -97,8 +158,11 @@ async function login(email, password, ip, userAgent) {
         tenantId:   user.tenant_id,
         tenantName: user.tenant_name,
         tenantSlug: user.tenant_slug,
-        hubType:    user.hub_type,     // 'santa_clara' | 'larm'
+        hubType:    requestedPortal || user.hub_type,     // 'santa_clara' | 'larm'
+        allowedHubs,
         mustChangePassword: user.must_change_password || false,
+        profiles: profileRows.map(p => ({ id: p.id, name: p.name, color: p.color })),
+        permissions,
       },
     },
   }
@@ -145,30 +209,36 @@ async function refreshAccessToken(refreshToken) {
 
 // ─── Logout ────────────────────────────────────────────────────────────────────
 
-async function logout(refreshToken) {
+async function logout(refreshToken, ip, userAgent) {
   if (!refreshToken) return { ok: true }
+
+  const { rows: [session] } = await query(
+    `SELECT rt.user_id, u.tenant_id, u.email
+       FROM hub_refresh_tokens rt
+       JOIN hub_users u ON u.id = rt.user_id
+      WHERE rt.token = $1`,
+    [refreshToken]
+  ).catch(() => ({ rows: [] }))
 
   await query(
     `UPDATE hub_refresh_tokens SET revoked = true, revoked_at = NOW()
      WHERE token = $1`,
     [refreshToken]
   )
-  return { ok: true, message: 'Logout realizado com sucesso' }
-}
 
-// ─── Audit log ────────────────────────────────────────────────────────────────
-
-async function logAudit(userId, action, ip, userAgent, meta) {
-  try {
-    await query(
-      `INSERT INTO hub_audit_logs (id, user_id, action, ip, user_agent, meta, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-      [uuidv4(), userId, action, ip, userAgent, JSON.stringify(meta)]
-    )
-  } catch (err) {
-    // Não deixa falha no log quebrar o fluxo principal
-    logger.warn(`Falha ao gravar audit log: ${err.message}`)
+  if (session) {
+    await logAudit({
+      tenantId: session.tenant_id,
+      userId: session.user_id,
+      action: 'logout',
+      module: 'auth',
+      ip,
+      userAgent,
+      details: { email: session.email },
+    })
   }
+
+  return { ok: true, message: 'Logout realizado com sucesso' }
 }
 
 module.exports = { login, refreshAccessToken, logout }

@@ -82,7 +82,24 @@ const STATUS_COLORS: Record<string, string> = {
 
 const R$ = (v: number | null | undefined) =>
   (v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-const todayISO = () => new Date().toISOString().split('T')[0]
+const toDateInputValue = (date = new Date()) => {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
+}
+const todayISO = () => toDateInputValue()
+const dateOnly = (value: string | null | undefined) => {
+  if (!value) return ''
+  const raw = String(value).slice(0, 10)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+  const dt = new Date(value)
+  return Number.isNaN(dt.getTime()) ? '' : toDateInputValue(dt)
+}
+const addMonthsDateOnly = (baseDate: string, months: number) => {
+  const [ano, mes, dia] = (dateOnly(baseDate) || todayISO()).split('-').map(Number)
+  const dt = new Date(ano, mes - 1, dia)
+  dt.setMonth(dt.getMonth() + months)
+  return toDateInputValue(dt)
+}
 const moneyToNumber = (v: string | number | null | undefined) => {
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0
 
@@ -100,8 +117,10 @@ const moneyToNumber = (v: string | number | null | undefined) => {
   return Number.isFinite(n) ? n : 0
 }
 const fmtDate = (d: string | null | undefined) => {
-  if (!d) return '—'
-  try { return new Date(d).toLocaleDateString('pt-BR') } catch { return String(d) }
+  const iso = dateOnly(d)
+  if (!iso) return '—'
+  const [ano, mes, dia] = iso.split('-')
+  return `${dia}/${mes}/${ano}`
 }
 const sortText = (v: unknown) => String(v ?? '').toLocaleLowerCase('pt-BR')
 const sortDate = (v: string | null | undefined) => v ? (Date.parse(v) || 0) : 0
@@ -347,17 +366,12 @@ export default function PagarPage() {
     const vlr = parseFloat(fValor) || 0
     const n   = fNParc || 1
     if (vlr <= 0) { setParcelas([]); return }
-    const base = new Date(fEmissao || new Date())
-    const ps: Parcela[] = Array.from({ length: n }, (_, i) => {
-      const d = new Date(base)
-      d.setMonth(d.getMonth() + i + 1)
-      return {
-        numero: i + 1,
-        valor: parseFloat((vlr / n).toFixed(2)),
-        vencimento: d.toISOString().split('T')[0],
-        status: 'pendente',
-      }
-    })
+    const ps: Parcela[] = Array.from({ length: n }, (_, i) => ({
+      numero: i + 1,
+      valor: parseFloat((vlr / n).toFixed(2)),
+      vencimento: addMonthsDateOnly(fEmissao || todayISO(), i + 1),
+      status: 'pendente',
+    }))
     setParcelas(ps)
   }, [fValor, fNParc, fEmissao])
 
@@ -589,16 +603,16 @@ export default function PagarPage() {
       setFHistorico(d.historico || '')
       setFTipoDoc(d.tipo_documento_id ? String(d.tipo_documento_id) : '')
       setFNF(d.nf_doc || '')
-      setFEmissao(d.dt_emissao?.slice(0,10) || todayISO())
+      setFEmissao(dateOnly(d.dt_emissao) || todayISO())
       setFValor(String(d.valor_total || ''))
       setFNParc(d.qtd_parcelas || 1)
       setFConta(d.conta_contabil || '')
       setFCC(d.centro_custo || '')
       setFObs(d.obs || '')
       if (d.parcelas?.length) {
-        setParcelas(d.parcelas.map((p: { numero: number; valor: number; vencimento: string; status: string; multa?: number; juros?: number; desconto?: number }) => ({
-          numero: p.numero, valor: p.valor,
-          vencimento: p.vencimento?.slice(0,10) || '',
+        setParcelas(d.parcelas.map((p: { id?: number; numero: number; valor: number; vencimento: string; status: string; multa?: number; juros?: number; desconto?: number }) => ({
+          id: p.id, numero: p.numero, valor: p.valor,
+          vencimento: dateOnly(p.vencimento),
           status: p.status || 'pendente',
           multa: p.multa || 0, juros: p.juros || 0, desconto: p.desconto || 0,
         })))
@@ -638,7 +652,7 @@ export default function PagarPage() {
         documento_nome:  fDocumentoNome   || null,
         documento_mime:  fDocumentoMime   || null,
         documento_base64:fDocumentoBase64 || null,
-        dt_emissao:      fEmissao || null,
+        dt_emissao:      dateOnly(fEmissao) || null,
         valor_total:     parseFloat(fValor),
         qtd_parcelas:    fNParc,
         centro_custo:    fCC      || null,
@@ -680,7 +694,7 @@ export default function PagarPage() {
       multa: String(Number(l.parcela_multa || 0)),
       valor_final: String(Number(l.parcela_valor_final || valor).toFixed(2)),
       forma_pagamento: l.parcela_forma_pagamento || '',
-      dt_pagamento: l.parcela_dt_pagamento || todayISO(),
+      dt_pagamento: dateOnly(l.parcela_dt_pagamento) || todayISO(),
     }
     form.valor_final = calculaValorFinalBaixa(form).toFixed(2)
     setBaixaParcela(l)
@@ -717,7 +731,7 @@ export default function PagarPage() {
     setSavingBaixa(true)
     try {
       await apiClient.put(`/financeiro/lancamentos-cp/${baixaParcela.id}/parcelas/${baixaParcela.parcela_id}/pagar`, {
-        dt_pagamento: baixaForm.dt_pagamento,
+        dt_pagamento: dateOnly(baixaForm.dt_pagamento),
         valor_parcela: moneyToNumber(baixaForm.valor_parcela),
         motivo_baixa: baixaForm.motivo_baixa.trim() || null,
         acrescimo: moneyToNumber(baixaForm.acrescimo),
@@ -1250,7 +1264,7 @@ export default function PagarPage() {
         <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-5">
             <h3 className="font-bold text-slate-800 mb-2">Excluir lançamento?</h3>
-            <p className="text-xs text-slate-500 mb-4">Esta ação não pode ser desfeita. Lançamentos com parcelas pagas não podem ser excluídos.</p>
+            <p className="text-xs text-slate-500 mb-4">Esta ação não pode ser desfeita. Se houver baixa vinculada, o movimento bancário gerado por ela também será removido.</p>
             <div className="flex gap-2 justify-end">
               <button onClick={() => setDeletingId(null)} className="px-4 py-2 text-xs rounded-lg border border-slate-200 hover:bg-slate-50">Cancelar</button>
               <button onClick={handleDeleteConfirm} disabled={deletingLoading}
