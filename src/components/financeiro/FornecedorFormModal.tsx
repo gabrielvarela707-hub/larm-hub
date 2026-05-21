@@ -1,4 +1,4 @@
-'use client'
+"use client";
 
 /**
  * src/components/financeiro/FornecedorFormModal.tsx
@@ -8,257 +8,415 @@
  *   - /financeiro/pagar/page.tsx
  */
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from "react";
 import {
-  X, Check, Loader2, Building2, History, FileText,
-  AlertTriangle, CheckCircle2, Clock, TrendingDown,
-} from 'lucide-react'
-import { apiClient } from '@/lib/auth-store'
-import { cn } from '@/lib/utils'
+  X,
+  Check,
+  Loader2,
+  Building2,
+  History,
+  FileText,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  TrendingDown,
+} from "lucide-react";
+import { apiClient } from "@/lib/auth-store";
+import { cn } from "@/lib/utils";
+import BancoSearchSelect from "@/components/financeiro/BancoSearchSelect";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface Fornecedor {
-  id: number
-  razao_social: string; nome_fantasia: string | null
-  cnpj_cpf: string | null; tipo_pessoa: string; categoria: string | null
-  email: string | null; telefone: string | null; empresa: string
-  cep: string | null; endereco: string | null; cidade_uf: string | null
-  banco_nome: string | null; agencia: string | null; conta: string | null
-  tipo_conta: string; chave_pix: string | null; obs: string | null; ativo: boolean
+  id: number;
+  razao_social: string;
+  nome_fantasia: string | null;
+  cnpj_cpf: string | null;
+  tipo_pessoa: string;
+  categoria: string | null;
+  email: string | null;
+  telefone: string | null;
+  empresa: string;
+  cep: string | null;
+  endereco: string | null;
+  cidade_uf: string | null;
+  banco_nome: string | null;
+  codigo_banco?: string | null;
+  agencia: string | null;
+  conta: string | null;
+  digito?: string | null;
+  tipo_conta: string;
+  chave_pix: string | null;
+  obs: string | null;
+  ativo: boolean;
 }
 
 interface HistoricoItem {
-  id: number; descricao: string; vencimento: string; valor: number
-  status: 'pago' | 'aberto' | 'vencido'; pago_em: string | null; empresa: string
+  id: number;
+  descricao: string;
+  vencimento: string;
+  valor: number;
+  status: "pago" | "aberto" | "vencido";
+  pago_em: string | null;
+  empresa: string;
 }
 
 interface HistoricoResumo {
-  total_contas: number; total_pago: number; total_aberto: number; total_vencido: number
-  itens: HistoricoItem[]
+  total_contas: number;
+  total_pago: number;
+  total_aberto: number;
+  total_vencido: number;
+  itens: HistoricoItem[];
 }
 
 interface Props {
-  open: boolean
-  editId?: number | null
-  initialData?: Partial<Fornecedor>
-  onClose: () => void
-  onSaved: (f: Fornecedor) => void
+  open: boolean;
+  editId?: number | null;
+  initialData?: Partial<Fornecedor>;
+  onClose: () => void;
+  onSaved: (f: Fornecedor) => void;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const EMPTY: Partial<Fornecedor> = {
-  razao_social: '', nome_fantasia: '', cnpj_cpf: '', tipo_pessoa: 'PJ', categoria: '',
-  email: '', telefone: '', empresa: 'TODOS', cep: '', endereco: '', cidade_uf: '',
-  banco_nome: '', agencia: '', conta: '', tipo_conta: 'Corrente', chave_pix: '', obs: '', ativo: true,
-}
+  razao_social: "",
+  nome_fantasia: "",
+  cnpj_cpf: "",
+  tipo_pessoa: "PJ",
+  categoria: "",
+  email: "",
+  telefone: "",
+  empresa: "TODOS",
+  cep: "",
+  endereco: "",
+  cidade_uf: "",
+  banco_nome: "",
+  codigo_banco: "",
+  agencia: "",
+  conta: "",
+  digito: "",
+  tipo_conta: "Corrente",
+  chave_pix: "",
+  obs: "",
+  ativo: true,
+};
 
-const EMPRESAS   = ['TODOS', 'LARM', 'LUCKY', 'LM', 'HOLDING', 'RM']
-const CATEGORIAS = ['Serviços', 'Materiais', 'Condomínio / Imóvel', 'Prestador de Serviços (PF)', 'Órgão Público', 'Outros']
-const BANCOS_BR  = [
-  '001 - Banco do Brasil', '033 - Santander', '041 - Banrisul',
-  '070 - BRB', '077 - Banco Inter', '085 - Ailos', '097 - Credisis',
-  '099 - Uniprime', '104 - Caixa Econômica', '121 - Agibank',
-  '133 - Cresol', '197 - Stone', '208 - BTG Pactual', '212 - Banco Original',
-  '237 - Bradesco', '260 - Nubank', '290 - PagSeguro', '301 - BPP',
-  '318 - BMG', '323 - Mercado Pago', '336 - C6 Bank', '341 - Itaú',
-  '380 - PicPay', '389 - Mercantil', '422 - Safra', '505 - Credit Suisse',
-  '623 - Pan', '633 - Rendimento', '637 - Sofisa', '655 - Votorantim',
-  '707 - Daycoval', '741 - Ribeirão Preto', '745 - Citibank',
-  '746 - Modal', '748 - Sicredi', '752 - BNP Paribas', '756 - Sicoob',
-  'Outro',
-]
+const EMPRESAS = ["TODOS", "LARM", "LUCKY", "LM", "HOLDING", "RM"];
+const CATEGORIAS = [
+  "Serviços",
+  "Materiais",
+  "Condomínio / Imóvel",
+  "Prestador de Serviços (PF)",
+  "Órgão Público",
+  "Outros",
+];
 
 // ─── Masks ────────────────────────────────────────────────────────────────────
 function maskCNPJ(v: string) {
-  return v.replace(/\D/g,'').slice(0,14)
-    .replace(/(\d{2})(\d)/,'$1.$2')
-    .replace(/(\d{3})(\d)/,'$1.$2')
-    .replace(/(\d{3})(\d)/,'$1/$2')
-    .replace(/(\d{4})(\d)/,'$1-$2')
+  return v
+    .replace(/\D/g, "")
+    .slice(0, 14)
+    .replace(/(\d{2})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1/$2")
+    .replace(/(\d{4})(\d)/, "$1-$2");
 }
 function maskCPF(v: string) {
-  return v.replace(/\D/g,'').slice(0,11)
-    .replace(/(\d{3})(\d)/,'$1.$2')
-    .replace(/(\d{3})(\d)/,'$1.$2')
-    .replace(/(\d{3})(\d)/,'$1-$2')
+  return v
+    .replace(/\D/g, "")
+    .slice(0, 11)
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1.$2")
+    .replace(/(\d{3})(\d)/, "$1-$2");
 }
 function maskCEP(v: string) {
-  return v.replace(/\D/g,'').slice(0,8).replace(/(\d{5})(\d)/,'$1-$2')
+  return v
+    .replace(/\D/g, "")
+    .slice(0, 8)
+    .replace(/(\d{5})(\d)/, "$1-$2");
 }
 function maskPhone(v: string) {
-  const d = v.replace(/\D/g,'').slice(0,11)
-  if (d.length <= 10) return d.replace(/(\d{2})(\d{4})(\d)/,'($1) $2-$3')
-  return d.replace(/(\d{2})(\d{5})(\d)/,'($1) $2-$3')
+  const d = v.replace(/\D/g, "").slice(0, 11);
+  if (d.length <= 10) return d.replace(/(\d{2})(\d{4})(\d)/, "($1) $2-$3");
+  return d.replace(/(\d{2})(\d{5})(\d)/, "($1) $2-$3");
 }
-function onlyDigits(v: string) { return v.replace(/\D/g,'') }
-function fmtMoeda(v: number) { return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) }
+function onlyDigits(v: string) {
+  return v.replace(/\D/g, "");
+}
+function fmtMoeda(v: number) {
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
 
 // ─── MaskedInput ─────────────────────────────────────────────────────────────
-function MaskedInput({ externalValue, onCommit, onComplete, mask, placeholder, className, inputMode, icon }: {
-  externalValue: string; onCommit: (v: string) => void; onComplete?: (v: string) => void
-  mask: (v: string) => string; placeholder?: string; className?: string
-  inputMode?: React.HTMLAttributes<HTMLInputElement>['inputMode']; icon?: React.ReactNode
+function MaskedInput({
+  externalValue,
+  onCommit,
+  onComplete,
+  mask,
+  placeholder,
+  className,
+  inputMode,
+  icon,
+}: {
+  externalValue: string;
+  onCommit: (v: string) => void;
+  onComplete?: (v: string) => void;
+  mask: (v: string) => string;
+  placeholder?: string;
+  className?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
+  icon?: React.ReactNode;
 }) {
-  const ref = useRef<HTMLInputElement>(null)
+  const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (ref.current && mask(ref.current.value) !== mask(externalValue)) {
-      ref.current.value = mask(externalValue)
+      ref.current.value = mask(externalValue);
     }
-  }, [externalValue, mask])
+  }, [externalValue, mask]);
   return (
     <div className="relative">
-      <input ref={ref} defaultValue={mask(externalValue)} className={cn(className, icon && 'pr-8')}
-        inputMode={inputMode} placeholder={placeholder}
-        onChange={e => {
-          const masked = mask(e.target.value)
-          e.target.value = masked
-          try { e.target.setSelectionRange(masked.length, masked.length) } catch {}
-          onCommit(masked)
-          const digits = masked.replace(/\D/g, '')
-          if (onComplete && (digits.length === 14 || digits.length === 8)) onComplete(masked)
-        }} />
-      {icon && <span className="absolute right-2.5 top-1/2 -translate-y-1/2">{icon}</span>}
+      <input
+        ref={ref}
+        defaultValue={mask(externalValue)}
+        className={cn(className, icon && "pr-8")}
+        inputMode={inputMode}
+        placeholder={placeholder}
+        onChange={(e) => {
+          const masked = mask(e.target.value);
+          e.target.value = masked;
+          try {
+            e.target.setSelectionRange(masked.length, masked.length);
+          } catch {}
+          onCommit(masked);
+          const digits = masked.replace(/\D/g, "");
+          if (onComplete && (digits.length === 14 || digits.length === 8))
+            onComplete(masked);
+        }}
+      />
+      {icon && (
+        <span className="absolute right-2.5 top-1/2 -translate-y-1/2">
+          {icon}
+        </span>
+      )}
     </div>
-  )
+  );
 }
 
 // ─── Field ────────────────────────────────────────────────────────────────────
-function Field({ label, name, required, children, errors, col2 }: {
-  label: string; name: string; required?: boolean
-  children: React.ReactNode; errors: Record<string, string>; col2?: boolean
+function Field({
+  label,
+  name,
+  required,
+  children,
+  errors,
+  col2,
+}: {
+  label: string;
+  name: string;
+  required?: boolean;
+  children: React.ReactNode;
+  errors: Record<string, string>;
+  col2?: boolean;
 }) {
   return (
-    <div className={cn('flex flex-col gap-1', col2 && 'col-span-2')}>
+    <div className={cn("flex flex-col gap-1", col2 && "col-span-2")}>
       <label className="text-xs font-medium text-slate-600">
-        {label}{required && <span className="text-red-500 ml-0.5">*</span>}
+        {label}
+        {required && <span className="text-red-500 ml-0.5">*</span>}
       </label>
       {children}
-      {errors[name] && <p className="text-[10px] text-red-500 mt-0.5">{errors[name]}</p>}
+      {errors[name] && (
+        <p className="text-[10px] text-red-500 mt-0.5">{errors[name]}</p>
+      )}
     </div>
-  )
+  );
+}
+
+// ─── Normalização de dados bancários ──────────────────────────────────────────
+function normalizeFornecedorForm(data?: Partial<Fornecedor>) {
+  const merged: Partial<Fornecedor> = { ...EMPTY, ...(data || {}) };
+  const conta = String(merged.conta || "");
+  if (!merged.digito && conta.includes("-")) {
+    const [numero, digito] = conta.split("-", 2);
+    merged.conta = numero.replace(/\D/g, "");
+    merged.digito = String(digito || "")
+      .replace(/\D/g, "")
+      .slice(0, 2);
+  }
+  return merged;
 }
 
 // ─── FornecedorFormModal ──────────────────────────────────────────────────────
-export default function FornecedorFormModal({ open, editId, initialData, onClose, onSaved }: Props) {
-  const [form,    setForm]    = useState<Partial<Fornecedor>>(initialData ?? EMPTY)
-  const [errors,  setErrors]  = useState<Record<string, string>>({})
-  const [saving,  setSaving]  = useState(false)
-  const [formTab, setFormTab] = useState<'dados' | 'historico'>('dados')
+export default function FornecedorFormModal({
+  open,
+  editId,
+  initialData,
+  onClose,
+  onSaved,
+}: Props) {
+  const [form, setForm] = useState<Partial<Fornecedor>>(() =>
+    normalizeFornecedorForm(initialData),
+  );
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [formTab, setFormTab] = useState<"dados" | "historico">("dados");
 
-  const [cnpjLoading,  setCnpjLoading]  = useState(false)
-  const [cepLoading,   setCepLoading]   = useState(false)
-  const [cnpjStatus,   setCnpjStatus]   = useState<'idle'|'ok'|'err'>('idle')
-  const [cnpjDupError, setCnpjDupError] = useState('')
+  const [cnpjLoading, setCnpjLoading] = useState(false);
+  const [cepLoading, setCepLoading] = useState(false);
+  const [cnpjStatus, setCnpjStatus] = useState<"idle" | "ok" | "err">("idle");
+  const [cnpjDupError, setCnpjDupError] = useState("");
 
-  const [historico,   setHistorico]   = useState<HistoricoResumo | null>(null)
-  const [histLoading, setHistLoading] = useState(false)
+  const [historico, setHistorico] = useState<HistoricoResumo | null>(null);
+  const [histLoading, setHistLoading] = useState(false);
 
   // Reset when opening
   useEffect(() => {
     if (open) {
-      setForm(initialData ?? EMPTY)
-      setErrors({})
-      setCnpjStatus('idle')
-      setCnpjDupError('')
-      setFormTab('dados')
-      setHistorico(null)
+      setForm(normalizeFornecedorForm(initialData));
+      setErrors({});
+      setCnpjStatus("idle");
+      setCnpjDupError("");
+      setFormTab("dados");
+      setHistorico(null);
     }
-  }, [open, editId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, editId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function set(key: keyof Fornecedor, val: string | boolean) {
-    setForm(p => ({ ...p, [key]: val }))
-    if (errors[key]) setErrors(p => ({ ...p, [key]: '' }))
+    setForm((p) => ({ ...p, [key]: val }));
+    if (errors[key]) setErrors((p) => ({ ...p, [key]: "" }));
   }
 
   async function lookupCNPJ(raw: string) {
-    const digits = onlyDigits(raw)
-    if (digits.length !== 14) return
-    setCnpjLoading(true); setCnpjStatus('idle'); setCnpjDupError('')
+    const digits = onlyDigits(raw);
+    if (digits.length !== 14) return;
+    setCnpjLoading(true);
+    setCnpjStatus("idle");
+    setCnpjDupError("");
     try {
-      const dupCheck = await apiClient.get('/financeiro/fornecedores/check-cnpj', {
-        params: { cnpj: digits, exclude_id: editId ?? '' }
-      }).catch(() => null)
+      const dupCheck = await apiClient
+        .get("/financeiro/fornecedores/check-cnpj", {
+          params: { cnpj: digits, exclude_id: editId ?? "" },
+        })
+        .catch(() => null);
       if (dupCheck?.data?.exists) {
-        setCnpjDupError('CNPJ já cadastrado no sistema'); setCnpjStatus('err'); return
+        setCnpjDupError("CNPJ já cadastrado no sistema");
+        setCnpjStatus("err");
+        return;
       }
-      const resp = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${digits}`)
-      if (!resp.ok) throw new Error('não encontrado')
-      const d = await resp.json()
-      setForm(p => ({
+      const resp = await fetch(
+        `https://brasilapi.com.br/api/cnpj/v1/${digits}`,
+      );
+      if (!resp.ok) throw new Error("não encontrado");
+      const d = await resp.json();
+      setForm((p) => ({
         ...p,
         razao_social: d.razao_social ?? p.razao_social,
         nome_fantasia: d.nome_fantasia || p.nome_fantasia,
         email: d.email || p.email,
-        telefone: d.ddd_telefone_1 ? maskPhone(d.ddd_telefone_1.replace(/\D/g,'')) : p.telefone,
+        telefone: d.ddd_telefone_1
+          ? maskPhone(d.ddd_telefone_1.replace(/\D/g, ""))
+          : p.telefone,
         cep: d.cep ? maskCEP(d.cep) : p.cep,
-        endereco: [d.logradouro, d.numero, d.complemento, d.bairro].filter(Boolean).join(', ') || p.endereco,
-        cidade_uf: d.municipio && d.uf ? `${d.municipio} - ${d.uf}` : p.cidade_uf,
-      }))
-      setCnpjStatus('ok')
-    } catch { setCnpjStatus('err') } finally { setCnpjLoading(false) }
+        endereco:
+          [d.logradouro, d.numero, d.complemento, d.bairro]
+            .filter(Boolean)
+            .join(", ") || p.endereco,
+        cidade_uf:
+          d.municipio && d.uf ? `${d.municipio} - ${d.uf}` : p.cidade_uf,
+      }));
+      setCnpjStatus("ok");
+    } catch {
+      setCnpjStatus("err");
+    } finally {
+      setCnpjLoading(false);
+    }
   }
 
   async function lookupCEP(raw: string) {
-    const digits = onlyDigits(raw)
-    if (digits.length !== 8) return
-    setCepLoading(true)
+    const digits = onlyDigits(raw);
+    if (digits.length !== 8) return;
+    setCepLoading(true);
     try {
-      const resp = await fetch(`https://viacep.com.br/ws/${digits}/json/`)
-      const d = await resp.json()
-      if (d.erro) return
-      setForm(p => ({
+      const resp = await fetch(`https://viacep.com.br/ws/${digits}/json/`);
+      const d = await resp.json();
+      if (d.erro) return;
+      setForm((p) => ({
         ...p,
-        endereco: [d.logradouro, d.bairro].filter(Boolean).join(', ') || p.endereco,
-        cidade_uf: d.localidade && d.uf ? `${d.localidade} - ${d.uf}` : p.cidade_uf,
-      }))
-    } catch {} finally { setCepLoading(false) }
+        endereco:
+          [d.logradouro, d.bairro].filter(Boolean).join(", ") || p.endereco,
+        cidade_uf:
+          d.localidade && d.uf ? `${d.localidade} - ${d.uf}` : p.cidade_uf,
+      }));
+    } catch {
+    } finally {
+      setCepLoading(false);
+    }
   }
 
   async function loadHistorico(id: number) {
-    setHistLoading(true)
+    setHistLoading(true);
     try {
-      const r = await apiClient.get(`/financeiro/fornecedores/${id}/historico`)
-      setHistorico(r.data.data)
+      const r = await apiClient.get(`/financeiro/fornecedores/${id}/historico`);
+      setHistorico(r.data.data);
     } catch {
-      setHistorico({ total_contas: 0, total_pago: 0, total_aberto: 0, total_vencido: 0, itens: [] })
-    } finally { setHistLoading(false) }
+      setHistorico({
+        total_contas: 0,
+        total_pago: 0,
+        total_aberto: 0,
+        total_vencido: 0,
+        itens: [],
+      });
+    } finally {
+      setHistLoading(false);
+    }
   }
 
   function validate() {
-    const e: Record<string,string> = {}
-    if (!form.razao_social?.trim()) e.razao_social = 'Obrigatório'
-    if (!form.empresa)               e.empresa      = 'Obrigatório'
-    if (cnpjDupError)                e.cnpj_cpf     = cnpjDupError
-    setErrors(e)
-    return Object.keys(e).length === 0
+    const e: Record<string, string> = {};
+    if (!form.razao_social?.trim()) e.razao_social = "Obrigatório";
+    if (!form.empresa) e.empresa = "Obrigatório";
+    if (cnpjDupError) e.cnpj_cpf = cnpjDupError;
+    setErrors(e);
+    return Object.keys(e).length === 0;
   }
 
   async function save() {
-    if (!validate()) return
-    setSaving(true)
+    if (!validate()) return;
+    setSaving(true);
     try {
-      let saved: Fornecedor
+      let saved: Fornecedor;
       if (editId) {
-        const r = await apiClient.put(`/financeiro/fornecedores/${editId}`, form)
-        saved = r.data.data
+        const r = await apiClient.put(
+          `/financeiro/fornecedores/${editId}`,
+          form,
+        );
+        saved = r.data.data;
       } else {
-        const r = await apiClient.post('/financeiro/fornecedores', form)
-        saved = r.data.data
+        const r = await apiClient.post("/financeiro/fornecedores", form);
+        saved = r.data.data;
       }
-      onSaved(saved)
+      onSaved(saved);
     } catch (err: unknown) {
-      const msg = (err as {response?: {data?: {message?: string}}}).response?.data?.message ?? 'Erro ao salvar'
-      if (msg.toLowerCase().includes('cnpj') || msg.toLowerCase().includes('cpf')) {
-        setErrors({ cnpj_cpf: msg }); setFormTab('dados')
+      const msg =
+        (err as { response?: { data?: { message?: string } } }).response?.data
+          ?.message ?? "Erro ao salvar";
+      if (
+        msg.toLowerCase().includes("cnpj") ||
+        msg.toLowerCase().includes("cpf")
+      ) {
+        setErrors({ cnpj_cpf: msg });
+        setFormTab("dados");
       } else {
-        setErrors({ _geral: msg })
+        setErrors({ _geral: msg });
       }
-    } finally { setSaving(false) }
+    } finally {
+      setSaving(false);
+    }
   }
 
-  const inp = 'w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 transition-colors'
+  const inp =
+    "w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 transition-colors";
 
-  if (!open) return null
+  if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/40 flex items-start justify-center p-4 pt-8 overflow-y-auto">
@@ -268,11 +426,18 @@ export default function FornecedorFormModal({ open, editId, initialData, onClose
           <div className="flex items-center gap-2">
             <Building2 className="w-5 h-5 text-[#1e3a5f]" />
             <div>
-              <h2 className="text-base font-bold text-slate-800">{editId ? 'Editar Fornecedor' : 'Novo Fornecedor'}</h2>
-              <p className="text-xs text-slate-500 mt-0.5">Campos com * são obrigatórios</p>
+              <h2 className="text-base font-bold text-slate-800">
+                {editId ? "Editar Fornecedor" : "Novo Fornecedor"}
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Campos com * são obrigatórios
+              </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -280,166 +445,321 @@ export default function FornecedorFormModal({ open, editId, initialData, onClose
         {/* Tabs */}
         <div className="flex border-b border-slate-100 px-6">
           {[
-            { id: 'dados',     label: 'Dados',     icon: Building2 },
-            { id: 'historico', label: 'Histórico',  icon: History,
-              onClick: () => { if (editId) loadHistorico(editId) } },
-          ].map(t => (
-            <button key={t.id}
-              onClick={() => { setFormTab(t.id as 'dados'|'historico'); t.onClick?.() }}
-              className={cn('flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors',
+            { id: "dados", label: "Dados", icon: Building2 },
+            {
+              id: "historico",
+              label: "Histórico",
+              icon: History,
+              onClick: () => {
+                if (editId) loadHistorico(editId);
+              },
+            },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => {
+                setFormTab(t.id as "dados" | "historico");
+                t.onClick?.();
+              }}
+              className={cn(
+                "flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
                 formTab === t.id
-                  ? 'border-[#1e3a5f] text-[#1e3a5f]'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
-              )}>
+                  ? "border-[#1e3a5f] text-[#1e3a5f]"
+                  : "border-transparent text-slate-500 hover:text-slate-700",
+              )}
+            >
               <t.icon className="w-3.5 h-3.5" />
               {t.label}
-              {t.id === 'historico' && !editId && (
-                <span className="ml-1 text-[10px] text-slate-400">(salve primeiro)</span>
+              {t.id === "historico" && !editId && (
+                <span className="ml-1 text-[10px] text-slate-400">
+                  (salve primeiro)
+                </span>
               )}
             </button>
           ))}
         </div>
 
         {/* ── Tab: Dados ── */}
-        {formTab === 'dados' && (
+        {formTab === "dados" && (
           <div className="px-6 py-5 space-y-5 max-h-[65vh] overflow-y-auto">
             {errors._geral && (
-              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">{errors._geral}</div>
+              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">
+                {errors._geral}
+              </div>
             )}
 
             {/* DADOS PRINCIPAIS */}
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Dados Principais</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
+                Dados Principais
+              </p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="CNPJ / CPF" name="cnpj_cpf" errors={errors}>
                   <MaskedInput
-                    externalValue={form.cnpj_cpf || ''}
-                    mask={v => form.tipo_pessoa === 'PF' ? maskCPF(v) : maskCNPJ(v)}
-                    onCommit={v => { setForm(p => ({ ...p, cnpj_cpf: v })); setCnpjDupError('') }}
-                    onComplete={v => { if (form.tipo_pessoa !== 'PF') lookupCNPJ(onlyDigits(v)) }}
+                    externalValue={form.cnpj_cpf || ""}
+                    mask={(v) =>
+                      form.tipo_pessoa === "PF" ? maskCPF(v) : maskCNPJ(v)
+                    }
+                    onCommit={(v) => {
+                      setForm((p) => ({ ...p, cnpj_cpf: v }));
+                      setCnpjDupError("");
+                    }}
+                    onComplete={(v) => {
+                      if (form.tipo_pessoa !== "PF") lookupCNPJ(onlyDigits(v));
+                    }}
                     inputMode="numeric"
-                    placeholder={form.tipo_pessoa === 'PF' ? '000.000.000-00' : '00.000.000/0000-00'}
-                    className={cn(inp, errors.cnpj_cpf && 'border-red-300')}
+                    placeholder={
+                      form.tipo_pessoa === "PF"
+                        ? "000.000.000-00"
+                        : "00.000.000/0000-00"
+                    }
+                    className={cn(inp, errors.cnpj_cpf && "border-red-300")}
                     icon={
-                      cnpjLoading ? <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
-                      : cnpjStatus === 'ok' ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
-                      : (cnpjStatus === 'err' || cnpjDupError) ? <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
-                      : undefined
+                      cnpjLoading ? (
+                        <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+                      ) : cnpjStatus === "ok" ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                      ) : cnpjStatus === "err" || cnpjDupError ? (
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                      ) : undefined
                     }
                   />
-                  {cnpjDupError && <p className="text-[10px] text-red-500 mt-0.5">{cnpjDupError}</p>}
+                  {cnpjDupError && (
+                    <p className="text-[10px] text-red-500 mt-0.5">
+                      {cnpjDupError}
+                    </p>
+                  )}
                 </Field>
 
-                <Field label="Tipo de Pessoa" name="tipo_pessoa" required errors={errors}>
-                  <select className={inp} value={form.tipo_pessoa || 'PJ'}
-                    onChange={e => { set('tipo_pessoa', e.target.value); setCnpjStatus('idle') }}>
+                <Field
+                  label="Tipo de Pessoa"
+                  name="tipo_pessoa"
+                  required
+                  errors={errors}
+                >
+                  <select
+                    className={inp}
+                    value={form.tipo_pessoa || "PJ"}
+                    onChange={(e) => {
+                      set("tipo_pessoa", e.target.value);
+                      setCnpjStatus("idle");
+                    }}
+                  >
                     <option value="PJ">Pessoa Jurídica (CNPJ)</option>
                     <option value="PF">Pessoa Física (CPF)</option>
                   </select>
                 </Field>
 
-                <Field label="Razão Social" name="razao_social" required errors={errors}>
-                  <input className={cn(inp, errors.razao_social && 'border-red-300')}
-                    value={form.razao_social || ''} onChange={e => set('razao_social', e.target.value)}
-                    placeholder="Nome completo / razão social" />
+                <Field
+                  label="Razão Social"
+                  name="razao_social"
+                  required
+                  errors={errors}
+                >
+                  <input
+                    className={cn(inp, errors.razao_social && "border-red-300")}
+                    value={form.razao_social || ""}
+                    onChange={(e) => set("razao_social", e.target.value)}
+                    placeholder="Nome completo / razão social"
+                  />
                 </Field>
 
-                <Field label="Nome Fantasia" name="nome_fantasia" errors={errors}>
-                  <input className={inp} value={form.nome_fantasia || ''}
-                    onChange={e => set('nome_fantasia', e.target.value)} placeholder="Nome fantasia" />
+                <Field
+                  label="Nome Fantasia"
+                  name="nome_fantasia"
+                  errors={errors}
+                >
+                  <input
+                    className={inp}
+                    value={form.nome_fantasia || ""}
+                    onChange={(e) => set("nome_fantasia", e.target.value)}
+                    placeholder="Nome fantasia"
+                  />
                 </Field>
 
                 <Field label="Categoria" name="categoria" errors={errors}>
-                  <select className={inp} value={form.categoria || ''} onChange={e => set('categoria', e.target.value)}>
+                  <select
+                    className={inp}
+                    value={form.categoria || ""}
+                    onChange={(e) => set("categoria", e.target.value)}
+                  >
                     <option value="">Selecione</option>
-                    {CATEGORIAS.map(c => <option key={c}>{c}</option>)}
+                    {CATEGORIAS.map((c) => (
+                      <option key={c}>{c}</option>
+                    ))}
                   </select>
                 </Field>
 
                 <Field label="Empresa" name="empresa" required errors={errors}>
-                  <select className={cn(inp, errors.empresa && 'border-red-300')}
-                    value={form.empresa || 'TODOS'} onChange={e => set('empresa', e.target.value)}>
-                    {EMPRESAS.map(e => <option key={e}>{e}</option>)}
+                  <select
+                    className={cn(inp, errors.empresa && "border-red-300")}
+                    value={form.empresa || "TODOS"}
+                    onChange={(e) => set("empresa", e.target.value)}
+                  >
+                    {EMPRESAS.map((e) => (
+                      <option key={e}>{e}</option>
+                    ))}
                   </select>
                 </Field>
 
                 <Field label="E-mail" name="email" errors={errors}>
-                  <input className={inp} type="email" value={form.email || ''}
-                    onChange={e => set('email', e.target.value)} placeholder="email@fornecedor.com" />
+                  <input
+                    className={inp}
+                    type="email"
+                    value={form.email || ""}
+                    onChange={(e) => set("email", e.target.value)}
+                    placeholder="email@fornecedor.com"
+                  />
                 </Field>
 
                 <Field label="Telefone" name="telefone" errors={errors}>
-                  <MaskedInput externalValue={form.telefone || ''} mask={maskPhone}
-                    onCommit={v => set('telefone', v)} inputMode="numeric"
-                    placeholder="(11) 99999-9999" className={inp} />
+                  <MaskedInput
+                    externalValue={form.telefone || ""}
+                    mask={maskPhone}
+                    onCommit={(v) => set("telefone", v)}
+                    inputMode="numeric"
+                    placeholder="(11) 99999-9999"
+                    className={inp}
+                  />
                 </Field>
               </div>
             </div>
 
             {/* ENDEREÇO */}
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Endereço</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
+                Endereço
+              </p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="CEP" name="cep" errors={errors}>
-                  <MaskedInput externalValue={form.cep || ''} mask={maskCEP}
-                    onCommit={v => set('cep', v)}
-                    onComplete={v => { if (onlyDigits(v).length === 8) lookupCEP(v) }}
-                    inputMode="numeric" placeholder="00000-000" className={inp}
-                    icon={cepLoading ? <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" /> : undefined} />
+                  <MaskedInput
+                    externalValue={form.cep || ""}
+                    mask={maskCEP}
+                    onCommit={(v) => set("cep", v)}
+                    onComplete={(v) => {
+                      if (onlyDigits(v).length === 8) lookupCEP(v);
+                    }}
+                    inputMode="numeric"
+                    placeholder="00000-000"
+                    className={inp}
+                    icon={
+                      cepLoading ? (
+                        <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />
+                      ) : undefined
+                    }
+                  />
                 </Field>
 
                 <Field label="Cidade / UF" name="cidade_uf" errors={errors}>
-                  <input className={inp} value={form.cidade_uf || ''}
-                    onChange={e => set('cidade_uf', e.target.value)} placeholder="São Paulo - SP" />
+                  <input
+                    className={inp}
+                    value={form.cidade_uf || ""}
+                    onChange={(e) => set("cidade_uf", e.target.value)}
+                    placeholder="São Paulo - SP"
+                  />
                 </Field>
 
-                <Field label="Endereço completo" name="endereco" col2 errors={errors}>
-                  <input className={inp} value={form.endereco || ''}
-                    onChange={e => set('endereco', e.target.value)}
-                    placeholder="Rua, número, complemento, bairro" />
+                <Field
+                  label="Endereço completo"
+                  name="endereco"
+                  col2
+                  errors={errors}
+                >
+                  <input
+                    className={inp}
+                    value={form.endereco || ""}
+                    onChange={(e) => set("endereco", e.target.value)}
+                    placeholder="Rua, número, complemento, bairro"
+                  />
                 </Field>
               </div>
             </div>
 
             {/* DADOS BANCÁRIOS */}
             <div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Dados Bancários</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
+                Dados Bancários
+              </p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Banco" name="banco_nome" errors={errors}>
-                  <select className={inp} value={form.banco_nome || ''} onChange={e => set('banco_nome', e.target.value)}>
-                    <option value="">Selecione</option>
-                    {BANCOS_BR.map(b => <option key={b}>{b}</option>)}
-                  </select>
+                  <BancoSearchSelect
+                    className={inp}
+                    value={form.banco_nome || ""}
+                    codigo={form.codigo_banco || ""}
+                    onChange={(banco) => {
+                      set("banco_nome", banco.nome);
+                      set("codigo_banco", banco.codigo);
+                    }}
+                  />
                 </Field>
 
                 <Field label="Tipo de Conta" name="tipo_conta" errors={errors}>
-                  <select className={inp} value={form.tipo_conta || 'Corrente'} onChange={e => set('tipo_conta', e.target.value)}>
+                  <select
+                    className={inp}
+                    value={form.tipo_conta || "Corrente"}
+                    onChange={(e) => set("tipo_conta", e.target.value)}
+                  >
                     <option>Corrente</option>
                     <option>Poupança</option>
                   </select>
                 </Field>
 
                 <Field label="Agência" name="agencia" errors={errors}>
-                  <input className={inp} value={form.agencia || ''}
-                    onChange={e => set('agencia', e.target.value.replace(/\D/g,''))}
-                    inputMode="numeric" placeholder="0000" />
+                  <input
+                    className={inp}
+                    value={form.agencia || ""}
+                    onChange={(e) =>
+                      set("agencia", e.target.value.replace(/\D/g, ""))
+                    }
+                    inputMode="numeric"
+                    placeholder="0000"
+                  />
                 </Field>
 
-                <Field label="Conta / Dígito" name="conta" errors={errors}>
-                  <input className={inp} value={form.conta || ''}
-                    onChange={e => set('conta', e.target.value)} placeholder="00000-0" />
+                <Field label="Conta" name="conta" errors={errors}>
+                  <input
+                    className={inp}
+                    value={form.conta || ""}
+                    onChange={(e) =>
+                      set("conta", e.target.value.replace(/\D/g, ""))
+                    }
+                    inputMode="numeric"
+                    placeholder="00000"
+                  />
+                </Field>
+
+                <Field label="Dígito" name="digito" errors={errors}>
+                  <input
+                    className={inp}
+                    value={form.digito || ""}
+                    onChange={(e) =>
+                      set(
+                        "digito",
+                        e.target.value.replace(/\D/g, "").slice(0, 2),
+                      )
+                    }
+                    inputMode="numeric"
+                    placeholder="0"
+                    maxLength={2}
+                  />
                 </Field>
 
                 <Field label="Chave PIX" name="chave_pix" col2 errors={errors}>
-                  <input className={inp} value={form.chave_pix || ''}
-                    onChange={e => set('chave_pix', e.target.value)}
-                    placeholder="CPF, CNPJ, e-mail, telefone ou chave aleatória" />
+                  <input
+                    className={inp}
+                    value={form.chave_pix || ""}
+                    onChange={(e) => set("chave_pix", e.target.value)}
+                    placeholder="CPF, CNPJ, e-mail, telefone ou chave aleatória"
+                  />
                 </Field>
 
                 <Field label="Observações" name="obs" col2 errors={errors}>
-                  <textarea className={cn(inp, 'min-h-[60px] resize-none')}
-                    value={form.obs || ''} onChange={e => set('obs', e.target.value)}
-                    placeholder="Notas adicionais…" />
+                  <textarea
+                    className={cn(inp, "min-h-[60px] resize-none")}
+                    value={form.obs || ""}
+                    onChange={(e) => set("obs", e.target.value)}
+                    placeholder="Notas adicionais…"
+                  />
                 </Field>
               </div>
             </div>
@@ -447,10 +767,12 @@ export default function FornecedorFormModal({ open, editId, initialData, onClose
         )}
 
         {/* ── Tab: Histórico ── */}
-        {formTab === 'historico' && (
+        {formTab === "historico" && (
           <div className="px-6 py-5 max-h-[65vh] overflow-y-auto space-y-4">
             {!editId ? (
-              <p className="text-sm text-slate-400 text-center py-10">Salve o fornecedor primeiro para ver o histórico.</p>
+              <p className="text-sm text-slate-400 text-center py-10">
+                Salve o fornecedor primeiro para ver o histórico.
+              </p>
             ) : histLoading ? (
               <div className="flex items-center justify-center py-10">
                 <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
@@ -459,15 +781,43 @@ export default function FornecedorFormModal({ open, editId, initialData, onClose
               <>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {[
-                    { label: 'Total contas', value: historico.total_contas,       icon: FileText,    color: 'bg-blue-50   text-blue-700'   },
-                    { label: 'Total pago',   value: fmtMoeda(historico.total_pago),   icon: CheckCircle2, color: 'bg-green-50  text-green-700'  },
-                    { label: 'Em aberto',    value: fmtMoeda(historico.total_aberto), icon: Clock,       color: 'bg-yellow-50 text-yellow-700' },
-                    { label: 'Vencido',      value: fmtMoeda(historico.total_vencido),icon: TrendingDown,color: 'bg-red-50    text-red-700'    },
-                  ].map(c => (
-                    <div key={c.label} className={cn('rounded-xl p-3 flex items-center gap-3', c.color)}>
+                    {
+                      label: "Total contas",
+                      value: historico.total_contas,
+                      icon: FileText,
+                      color: "bg-blue-50   text-blue-700",
+                    },
+                    {
+                      label: "Total pago",
+                      value: fmtMoeda(historico.total_pago),
+                      icon: CheckCircle2,
+                      color: "bg-green-50  text-green-700",
+                    },
+                    {
+                      label: "Em aberto",
+                      value: fmtMoeda(historico.total_aberto),
+                      icon: Clock,
+                      color: "bg-yellow-50 text-yellow-700",
+                    },
+                    {
+                      label: "Vencido",
+                      value: fmtMoeda(historico.total_vencido),
+                      icon: TrendingDown,
+                      color: "bg-red-50    text-red-700",
+                    },
+                  ].map((c) => (
+                    <div
+                      key={c.label}
+                      className={cn(
+                        "rounded-xl p-3 flex items-center gap-3",
+                        c.color,
+                      )}
+                    >
                       <c.icon className="w-5 h-5 flex-shrink-0 opacity-70" />
                       <div>
-                        <p className="text-[10px] font-semibold uppercase opacity-70">{c.label}</p>
+                        <p className="text-[10px] font-semibold uppercase opacity-70">
+                          {c.label}
+                        </p>
                         <p className="text-sm font-bold">{c.value}</p>
                       </div>
                     </div>
@@ -477,35 +827,74 @@ export default function FornecedorFormModal({ open, editId, initialData, onClose
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-100">
-                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Descrição</th>
-                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Vencimento</th>
-                        <th className="text-right px-3 py-2 font-semibold text-slate-500">Valor</th>
-                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Status</th>
-                        <th className="text-left px-3 py-2 font-semibold text-slate-500">Pago em</th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">
+                          Descrição
+                        </th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">
+                          Vencimento
+                        </th>
+                        <th className="text-right px-3 py-2 font-semibold text-slate-500">
+                          Valor
+                        </th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">
+                          Status
+                        </th>
+                        <th className="text-left px-3 py-2 font-semibold text-slate-500">
+                          Pago em
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {historico.itens.length === 0 && (
-                        <tr><td colSpan={5} className="text-center text-slate-400 py-8">Nenhum lançamento</td></tr>
-                      )}
-                      {historico.itens.map(item => (
-                        <tr key={item.id} className="border-b border-slate-50 hover:bg-slate-50">
-                          <td className="px-3 py-2.5 text-slate-700 max-w-[180px] truncate">{item.descricao}</td>
-                          <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">
-                            {new Date(item.vencimento + 'T00:00:00').toLocaleDateString('pt-BR')}
+                        <tr>
+                          <td
+                            colSpan={5}
+                            className="text-center text-slate-400 py-8"
+                          >
+                            Nenhum lançamento
                           </td>
-                          <td className="px-3 py-2.5 text-right font-medium text-slate-800">{fmtMoeda(item.valor)}</td>
+                        </tr>
+                      )}
+                      {historico.itens.map((item) => (
+                        <tr
+                          key={item.id}
+                          className="border-b border-slate-50 hover:bg-slate-50"
+                        >
+                          <td className="px-3 py-2.5 text-slate-700 max-w-[180px] truncate">
+                            {item.descricao}
+                          </td>
+                          <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">
+                            {new Date(
+                              item.vencimento + "T00:00:00",
+                            ).toLocaleDateString("pt-BR")}
+                          </td>
+                          <td className="px-3 py-2.5 text-right font-medium text-slate-800">
+                            {fmtMoeda(item.valor)}
+                          </td>
                           <td className="px-3 py-2.5">
-                            <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', {
-                              'bg-green-100 text-green-700':  item.status === 'pago',
-                              'bg-yellow-100 text-yellow-700':item.status === 'aberto',
-                              'bg-red-100 text-red-600':      item.status === 'vencido',
-                            })}>
-                              {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                            <span
+                              className={cn(
+                                "px-2 py-0.5 rounded-full text-[10px] font-medium",
+                                {
+                                  "bg-green-100 text-green-700":
+                                    item.status === "pago",
+                                  "bg-yellow-100 text-yellow-700":
+                                    item.status === "aberto",
+                                  "bg-red-100 text-red-600":
+                                    item.status === "vencido",
+                                },
+                              )}
+                            >
+                              {item.status.charAt(0).toUpperCase() +
+                                item.status.slice(1)}
                             </span>
                           </td>
                           <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">
-                            {item.pago_em ? new Date(item.pago_em + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
+                            {item.pago_em
+                              ? new Date(
+                                  item.pago_em + "T00:00:00",
+                                ).toLocaleDateString("pt-BR")
+                              : "—"}
                           </td>
                         </tr>
                       ))}
@@ -514,25 +903,38 @@ export default function FornecedorFormModal({ open, editId, initialData, onClose
                 </div>
               </>
             ) : (
-              <p className="text-sm text-slate-400 text-center py-10">Clique na aba Histórico para carregar.</p>
+              <p className="text-sm text-slate-400 text-center py-10">
+                Clique na aba Histórico para carregar.
+              </p>
             )}
           </div>
         )}
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
-          <button onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+          >
             Cancelar
           </button>
-          <button onClick={save} disabled={saving || !!cnpjDupError}
-            className="flex items-center gap-2 px-5 py-2 text-sm font-semibold bg-[#1e3a5f] hover:bg-[#162d4a] text-white rounded-lg transition-colors disabled:opacity-60">
-            {saving
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Salvando…</>
-              : <><Check className="w-4 h-4" /> {editId ? 'Atualizar' : 'Salvar'}</>}
+          <button
+            onClick={save}
+            disabled={saving || !!cnpjDupError}
+            className="flex items-center gap-2 px-5 py-2 text-sm font-semibold bg-[#1e3a5f] hover:bg-[#162d4a] text-white rounded-lg transition-colors disabled:opacity-60"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" /> Salvando…
+              </>
+            ) : (
+              <>
+                <Check className="w-4 h-4" /> {editId ? "Atualizar" : "Salvar"}
+              </>
+            )}
           </button>
         </div>
       </div>
     </div>
-  )
+  );
 }
