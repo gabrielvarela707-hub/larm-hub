@@ -128,7 +128,24 @@ const toFiniteNumber = (v: string | number | null | undefined, fallback = 0) => 
 }
 const decimalInputValue = (v: string | number | null | undefined) => {
   if (v === undefined || v === null || v === '') return ''
-  if (typeof v === 'string') return v
+
+  if (typeof v === 'string') {
+    const raw = v.trim()
+    if (!raw) return ''
+
+    // Valores vindos do PostgreSQL podem chegar como string decimal técnico,
+    // ex.: "1500.0000". Nesse caso, formatamos para PT-BR.
+    // Valores digitados pelo usuário com vírgula ou sem separador são preservados
+    // para não atrapalhar a digitação.
+    if (/^-?\d+\.\d+$/.test(raw) && !raw.includes(',')) {
+      const n = moneyToNumber(raw)
+      if (n === 0) return ''
+      return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    }
+
+    return raw
+  }
+
   const n = toFiniteNumber(v, 0)
   if (n === 0) return ''
   return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -408,7 +425,24 @@ export default function PagarPage() {
         valor_final: valor,
       }
     })
-    setParcelas(ps)
+
+    setParcelas(prev => ps.map((base, i) => {
+      const atual = prev[i]
+      if (!atual) return base
+
+      const next: Parcela = {
+        ...base,
+        id: atual.id,
+        vencimento: atual.vencimento || base.vencimento,
+        status: atual.status || base.status,
+        acrescimo: atual.acrescimo ?? 0,
+        multa: atual.multa ?? 0,
+        juros: atual.juros ?? 0,
+        desconto: atual.desconto ?? 0,
+      }
+      next.valor_final = calculaValorFinalParcela(next)
+      return next
+    }))
   }, [fValor, fNParc, fEmissao])
 
   function updateParcela(i: number, key: keyof Parcela, val: string | number) {
@@ -661,7 +695,7 @@ export default function PagarPage() {
       setFCC(d.centro_custo || '')
       setFObs(d.obs || '')
       if (d.parcelas?.length) {
-        setParcelas(d.parcelas.map((p: { id?: number; numero: number; valor: number | string; vencimento: string; status: string; acrescimo?: number | string; multa?: number | string; juros?: number | string; desconto?: number | string; valor_final?: number | string }, idx: number) =>
+        const loadedParcelas = d.parcelas.map((p: { id?: number; numero: number; valor: number | string; vencimento: string; status: string; acrescimo?: number | string; multa?: number | string; juros?: number | string; desconto?: number | string; valor_final?: number | string }, idx: number) =>
           normalizaParcelaPayload({
             id: p.id,
             numero: p.numero,
@@ -674,7 +708,11 @@ export default function PagarPage() {
             desconto: toFiniteNumber(p.desconto),
             valor_final: toFiniteNumber(p.valor_final),
           }, idx)
-        ))
+        )
+        // Evita o efeito automático de parcelamento sobrescrever os valores
+        // carregados do banco com multa/juros/desconto zerados.
+        aiParcelasRef.current = loadedParcelas
+        setParcelas(loadedParcelas)
       }
       setEditingId(l.id)
       setShowForm(true)
@@ -716,7 +754,7 @@ export default function PagarPage() {
         qtd_parcelas:    fNParc,
         centro_custo:    fCC      || null,
         obs:             fObs     || null,
-        parcelas:        parcelas.map(normalizaParcelaPayload),
+        parcelas:        parcelas.map((p, idx) => normalizaParcelaPayload(p, idx)),
       }
       if (editingId) {
         await apiClient.put(`/financeiro/lancamentos-cp/${editingId}`, payload)
