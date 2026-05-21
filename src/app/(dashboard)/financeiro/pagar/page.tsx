@@ -11,7 +11,7 @@ interface Fornecedor { id: number; razao_social: string; empresa: string; cnpj_c
 interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null }
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
 interface TipoDocumento { id: number; nome: string }
-interface Parcela     { id?: number; numero: number; valor: number; vencimento: string; status: string; multa?: number; juros?: number; desconto?: number }
+interface Parcela     { id?: number; numero: number; valor: number; vencimento: string; status: string; acrescimo?: number; multa?: number; juros?: number; desconto?: number; valor_final?: number }
 interface NovoFornecedorForm {
   razao_social: string
   nome_fantasia: string
@@ -121,6 +121,32 @@ const fmtDate = (d: string | null | undefined) => {
   if (!iso) return '—'
   const [ano, mes, dia] = iso.split('-')
   return `${dia}/${mes}/${ano}`
+}
+const toFiniteNumber = (v: string | number | null | undefined, fallback = 0) => {
+  const n = moneyToNumber(v)
+  return Number.isFinite(n) ? n : fallback
+}
+const numberInputValue = (v: string | number | null | undefined) => {
+  const n = toFiniteNumber(v, 0)
+  if (n === 0) return ''
+  return Number(n.toFixed(2)).toString()
+}
+const calculaValorFinalParcela = (p: Pick<Parcela, 'valor' | 'acrescimo' | 'multa' | 'juros' | 'desconto'>) =>
+  Math.max(0, toFiniteNumber(p.valor) + toFiniteNumber(p.acrescimo) + toFiniteNumber(p.multa) + toFiniteNumber(p.juros) - toFiniteNumber(p.desconto))
+const normalizaParcelaPayload = (p: Parcela, idx: number): Parcela => {
+  const next: Parcela = {
+    id: p.id,
+    numero: Number(p.numero) || idx + 1,
+    valor: toFiniteNumber(p.valor),
+    vencimento: dateOnly(p.vencimento) || todayISO(),
+    status: p.status || 'pendente',
+    acrescimo: toFiniteNumber(p.acrescimo),
+    multa: toFiniteNumber(p.multa),
+    juros: toFiniteNumber(p.juros),
+    desconto: toFiniteNumber(p.desconto),
+  }
+  next.valor_final = calculaValorFinalParcela(next)
+  return next
 }
 const sortText = (v: unknown) => String(v ?? '').toLocaleLowerCase('pt-BR')
 const sortDate = (v: string | null | undefined) => v ? (Date.parse(v) || 0) : 0
@@ -366,17 +392,32 @@ export default function PagarPage() {
     const vlr = parseFloat(fValor) || 0
     const n   = fNParc || 1
     if (vlr <= 0) { setParcelas([]); return }
-    const ps: Parcela[] = Array.from({ length: n }, (_, i) => ({
-      numero: i + 1,
-      valor: parseFloat((vlr / n).toFixed(2)),
-      vencimento: addMonthsDateOnly(fEmissao || todayISO(), i + 1),
-      status: 'pendente',
-    }))
+    const ps: Parcela[] = Array.from({ length: n }, (_, i) => {
+      const valor = parseFloat((vlr / n).toFixed(2))
+      return {
+        numero: i + 1,
+        valor,
+        vencimento: addMonthsDateOnly(fEmissao || todayISO(), i + 1),
+        status: 'pendente',
+        acrescimo: 0,
+        multa: 0,
+        juros: 0,
+        desconto: 0,
+        valor_final: valor,
+      }
+    })
     setParcelas(ps)
   }, [fValor, fNParc, fEmissao])
 
   function updateParcela(i: number, key: keyof Parcela, val: string | number) {
-    setParcelas(p => p.map((x, idx) => idx === i ? { ...x, [key]: val } : x))
+    setParcelas(p => p.map((x, idx) => {
+      if (idx !== i) return x
+      const next = { ...x, [key]: val } as Parcela
+      if (['valor', 'acrescimo', 'multa', 'juros', 'desconto'].includes(String(key))) {
+        next.valor_final = calculaValorFinalParcela(next)
+      }
+      return next
+    }))
   }
 
   function sortBy(key: SortKey) {
@@ -556,12 +597,20 @@ export default function PagarPage() {
       : (data.data_vencimento && valor > 0 ? [{ numero: 1, valor, vencimento: data.data_vencimento }] : [])
 
     if (aiParcelas.length) {
-      aiParcelasRef.current = aiParcelas.map((p, idx) => ({
-        numero: Number(p.numero) || idx + 1,
-        valor: Number(p.valor) || valor || 0,
-        vencimento: p.vencimento,
-        status: 'pendente',
-      }))
+      aiParcelasRef.current = aiParcelas.map((p, idx) => {
+        const valorParcela = Number(p.valor) || valor || 0
+        return {
+          numero: Number(p.numero) || idx + 1,
+          valor: valorParcela,
+          vencimento: p.vencimento,
+          status: 'pendente',
+          acrescimo: 0,
+          multa: 0,
+          juros: 0,
+          desconto: 0,
+          valor_final: valorParcela,
+        }
+      })
       setFNParc(aiParcelasRef.current.length)
     }
   }
@@ -604,18 +653,26 @@ export default function PagarPage() {
       setFTipoDoc(d.tipo_documento_id ? String(d.tipo_documento_id) : '')
       setFNF(d.nf_doc || '')
       setFEmissao(dateOnly(d.dt_emissao) || todayISO())
-      setFValor(String(d.valor_total || ''))
+      setFValor(numberInputValue(d.valor_total))
       setFNParc(d.qtd_parcelas || 1)
       setFConta(d.conta_contabil || '')
       setFCC(d.centro_custo || '')
       setFObs(d.obs || '')
       if (d.parcelas?.length) {
-        setParcelas(d.parcelas.map((p: { id?: number; numero: number; valor: number; vencimento: string; status: string; multa?: number; juros?: number; desconto?: number }) => ({
-          id: p.id, numero: p.numero, valor: p.valor,
-          vencimento: dateOnly(p.vencimento),
-          status: p.status || 'pendente',
-          multa: p.multa || 0, juros: p.juros || 0, desconto: p.desconto || 0,
-        })))
+        setParcelas(d.parcelas.map((p: { id?: number; numero: number; valor: number | string; vencimento: string; status: string; acrescimo?: number | string; multa?: number | string; juros?: number | string; desconto?: number | string; valor_final?: number | string }, idx: number) =>
+          normalizaParcelaPayload({
+            id: p.id,
+            numero: p.numero,
+            valor: toFiniteNumber(p.valor),
+            vencimento: dateOnly(p.vencimento),
+            status: p.status || 'pendente',
+            acrescimo: toFiniteNumber(p.acrescimo),
+            multa: toFiniteNumber(p.multa),
+            juros: toFiniteNumber(p.juros),
+            desconto: toFiniteNumber(p.desconto),
+            valor_final: toFiniteNumber(p.valor_final),
+          }, idx)
+        ))
       }
       setEditingId(l.id)
       setShowForm(true)
@@ -657,7 +714,7 @@ export default function PagarPage() {
         qtd_parcelas:    fNParc,
         centro_custo:    fCC      || null,
         obs:             fObs     || null,
-        parcelas,
+        parcelas:        parcelas.map(normalizaParcelaPayload),
       }
       if (editingId) {
         await apiClient.put(`/financeiro/lancamentos-cp/${editingId}`, payload)
@@ -970,10 +1027,10 @@ export default function PagarPage() {
       {/* Modal Form */}
       {showForm && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 pt-6 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
               <div>
-                <h2 className="text-base font-bold text-slate-800">Novo Lançamento — Contas a Pagar</h2>
+                <h2 className="text-base font-bold text-slate-800">{editingId ? 'Editar' : 'Novo'} Lançamento — Contas a Pagar</h2>
                 <p className="text-xs text-slate-500 mt-0.5">Preencha os dados do lançamento e suas parcelas</p>
               </div>
               <button onClick={closeForm} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
@@ -1102,7 +1159,7 @@ export default function PagarPage() {
                     <p className="text-xs font-medium text-slate-600 mb-2">Parcelas e Vencimentos</p>
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                       {parcelas.map((p, i) => (
-                        <div key={i} className="grid grid-cols-[60px_1fr_90px_90px_90px_90px] items-end gap-2 bg-slate-50 rounded-lg px-3 py-2">
+                        <div key={i} className="grid grid-cols-[60px_1fr_95px_85px_85px_85px_105px] items-end gap-2 bg-slate-50 rounded-lg px-3 py-2">
                           <div>
                             <label className="block text-[10px] text-slate-500 mb-1">Parcela</label>
                             <div className="text-xs font-semibold text-slate-600">{p.numero || i + 1}/{parcelas.length}</div>
@@ -1115,27 +1172,33 @@ export default function PagarPage() {
                           </div>
                           <div>
                             <label className="block text-[10px] text-slate-500 mb-1">Valor</label>
-                            <input type="number" step="0.01" value={p.valor}
-                              onChange={e => updateParcela(i, 'valor', parseFloat(e.target.value) || 0)}
+                            <input type="number" step="0.01" value={numberInputValue(p.valor)}
+                              onChange={e => updateParcela(i, 'valor', e.target.value)}
                               className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-red-400 mb-1">Multa</label>
-                            <input type="number" step="0.01" min="0" value={p.multa ?? 0}
-                              onChange={e => updateParcela(i, 'multa', parseFloat(e.target.value) || 0)}
+                            <input type="number" step="0.01" min="0" value={numberInputValue(p.multa)} placeholder="0,00"
+                              onChange={e => updateParcela(i, 'multa', e.target.value)}
                               className="text-xs border border-red-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-red-600" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-orange-400 mb-1">Juros</label>
-                            <input type="number" step="0.01" min="0" value={p.juros ?? 0}
-                              onChange={e => updateParcela(i, 'juros', parseFloat(e.target.value) || 0)}
+                            <input type="number" step="0.01" min="0" value={numberInputValue(p.juros)} placeholder="0,00"
+                              onChange={e => updateParcela(i, 'juros', e.target.value)}
                               className="text-xs border border-orange-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-orange-600" />
                           </div>
                           <div>
                             <label className="block text-[10px] text-green-500 mb-1">Desconto</label>
-                            <input type="number" step="0.01" min="0" value={p.desconto ?? 0}
-                              onChange={e => updateParcela(i, 'desconto', parseFloat(e.target.value) || 0)}
+                            <input type="number" step="0.01" min="0" value={numberInputValue(p.desconto)} placeholder="0,00"
+                              onChange={e => updateParcela(i, 'desconto', e.target.value)}
                               className="text-xs border border-green-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-green-700" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-500 mb-1">Final</label>
+                            <div className="text-xs border border-slate-200 rounded px-2 py-1 bg-slate-100 w-full text-right tabular-nums font-semibold text-slate-700">
+                              {R$(calculaValorFinalParcela(p))}
+                            </div>
                           </div>
                         </div>
                       ))}
