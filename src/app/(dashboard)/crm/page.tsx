@@ -12,6 +12,7 @@ import {
   CheckSquare,
   ClipboardList,
   Clock,
+  Download,
   Edit3,
   FileSpreadsheet,
   Filter,
@@ -118,6 +119,15 @@ type LeadHistory = {
 
 type TaskPriority = 'baixa' | 'media' | 'alta' | 'urgente'
 type TaskStatus = 'pendente' | 'concluida' | 'cancelada'
+type TaskType = 'geral' | 'ligacao' | 'sms' | 'email' | 'visita' | 'outro'
+
+type SmartList = {
+  id: string
+  name: string
+  icon: string
+  filters: Record<string, string>
+  created_at: string
+}
 
 type LeadTask = {
   id: string
@@ -132,7 +142,11 @@ type LeadTask = {
   responsible_name?: string
   completed_at?: string | null
   created_at: string
+  type?: TaskType
   updated_at?: string
+  stage_name?: string
+  stage_color?: string
+  lead_phone?: string
 }
 
 type CrmSummary = {
@@ -258,6 +272,7 @@ type TaskForm = {
   due_at: string
   priority: TaskPriority
   responsible_id: string
+  type: TaskType
 }
 
 type LeadForm = {
@@ -345,6 +360,16 @@ const EMPTY_TASK_FORM: TaskForm = {
   due_at: '',
   priority: 'media',
   responsible_id: '',
+  type: 'geral',
+}
+
+const TASK_TYPE_LABELS: Record<TaskType, { label: string; icon: string; className: string }> = {
+  geral:   { label: 'Geral',   icon: '📋', className: 'bg-slate-50 text-slate-600 border-slate-100' },
+  ligacao: { label: 'Ligação', icon: '📞', className: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
+  sms:     { label: 'SMS',     icon: '💬', className: 'bg-blue-50 text-blue-700 border-blue-100' },
+  email:   { label: 'E-mail',  icon: '✉️', className: 'bg-violet-50 text-violet-700 border-violet-100' },
+  visita:  { label: 'Visita',  icon: '🏠', className: 'bg-amber-50 text-amber-700 border-amber-100' },
+  outro:   { label: 'Outro',   icon: '•',  className: 'bg-slate-50 text-slate-500 border-slate-100' },
 }
 
 const EMPTY_LEAD_FORM: LeadForm = {
@@ -671,6 +696,7 @@ function LeadModal({
       description: taskForm.description.trim(),
       due_at: taskForm.due_at || null,
       priority: taskForm.priority,
+      type: taskForm.type || 'geral',
       responsible_id: taskForm.responsible_id || lead.responsible_id || null,
     }
     const { data } = await apiClient.post<ApiResponse<LeadTask>>('/crm/tasks', payload)
@@ -807,7 +833,17 @@ function LeadModal({
                   <span className="text-xs text-slate-400">{tasks.filter(t => t.status === 'pendente').length} pendente(s)</span>
                 </div>
                 <div className="grid grid-cols-1 gap-2">
-                  <input value={taskForm.title} onChange={e => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="Ex.: ligar para o cliente" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-400" />
+                  <div className="flex gap-2">
+                    <select value={taskForm.type} onChange={e => setTaskForm({ ...taskForm, type: e.target.value as TaskType })} className="rounded-xl border border-slate-200 bg-white px-2 py-2 text-xs outline-none focus:border-blue-400">
+                      <option value="geral">Geral</option>
+                      <option value="ligacao">📞 Ligação</option>
+                      <option value="sms">💬 SMS</option>
+                      <option value="email">✉️ E-mail</option>
+                      <option value="visita">🏠 Visita</option>
+                      <option value="outro">Outro</option>
+                    </select>
+                    <input value={taskForm.title} onChange={e => setTaskForm({ ...taskForm, title: e.target.value })} placeholder="Título da tarefa" className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-400" />
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <input type="datetime-local" value={taskForm.due_at} onChange={e => setTaskForm({ ...taskForm, due_at: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-400" />
                     <select value={taskForm.priority} onChange={e => setTaskForm({ ...taskForm, priority: e.target.value as TaskPriority })} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-blue-400">
@@ -1562,6 +1598,137 @@ function ImportModal({ open, onClose, onImport }: {
   )
 }
 
+
+function ManualActionsPanel({ users, onOpenLead }: {
+  users: CrmUser[]
+  onOpenLead: (leadId: string) => void
+}) {
+  const [tasks, setTasks]                   = useState<LeadTask[]>([])
+  const [loading, setLoading]               = useState(true)
+  const [typeFilter, setTypeFilter]         = useState<string>('all')
+  const [responsibleFilter, setResponsibleFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter]     = useState<string>('pendente')
+
+  async function load() {
+    setLoading(true)
+    try {
+      const params = new URLSearchParams({ status: statusFilter })
+      if (typeFilter !== 'all') params.set('type', typeFilter)
+      if (responsibleFilter !== 'all') params.set('responsible_id', responsibleFilter)
+      const res = await apiClient.get<ApiResponse<LeadTask[]>>(`/crm/manual-actions?${params}`)
+      setTasks(res.data.data || [])
+    } catch { /* ignore */ } finally { setLoading(false) }
+  }
+
+  useEffect(() => { void load() }, [typeFilter, responsibleFilter, statusFilter])
+
+  const counts = {
+    ligacao: tasks.filter(t => t.type === 'ligacao').length,
+    sms:     tasks.filter(t => t.type === 'sms').length,
+    visita:  tasks.filter(t => t.type === 'visita').length,
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-2">
+          {(['ligacao','sms','visita'] as const).map(t => (
+            <button key={t} onClick={() => setTypeFilter(typeFilter === t ? 'all' : t)}
+              className={cn('flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium',
+                typeFilter === t ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}>
+              {t === 'ligacao' ? '📞' : t === 'sms' ? '💬' : '🏠'}{' '}
+              {t === 'ligacao' ? 'Ligações' : t === 'sms' ? 'SMS' : 'Visitas'}{' '}
+              <span className="rounded-full bg-slate-100 px-1.5 text-[10px] font-bold text-slate-700">
+                {t === 'ligacao' ? counts.ligacao : t === 'sms' ? counts.sms : counts.visita}
+              </span>
+            </button>
+          ))}
+        </div>
+        <select value={responsibleFilter} onChange={e => setResponsibleFilter(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none">
+          <option value="all">Todos responsáveis</option>
+          {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+        </select>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none">
+          <option value="pendente">Pendentes</option>
+          <option value="concluida">Concluídas</option>
+          <option value="cancelada">Canceladas</option>
+        </select>
+        <button onClick={load} className="ml-auto flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50">
+          <RefreshCw className="h-3.5 w-3.5" /> Atualizar
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12 text-sm text-slate-400">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Carregando...
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-slate-100 bg-white shadow-card">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50/70">
+              <tr className="border-b border-slate-100">
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Contato / Lead</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Tipo</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Tarefa</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Atribuído a</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Vencimento</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Prioridade</th>
+                <th className="px-4 py-3 text-center text-xs font-semibold text-slate-600">Ação</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {tasks.map(task => {
+                const taskType   = TASK_TYPE_LABELS[task.type || 'geral'] || TASK_TYPE_LABELS.geral
+                const priority   = PRIORITY_LABELS[task.priority] || PRIORITY_LABELS.media
+                const isOverdue  = task.status === 'pendente' && isPastDate(task.due_at)
+                return (
+                  <tr key={task.id} className="hover:bg-slate-50/50">
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-slate-900">{task.lead_name || '—'}</p>
+                      <p className="text-xs text-slate-500">{task.lead_phone || ''}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold', taskType.className)}>
+                        {taskType.icon} {taskType.label}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 max-w-[200px]">
+                      <p className="truncate text-sm text-slate-800">{task.title}</p>
+                      {task.description && <p className="truncate text-xs text-slate-400">{task.description}</p>}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-600">{task.responsible_name || '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className={cn('text-xs', isOverdue ? 'font-semibold text-red-600' : 'text-slate-600')}>
+                        {task.due_at ? dateTimeLabel(task.due_at) : '—'}
+                        {isOverdue && <span className="ml-1 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold">Atrasada</span>}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold', priority.className)}>{priority.label}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <button onClick={() => task.lead_id && onOpenLead(task.lead_id)}
+                        className="rounded-lg p-2 text-slate-400 hover:bg-blue-50 hover:text-blue-600">
+                        <Edit3 className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          {!tasks.length && (
+            <div className="py-12 text-center">
+              <CheckCircle className="mx-auto mb-2 h-8 w-8 text-emerald-300" />
+              <p className="text-sm text-slate-400">Nenhuma ação manual pendente</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function CRMPage() {
   const [stages, setStages] = useState<FunnelStage[]>([])
   const [leads, setLeads] = useState<Lead[]>([])
@@ -1571,6 +1738,13 @@ export default function CRMPage() {
   const [analytics, setAnalytics] = useState<CrmAnalytics | null>(null)
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
+  const [smartLists, setSmartLists] = useState<SmartList[]>([])
+  const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set())
+  const [bulkStageOpen, setBulkStageOpen]   = useState(false)
+  const [bulkAssignOpen, setBulkAssignOpen] = useState(false)
+  const [savingSmartList, setSavingSmartList] = useState(false)
+  const [newSmartListName, setNewSmartListName] = useState('')
+  const [smartListSaveOpen, setSmartListSaveOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
@@ -1578,7 +1752,7 @@ export default function CRMPage() {
   const [responsibleFilter, setResponsibleFilter] = useState('all')
   const [temperatureFilter, setTemperatureFilter] = useState<'all' | Temperature>('all')
   const [sourceFilter, setSourceFilter] = useState('all')
-  const [view, setView] = useState<'kanban' | 'list' | 'analytics' | 'campaigns'>('kanban')
+  const [view, setView] = useState<'kanban' | 'list' | 'analytics' | 'campaigns' | 'manual'>('kanban')
   const [dragLeadId, setDragLeadId] = useState<string | null>(null)
   const [leadModalOpen, setLeadModalOpen] = useState(false)
   const [editingLead, setEditingLead] = useState<Lead | null>(null)
@@ -1591,7 +1765,7 @@ export default function CRMPage() {
     setLoading(true)
     setError('')
     try {
-      const [stageRes, leadRes, userRes, reasonRes, summaryRes, analyticsRes, campaignRes, templateRes] = await Promise.all([
+      const [stageRes, leadRes, userRes, reasonRes, summaryRes, analyticsRes, campaignRes, templateRes, smartListRes] = await Promise.all([
         apiClient.get<ApiResponse<FunnelStage[]>>('/crm/stages'),
         apiClient.get<ApiResponse<Lead[]>>('/crm/leads'),
         apiClient.get<ApiResponse<CrmUser[]>>('/crm/users'),
@@ -1600,6 +1774,7 @@ export default function CRMPage() {
         apiClient.get<ApiResponse<CrmAnalytics>>('/crm/analytics'),
         apiClient.get<ApiResponse<Campaign[]>>('/crm/campaigns'),
         apiClient.get<ApiResponse<MessageTemplate[]>>('/crm/templates'),
+        apiClient.get<ApiResponse<SmartList[]>>('/crm/smart-lists'),
       ])
       setStages(stageRes.data.data || [])
       setLeads(leadRes.data.data || [])
@@ -1609,6 +1784,7 @@ export default function CRMPage() {
       setAnalytics(analyticsRes.data.data || null)
       setCampaigns(campaignRes.data.data || [])
       setTemplates(templateRes.data.data || [])
+      setSmartLists(smartListRes.data.data || [])
     } catch (err) {
       setError(getErrorMessage(err))
     } finally {
@@ -1759,6 +1935,98 @@ export default function CRMPage() {
     await loadAll()
   }
 
+
+  function exportLeads() {
+    const rows = filteredLeads.map(l => ({
+      Nome: l.name,
+      Telefone: l.phone,
+      Email: l.email,
+      Etapa: l.stage_name || '',
+      Responsável: l.responsible_name || '',
+      Origem: SOURCE_LABELS[l.source] || l.source,
+      Campanha: l.campaign,
+      Temperatura: l.temperature,
+      Score: l.score,
+      'Valor estimado': l.estimated_value,
+      'Próximo retorno': l.next_follow_up_at ? dateLabel(l.next_follow_up_at) : '',
+      'Criado em': dateLabel(l.created_at),
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Leads')
+    XLSX.writeFile(wb, `leads_${new Date().toISOString().slice(0,10)}.xlsx`)
+  }
+
+  async function saveSmartList() {
+    const name = newSmartListName.trim()
+    if (!name) return
+    setSavingSmartList(true)
+    try {
+      await apiClient.post('/crm/smart-lists', {
+        name,
+        icon: 'filter',
+        filters: {
+          stage_id: stageFilter !== 'all' ? stageFilter : undefined,
+          responsible_id: responsibleFilter !== 'all' ? responsibleFilter : undefined,
+          temperature: temperatureFilter !== 'all' ? temperatureFilter : undefined,
+          source: sourceFilter !== 'all' ? sourceFilter : undefined,
+          q: search || undefined,
+        },
+      })
+      setNewSmartListName('')
+      setSmartListSaveOpen(false)
+      await loadAll()
+    } finally { setSavingSmartList(false) }
+  }
+
+  async function deleteSmartList(id: string) {
+    if (!confirm('Remover esta lista inteligente?')) return
+    await apiClient.delete(`/crm/smart-lists/${id}`)
+    await loadAll()
+  }
+
+  function applySmartList(list: SmartList) {
+    setStageFilter(list.filters.stage_id || 'all')
+    setResponsibleFilter(list.filters.responsible_id || 'all')
+    setTemperatureFilter((list.filters.temperature as 'all' | Temperature) || 'all')
+    setSourceFilter(list.filters.source || 'all')
+    setSearch(list.filters.q || '')
+  }
+
+  async function bulkUpdateLeads(updates: { stage_id?: string; responsible_id?: string; temperature?: Temperature }) {
+    if (!selectedLeads.size) return
+    if (!confirm(`Atualizar ${selectedLeads.size} lead(s)?`)) return
+    await apiClient.post('/crm/leads/bulk-update', { ids: Array.from(selectedLeads), updates })
+    setSelectedLeads(new Set())
+    setBulkStageOpen(false)
+    setBulkAssignOpen(false)
+    await loadAll()
+  }
+
+  async function bulkDeleteLeads() {
+    if (!selectedLeads.size) return
+    if (!confirm(`Inativar ${selectedLeads.size} lead(s)? Esta ação não pode ser desfeita.`)) return
+    await apiClient.post('/crm/leads/bulk-delete', { ids: Array.from(selectedLeads) })
+    setSelectedLeads(new Set())
+    await loadAll()
+  }
+
+  function toggleLead(id: string) {
+    setSelectedLeads(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function toggleAllLeads() {
+    if (selectedLeads.size === filteredLeads.length) {
+      setSelectedLeads(new Set())
+    } else {
+      setSelectedLeads(new Set(filteredLeads.map(l => l.id)))
+    }
+  }
+
   async function recalculateScores() {
     setRecalculatingScores(true)
     try {
@@ -1778,7 +2046,7 @@ export default function CRMPage() {
       <div className="rounded-2xl border border-red-100 bg-red-50 p-6 text-sm text-red-700">
         <p className="font-semibold">Não foi possível carregar o CRM.</p>
         <p className="mt-1">{error}</p>
-        <p className="mt-3 text-xs">Confira se as migrations <strong>migrate_crm_fase1.js</strong>, <strong>migrate_crm_fase2.js</strong>, <strong>migrate_crm_fase3.js</strong> e <strong>migrate_crm_fase4.js</strong> foram executadas no backend.</p>
+        <p className="mt-3 text-xs">Confira se as migrations <strong>migrate_crm_fase1.js</strong>, <strong>migrate_crm_fase2.js</strong>, <strong>migrate_crm_fase3.js</strong> e <strong>migrate_crm_fase4.js</strong> e <strong>migrate_crm_fase5.js</strong> foram executadas no backend.</p>
         <button onClick={loadAll} className="mt-4 rounded-xl bg-red-600 px-3 py-2 text-xs font-medium text-white">Tentar novamente</button>
       </div>
     )
@@ -1789,11 +2057,12 @@ export default function CRMPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">CRM & Funil de Vendas</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Funil configurável, tarefas, inteligência comercial, scoring, campanhas e comunicação SES/SNS.</p>
+          <p className="mt-0.5 text-sm text-slate-500">Funil configurável, tarefas, ações manuais, listas inteligentes, inteligência comercial, campanhas e comunicação SES/SNS.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button onClick={() => setConfigOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"><Settings className="h-4 w-4" /> Configurar funil</button>
           <button onClick={() => setImportOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"><FileSpreadsheet className="h-4 w-4 text-emerald-600" /> Importar Excel</button>
+          <button onClick={exportLeads} className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"><Download className="h-4 w-4 text-slate-500" /> Exportar</button>
           <button onClick={() => openNewLead()} className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"><Plus className="h-4 w-4" /> Novo lead</button>
         </div>
       </div>
@@ -1865,6 +2134,125 @@ export default function CRMPage() {
         </div>
       </div>
 
+
+      {smartLists.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-400 font-medium">Visões salvas:</span>
+          {smartLists.map(list => (
+            <div key={list.id} className="group relative flex items-center gap-1">
+              <button onClick={() => applySmartList(list)}
+                className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700">
+                <Filter className="h-3 w-3" />{list.name}
+              </button>
+              <button onClick={() => deleteSmartList(list.id)}
+                className="absolute -right-1.5 -top-1.5 hidden h-4 w-4 items-center justify-center rounded-full bg-red-100 text-[10px] text-red-600 hover:bg-red-200 group-hover:flex">
+                ✕
+              </button>
+            </div>
+          ))}
+          {smartListSaveOpen ? (
+            <div className="flex items-center gap-1.5">
+              <input autoFocus value={newSmartListName} onChange={e => setNewSmartListName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') void saveSmartList(); if (e.key === 'Escape') { setSmartListSaveOpen(false); setNewSmartListName('') } }}
+                placeholder="Nome da visão" className="w-44 rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400" />
+              <button onClick={() => void saveSmartList()} disabled={savingSmartList || !newSmartListName.trim()}
+                className="rounded-lg bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                {savingSmartList ? '...' : 'Salvar'}
+              </button>
+              <button onClick={() => { setSmartListSaveOpen(false); setNewSmartListName('') }} className="text-xs text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+          ) : (
+            <button onClick={() => setSmartListSaveOpen(true)}
+              className="flex items-center gap-1 rounded-full border border-dashed border-slate-300 px-3 py-1 text-xs text-slate-500 hover:border-blue-300 hover:text-blue-600">
+              <Plus className="h-3 w-3" /> Salvar filtro atual
+            </button>
+          )}
+        </div>
+      )}
+
+      {!smartLists.length && (
+        <div className="flex items-center gap-2">
+          {smartListSaveOpen ? (
+            <div className="flex items-center gap-1.5">
+              <Filter className="h-3.5 w-3.5 text-slate-400" />
+              <input autoFocus value={newSmartListName} onChange={e => setNewSmartListName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') void saveSmartList(); if (e.key === 'Escape') { setSmartListSaveOpen(false); setNewSmartListName('') } }}
+                placeholder="Nome da visão salva" className="w-44 rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-blue-400" />
+              <button onClick={() => void saveSmartList()} disabled={savingSmartList || !newSmartListName.trim()}
+                className="rounded-lg bg-blue-600 px-2 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                {savingSmartList ? '...' : 'Salvar'}
+              </button>
+              <button onClick={() => { setSmartListSaveOpen(false); setNewSmartListName('') }} className="text-xs text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+          ) : (
+            <button onClick={() => setSmartListSaveOpen(true)}
+              className="flex items-center gap-1.5 rounded-full border border-dashed border-slate-300 px-3 py-1 text-xs text-slate-500 hover:border-blue-300 hover:text-blue-600">
+              <Filter className="h-3 w-3" /> Salvar filtro atual como visão
+            </button>
+          )}
+        </div>
+      )}
+
+      {selectedLeads.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3">
+          <span className="text-sm font-semibold text-blue-800">{selectedLeads.size} lead(s) selecionado(s)</span>
+          <div className="flex flex-wrap gap-2 ml-2">
+            <div className="relative">
+              <button onClick={() => { setBulkStageOpen(p => !p); setBulkAssignOpen(false) }}
+                className="flex items-center gap-1.5 rounded-lg bg-white border border-blue-200 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100">
+                Mover etapa ▾
+              </button>
+              {bulkStageOpen && (
+                <div className="absolute top-8 left-0 z-20 min-w-[180px] rounded-xl border border-slate-200 bg-white shadow-lg">
+                  {activeStages.map(s => (
+                    <button key={s.id} onClick={() => void bulkUpdateLeads({ stage_id: s.id })}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">
+                      <span className="h-2 w-2 rounded-full inline-block" style={{ background: s.color }} />
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="relative">
+              <button onClick={() => { setBulkAssignOpen(p => !p); setBulkStageOpen(false) }}
+                className="flex items-center gap-1.5 rounded-lg bg-white border border-blue-200 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100">
+                Atribuir ▾
+              </button>
+              {bulkAssignOpen && (
+                <div className="absolute top-8 left-0 z-20 min-w-[180px] rounded-xl border border-slate-200 bg-white shadow-lg">
+                  <button onClick={() => void bulkUpdateLeads({ responsible_id: '' })} className="flex w-full items-center px-3 py-2 text-xs text-slate-500 hover:bg-slate-50">Sem responsável</button>
+                  {users.map(u => (
+                    <button key={u.id} onClick={() => void bulkUpdateLeads({ responsible_id: u.id })}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">
+                      {u.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {(['frio','morno','quente'] as Temperature[]).map(t => (
+              <button key={t} onClick={() => void bulkUpdateLeads({ temperature: t })}
+                className={cn('rounded-lg border px-3 py-1.5 text-xs font-medium bg-white',
+                  t === 'quente' ? 'border-red-200 text-red-700 hover:bg-red-50'
+                  : t === 'morno' ? 'border-amber-200 text-amber-700 hover:bg-amber-50'
+                  : 'border-sky-200 text-sky-700 hover:bg-sky-50')}>
+                {t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+            <button onClick={() => void exportLeads()}
+              className="flex items-center gap-1.5 rounded-lg bg-white border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50">
+              <Download className="h-3.5 w-3.5" /> Exportar
+            </button>
+            <button onClick={() => void bulkDeleteLeads()}
+              className="flex items-center gap-1.5 rounded-lg bg-white border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
+              <Trash2 className="h-3.5 w-3.5" /> Inativar
+            </button>
+          </div>
+          <button onClick={() => setSelectedLeads(new Set())} className="ml-auto text-xs text-blue-500 hover:text-blue-700">Limpar seleção</button>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
           <Search className="h-3.5 w-3.5 text-slate-400" />
@@ -1892,6 +2280,7 @@ export default function CRMPage() {
           <button onClick={() => setView('list')} className={cn('px-3 py-2 text-xs font-medium', view === 'list' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50')}>Lista</button>
           <button onClick={() => setView('analytics')} className={cn('px-3 py-2 text-xs font-medium', view === 'analytics' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50')}>Inteligência</button>
           <button onClick={() => setView('campaigns')} className={cn('px-3 py-2 text-xs font-medium', view === 'campaigns' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50')}>Campanhas</button>
+          <button onClick={() => setView('manual')} className={cn('px-3 py-2 text-xs font-medium', view === 'manual' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-50')}>Ações manuais</button>
         </div>
       </div>
 
@@ -1899,6 +2288,11 @@ export default function CRMPage() {
         <AnalyticsPanel analytics={analytics} onRecalculate={recalculateScores} recalculating={recalculatingScores} />
       ) : view === 'campaigns' ? (
         <CampaignsPanel campaigns={campaigns} templates={templates} stages={activeStages} users={users} onRefresh={loadAll} />
+      ) : view === 'manual' ? (
+        <ManualActionsPanel users={users} onOpenLead={(leadId) => {
+          const lead = leads.find(l => l.id === leadId)
+          if (lead) { setEditingLead(lead); setLeadModalOpen(true) }
+        }} />
       ) : view === 'kanban' ? (
         <div className="flex gap-3 overflow-x-auto pb-4">
           {activeStages.map(stage => {
@@ -1932,6 +2326,10 @@ export default function CRMPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50/70">
               <tr className="border-b border-slate-100">
+                <th className="px-4 py-3 w-8">
+                  <input type="checkbox" checked={selectedLeads.size > 0 && selectedLeads.size === filteredLeads.length}
+                    onChange={toggleAllLeads} className="rounded border-slate-300" />
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Lead</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Etapa</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">Responsável</th>
@@ -1945,14 +2343,17 @@ export default function CRMPage() {
               {filteredLeads.map(lead => {
                 const stage = stages.find(s => s.id === lead.stage_id)
                 return (
-                  <tr key={lead.id} className="hover:bg-slate-50/50">
+                  <tr key={lead.id} className="hover:bg-slate-50/50 cursor-pointer" onClick={() => toggleLead(lead.id)}>
+                    <td className="px-4 py-3 w-8" onClick={e => e.stopPropagation()}>
+                      <input type="checkbox" checked={selectedLeads.has(lead.id)} onChange={() => toggleLead(lead.id)} className="rounded border-slate-300" />
+                    </td>
                     <td className="px-4 py-3"><p className="font-medium text-slate-900">{lead.name}</p><p className="text-xs text-slate-500">{lead.phone || lead.email}</p></td>
                     <td className="px-4 py-3">{stage ? <StageBadge stage={stage} /> : <span className="text-xs text-slate-400">Sem etapa</span>}</td>
                     <td className="px-4 py-3 text-xs text-slate-600">{lead.responsible_name || 'Sem responsável'}</td>
                     <td className="px-4 py-3 text-xs text-slate-600">{SOURCE_LABELS[lead.source] || lead.source}</td>
                     <td className="px-4 py-3 text-xs text-slate-600">{dateLabel(lead.next_follow_up_at)}</td>
                     <td className="px-4 py-3 text-xs font-semibold text-slate-700">{money(lead.estimated_value)}</td>
-                    <td className="px-4 py-3 text-center"><button onClick={() => { setEditingLead(lead); setLeadModalOpen(true) }} className="rounded-lg p-2 text-slate-400 hover:bg-blue-50 hover:text-blue-600"><Edit3 className="h-4 w-4" /></button></td>
+                    <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}><button onClick={() => { setEditingLead(lead); setLeadModalOpen(true) }} className="rounded-lg p-2 text-slate-400 hover:bg-blue-50 hover:text-blue-600"><Edit3 className="h-4 w-4" /></button></td>
                   </tr>
                 )
               })}
