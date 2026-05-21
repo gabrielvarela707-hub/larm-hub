@@ -19,7 +19,7 @@ type LancamentoTipo = 'saldo_inicial' | 'taxa' | 'rendimento' | 'aplicacao'
 interface BancoConta {
   id: number; empresa: string; banco_nome: string; codigo_banco: string | null
   agencia: string | null; conta: string | null; digito: string | null
-  tipo_conta: string; saldo_inicial: number; data_saldo_inicial: string | null
+  tipo_conta: string; saldo_inicial: number | string; data_saldo_inicial: string | null
   ativo: boolean; obs: string | null
 }
 
@@ -62,7 +62,7 @@ const EMPTY_LANC: LancamentoBancoForm = {
   tipo: 'saldo_inicial',
   descricao: '',
   valor: 0,
-  data: new Date().toISOString().split('T')[0],
+  data: '',
   obs: '',
 }
 
@@ -100,12 +100,41 @@ function Field({
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const R$ = (v: number | null | undefined) =>
-  (v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+const moneyToNumber = (v: number | string | null | undefined) => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0
+  const raw = String(v ?? '').trim()
+  if (!raw) return 0
+  const normalized = raw.includes(',')
+    ? raw.replace(/\./g, '').replace(',', '.')
+    : raw
+  const n = Number(normalized.replace(/[^0-9.-]/g, ''))
+  return Number.isFinite(n) ? n : 0
+}
+
+const R$ = (v: number | string | null | undefined) =>
+  moneyToNumber(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+const dateOnly = (value: string | null | undefined) => {
+  if (!value) return ''
+  const raw = String(value).trim()
+  const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`
+  const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`
+  return ''
+}
+
+const todayISO = () => {
+  const dt = new Date()
+  const local = new Date(dt.getTime() - dt.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
+}
 
 const fmtDate = (d: string | null) => {
-  if (!d) return '—'
-  try { return new Date(d + 'T00:00:00').toLocaleDateString('pt-BR') } catch { return d }
+  const iso = dateOnly(d)
+  if (!iso) return '—'
+  const [ano, mes, dia] = iso.split('-')
+  return `${dia}/${mes}/${ano}`
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -152,9 +181,14 @@ export default function BancosPage() {
   }
 
   // ── CRUD Conta ─────────────────────────────────────────────────────────────
-  function openNew()  { setEditId(null); setForm(EMPTY); setErrors({}); setShowForm(true) }
-  function openEdit(b: BancoConta) { setEditId(b.id); setForm({...b}); setErrors({}); setShowForm(true) }
-  function closeForm() { setShowForm(false); setEditId(null); setForm(EMPTY); setErrors({}) }
+  function openNew()  { setEditId(null); setForm({ ...EMPTY }); setErrors({}); setShowForm(true) }
+  function openEdit(b: BancoConta) {
+    setEditId(b.id)
+    setForm({ ...b, data_saldo_inicial: dateOnly(b.data_saldo_inicial) })
+    setErrors({})
+    setShowForm(true)
+  }
+  function closeForm() { setShowForm(false); setEditId(null); setForm({ ...EMPTY }); setErrors({}) }
 
   function set(key: keyof BancoConta, val: string | number | boolean) {
     setForm(p => ({ ...p, [key]: val }))
@@ -179,10 +213,15 @@ export default function BancosPage() {
     if (!validate()) return
     setSaving(true)
     try {
+      const payload = {
+        ...form,
+        saldo_inicial: moneyToNumber(form.saldo_inicial),
+        data_saldo_inicial: dateOnly(form.data_saldo_inicial) || null,
+      }
       if (editId) {
-        await apiClient.put(`/financeiro/bancos/${editId}`, form)
+        await apiClient.put(`/financeiro/bancos/${editId}`, payload)
       } else {
-        await apiClient.post('/financeiro/bancos', form)
+        await apiClient.post('/financeiro/bancos', payload)
       }
       closeForm(); load()
     } catch (err: unknown) {
@@ -194,7 +233,7 @@ export default function BancosPage() {
   function openLancamentos(conta: BancoConta) {
     setLancContaId(conta.id)
     setLancContaNome(`${conta.banco_nome} — ${conta.empresa}`)
-    setLancForm(EMPTY_LANC)
+    setLancForm({ ...EMPTY_LANC, data: todayISO() })
     setLancErrors({})
     setShowLancModal(true)
     loadLancamentos(conta.id)
@@ -213,7 +252,7 @@ export default function BancosPage() {
     setLancSaving(true)
     try {
       await apiClient.post(`/financeiro/bancos/${lancContaId}/lancamentos`, lancForm)
-      setLancForm(EMPTY_LANC)
+      setLancForm({ ...EMPTY_LANC, data: todayISO() })
       await loadLancamentos(lancContaId!)
       load() // atualiza saldo na listagem
     } catch { } finally { setLancSaving(false) }
@@ -228,7 +267,7 @@ export default function BancosPage() {
   }
 
   // ── Derived ────────────────────────────────────────────────────────────────
-  const saldoTotal = lista.reduce((s, b) => s + (b.saldo_inicial ?? 0), 0)
+  const saldoTotal = lista.reduce((s, b) => s + moneyToNumber(b.saldo_inicial), 0)
 
   const inp = 'w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 transition-colors'
 
@@ -255,7 +294,7 @@ export default function BancosPage() {
           return (
             <div key={emp} className="bg-white rounded-xl border border-slate-100 shadow-sm p-4">
               <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">{emp}</p>
-              <p className="text-sm font-bold text-slate-800">{R$(contas.reduce((s, b) => s + (b.saldo_inicial ?? 0), 0))}</p>
+              <p className="text-sm font-bold text-slate-800">{R$(contas.reduce((s, b) => s + moneyToNumber(b.saldo_inicial), 0))}</p>
               <p className="text-[10px] text-slate-400 mt-0.5">{contas.length} conta{contas.length > 1 ? 's' : ''}</p>
             </div>
           )
@@ -410,15 +449,15 @@ export default function BancosPage() {
 
                 {/* Saldo e data são opcionais */}
                 <Field label="Saldo Inicial (R$)" name="saldo_inicial" errors={errors}>
-                  <input className={inp} type="number" step="0.01" min="0"
+                  <input className={inp} type="text" inputMode="decimal"
                     value={form.saldo_inicial ?? ''}
-                    onChange={e => set('saldo_inicial', parseFloat(e.target.value) || 0)}
+                    onChange={e => set('saldo_inicial', e.target.value)}
                     placeholder="0,00" />
                 </Field>
 
                 <Field label="Data do Saldo Inicial" name="data_saldo_inicial" errors={errors}>
                   <input className={inp} type="date"
-                    value={form.data_saldo_inicial || ''}
+                    value={dateOnly(form.data_saldo_inicial) || ''}
                     onChange={e => set('data_saldo_inicial', e.target.value)} />
                 </Field>
 

@@ -899,6 +899,8 @@ export default function PagarPage() {
               {!loading && sortedLista.map(l => {
                 const statusParcela = l.parcela_status || l.status
                 const valorParcela = Number(l.parcela_valor ?? l.valor_total ?? 0)
+                const valorFinalBaixa = Number(l.parcela_valor_final ?? valorParcela)
+                const mostrarBaixa = statusParcela === 'pago'
                 return (
                   <tr key={`${l.id}-${l.parcela_id || l.parcela_numero || 'sem-parcela'}`} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                     <td className="px-3 py-2.5">
@@ -919,7 +921,18 @@ export default function PagarPage() {
                     <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-800 whitespace-nowrap">{R$(valorParcela)}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.dt_emissao)}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.parcela_vencimento || l.proximo_venc)}</td>
-                    <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.parcela_dt_pagamento)}</td>
+                    <td className="px-3 py-2 min-w-[210px] text-slate-500 align-top">
+                      <p className="whitespace-nowrap">{fmtDate(l.parcela_dt_pagamento)}</p>
+                      {mostrarBaixa && (
+                        <div className="mt-1 space-y-0.5 text-[10px] leading-4 text-slate-400">
+                          <p>Forma: {l.parcela_forma_pagamento || '—'}</p>
+                          <p>Multa {R$(Number(l.parcela_multa || 0))} · Juros {R$(Number(l.parcela_juros || 0))}</p>
+                          <p>Desc. {R$(Number(l.parcela_desconto || 0))} · Acrésc. {R$(Number(l.parcela_acrescimo || 0))}</p>
+                          <p className="font-semibold text-slate-500">Valor final: {R$(valorFinalBaixa)}</p>
+                          {l.parcela_motivo_baixa && <p className="truncate max-w-[190px]">Motivo: {l.parcela_motivo_baixa}</p>}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-col items-start gap-1.5">
                         <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', STATUS_COLORS[statusParcela] || STATUS_COLORS.cancelado)}>
