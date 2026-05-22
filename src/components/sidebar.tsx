@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Map, Users, FileText, DollarSign,
   BarChart3, Building2, Bot, Settings, MapPin,
   Globe, HardHat, ChevronDown, ChevronRight,
-  TrendingUp, ChevronLeft, LogOut, HelpCircle, Receipt, Tag,
+  TrendingUp, ChevronLeft, LogOut, HelpCircle, Receipt, Tag, MessageSquare,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTenantConfig } from '@/lib/tenant-config-store'
@@ -42,6 +42,7 @@ const NAV: NavItem[] = [
       { label: 'Funil de Vendas', href: '/crm', moduleIds: ['crm'] },
       { label: 'Todos os Leads', href: '/crm/leads', moduleIds: ['crm'] },
       { label: 'Automacoes', href: '/automacoes', moduleIds: ['automacoes'] },
+      { label: 'Conversas', href: '/conversas', moduleIds: ['crm'] },
     ],
   },
   { label: 'Landing Pages', href: '/landing-pages', icon: Globe, moduleIds: ['landing_pages'] },
