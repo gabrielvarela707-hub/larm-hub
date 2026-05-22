@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Map, Users, FileText, DollarSign,
   BarChart3, Building2, Bot, Settings, MapPin,
   Globe, HardHat, ChevronDown, ChevronRight,
-  TrendingUp, ChevronLeft, LogOut, HelpCircle, Receipt, Tag, MessageSquare,
+  TrendingUp, ChevronLeft, LogOut, HelpCircle, Receipt, Tag, MessageSquare, Megaphone,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTenantConfig } from '@/lib/tenant-config-store'
@@ -45,6 +45,7 @@ const NAV: NavItem[] = [
       { label: 'Conversas', href: '/conversas', moduleIds: ['crm'] },
     ],
   },
+  { label: 'Marketing & Midia', href: '/marketing', icon: Megaphone, moduleIds: ['crm'] },
   { label: 'Landing Pages', href: '/landing-pages', icon: Globe, moduleIds: ['landing_pages'] },
   { label: 'Simulador de Vendas', href: '/simulador', icon: TrendingUp, moduleIds: ['simulador'] },
   { label: 'Contratos', href: '/contratos', icon: FileText, badge: 2, badgeColor: 'bg-amber-500', moduleIds: ['contratos'] },
