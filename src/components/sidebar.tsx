@@ -80,7 +80,6 @@ const NAV: NavItem[] = [
       { label: 'Implantacao / Plantas', href: '/relatorios/implantacao', moduleIds: ['relatorios_implantacao'] },
     ],
   },
-  { label: 'Controladoria', href: '/controladoria', icon: Receipt, moduleIds: ['controladoria'] },
   { label: 'Chat IA', href: '/ia', icon: Bot, moduleIds: ['ia'] },
 ]
 
