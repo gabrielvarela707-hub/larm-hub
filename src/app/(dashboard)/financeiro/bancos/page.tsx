@@ -16,6 +16,8 @@ import {
   TrendingDown,
   DollarSign,
   Calendar,
+  Trash2,
+  RotateCcw,
 } from "lucide-react";
 import { apiClient } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
@@ -175,6 +177,8 @@ export default function BancosPage() {
   const [form, setForm] = useState<Partial<BancoConta>>(EMPTY);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [fEmpresa, setFEmpresa] = useState("");
+  const [fStatus, setFStatus] = useState<"ativas" | "inativas" | "todas">("ativas");
+  const [statusLoadingId, setStatusLoadingId] = useState<number | null>(null);
 
   // Lançamentos extras (taxas, rendimentos)
   const [showLancModal, setShowLancModal] = useState(false);
@@ -191,13 +195,15 @@ export default function BancosPage() {
     try {
       const params: Record<string, string> = {};
       if (fEmpresa) params.empresa = fEmpresa;
+      if (fStatus === "ativas") params.ativo = "true";
+      if (fStatus === "inativas") params.ativo = "false";
       const r = await apiClient.get("/financeiro/bancos", { params });
       setLista(r.data.data ?? []);
     } catch {
     } finally {
       setLoading(false);
     }
-  }, [fEmpresa]);
+  }, [fEmpresa, fStatus]);
 
   useEffect(() => {
     load();
@@ -326,6 +332,31 @@ export default function BancosPage() {
     } catch {}
   }
 
+  async function toggleContaStatus(conta: BancoConta) {
+    const proximoStatus = !conta.ativo;
+    const acao = conta.ativo ? "inativar" : "reativar";
+    const mensagem = conta.ativo
+      ? "Inativar esta conta bancária? Ela sairá das listagens padrão, mas o histórico financeiro será preservado."
+      : "Reativar esta conta bancária? Ela voltará a aparecer nas listagens padrão.";
+
+    if (!window.confirm(mensagem)) return;
+
+    setStatusLoadingId(conta.id);
+    try {
+      await apiClient.patch(`/financeiro/bancos/${conta.id}/status`, {
+        ativo: proximoStatus,
+      });
+      await load();
+    } catch (err: unknown) {
+      alert(
+        (err as { response?: { data?: { message?: string } } }).response?.data
+          ?.message ?? `Erro ao ${acao} a conta bancária.`,
+      );
+    } finally {
+      setStatusLoadingId(null);
+    }
+  }
+
   // ── Derived ────────────────────────────────────────────────────────────────
   const saldoTotal = lista.reduce(
     (s, b) => s + moneyToNumber(b.saldo_inicial),
@@ -393,7 +424,7 @@ export default function BancosPage() {
       </div>
 
       {/* Filtro */}
-      <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4 py-3 flex gap-3">
+      <div className="bg-white rounded-xl border border-slate-100 shadow-sm px-4 py-3 flex flex-wrap gap-3">
         <select
           value={fEmpresa}
           onChange={(e) => setFEmpresa(e.target.value)}
@@ -403,6 +434,18 @@ export default function BancosPage() {
           {EMPRESAS.map((e) => (
             <option key={e}>{e}</option>
           ))}
+        </select>
+
+        <select
+          value={fStatus}
+          onChange={(e) =>
+            setFStatus(e.target.value as "ativas" | "inativas" | "todas")
+          }
+          className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700"
+        >
+          <option value="ativas">Contas ativas</option>
+          <option value="inativas">Contas inativas</option>
+          <option value="todas">Todas as contas</option>
         </select>
       </div>
 
@@ -503,16 +546,41 @@ export default function BancosPage() {
                     <td className="px-3 py-2 flex items-center gap-1">
                       <button
                         onClick={() => openLancamentos(b)}
-                        title="Lançamentos extras"
-                        className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-600 transition-colors"
+                        disabled={!b.ativo}
+                        title={
+                          b.ativo
+                            ? "Lançamentos extras"
+                            : "Reative a conta para lançar movimentações"
+                        }
+                        className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-slate-400"
                       >
                         <DollarSign className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => openEdit(b)}
                         className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"
+                        title="Editar conta"
                       >
                         <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => toggleContaStatus(b)}
+                        disabled={statusLoadingId === b.id}
+                        title={b.ativo ? "Inativar conta" : "Reativar conta"}
+                        className={cn(
+                          "p-1.5 rounded-lg transition-colors disabled:opacity-60",
+                          b.ativo
+                            ? "text-slate-400 hover:bg-red-50 hover:text-red-500"
+                            : "text-slate-400 hover:bg-green-50 hover:text-green-600",
+                        )}
+                      >
+                        {statusLoadingId === b.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : b.ativo ? (
+                          <Trash2 className="w-3.5 h-3.5" />
+                        ) : (
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        )}
                       </button>
                     </td>
                   </tr>

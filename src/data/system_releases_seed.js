@@ -953,6 +953,46 @@ const SYSTEM_RELEASES = [
       ],
     },
   },
+  {
+    version: "0.2.4",
+    title: "Financeiro — inativação e reativação de contas bancárias",
+    description:
+      "Ajuste no módulo Bancos e Contas para permitir inativar contas sem apagar histórico financeiro, reativar quando necessário e filtrar contas por status.",
+    frontend_version: "0.2.4",
+    backend_version: "0.2.4",
+    released_at: "2026-05-25T15:00:00.000Z",
+    changes: [
+      "Adicionado botão Inativar na listagem de Financeiro > Bancos e Contas.",
+      "Contas inativadas deixam de aparecer na listagem padrão, preservando lançamentos e histórico financeiro.",
+      "Adicionado filtro de status para visualizar contas ativas, inativas ou todas as contas.",
+      "Adicionado botão Reativar quando uma conta inativa estiver visível na listagem.",
+      "Desabilitado o lançamento extra em contas inativas para evitar novas movimentações indevidas.",
+      "Criado endpoint PATCH /financeiro/bancos/:id/status para ativar ou inativar conta bancária sem exclusão física.",
+      "Mantido DELETE /financeiro/bancos/:id como soft delete, agora retornando a conta atualizada.",
+      "Atualizada versão técnica do front-end e backend para 0.2.4.",
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro Bancos v0.2.4",
+      ],
+      backend: ["Node.js", "Express.js", "JWT", "REST API Financeiro", "PM2"],
+      database: [
+        "PostgreSQL",
+        "fin_bancos_contas",
+        "fin_bancos_lancamentos",
+        "fin_movimento",
+        "hub_system_releases",
+      ],
+      integrations: [
+        "Movimento Bancário integrado às contas bancárias",
+        "Changelog versionado no banco",
+      ],
+    },
+  },
 ];
 
 module.exports = { SYSTEM_RELEASES };
