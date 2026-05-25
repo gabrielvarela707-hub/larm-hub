@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Plus, Search, X, Check, FileText, Loader2, Sparkles, Pencil, Trash2, ChevronsUpDown } from 'lucide-react'
+import { Plus, Search, X, Check, FileText, Loader2, Sparkles, Pencil, Trash2, ChevronsUpDown, RotateCcw } from 'lucide-react'
 import { apiClient } from '@/lib/auth-store'
 import { BANCOS_BR } from '@/lib/bancos-br'
 import { cn } from '@/lib/utils'
@@ -57,6 +57,8 @@ interface Lancamento {
   parcela_vencimento?: string | null; parcela_status?: string | null; parcela_dt_pagamento?: string | null
   parcela_motivo_baixa?: string | null; parcela_acrescimo?: number | null; parcela_desconto?: number | null
   parcela_juros?: number | null; parcela_multa?: number | null; parcela_valor_final?: number | null
+  parcela_baixa_acrescimo?: number | null; parcela_baixa_desconto?: number | null
+  parcela_baixa_juros?: number | null; parcela_baixa_multa?: number | null; parcela_baixa_valor_final?: number | null
   parcela_forma_pagamento?: string | null
 }
 
@@ -176,7 +178,13 @@ const getSortValue = (l: Lancamento, key: SortKey): string | number => {
     case 'tipo_documento': return sortText(l.tipo_documento_nome)
     case 'numero': return sortText(l.nf_doc)
     case 'parcela': return Number(l.parcela_numero || 0)
-    case 'valor': return Number(l.parcela_valor ?? l.valor_total ?? 0)
+    case 'valor': {
+      const valor = Number(l.parcela_valor ?? l.valor_total ?? 0)
+      const final = l.parcela_valor_final === null || l.parcela_valor_final === undefined
+        ? valor + Number(l.parcela_acrescimo || 0) + Number(l.parcela_multa || 0) + Number(l.parcela_juros || 0) - Number(l.parcela_desconto || 0)
+        : Number(l.parcela_valor_final)
+      return Number.isFinite(final) ? final : valor
+    }
     case 'emissao': return sortDate(l.dt_emissao)
     case 'vencimento': return sortDate(l.parcela_vencimento || l.proximo_venc)
     case 'pagamento': return sortDate(l.parcela_dt_pagamento)
@@ -287,6 +295,85 @@ function PlanoContasSelect({ value, onChange, contas, inp }: { value: string; on
   )
 }
 
+
+// ─── FornecedorSelect ───────────────────────────────────────────────────────
+function fornecedorLabel(f: Fornecedor) {
+  const nome = f.nome_fantasia?.trim() || f.razao_social
+  const doc = f.cnpj_cpf ? ` · ${f.cnpj_cpf}` : ''
+  return `${nome}${doc}`
+}
+
+function FornecedorSelect({
+  value,
+  onChange,
+  fornecedores,
+  inp,
+  placeholder = 'Selecione (opcional)',
+  emptyLabel = '— Nenhum —',
+}: {
+  value: string
+  onChange: (v: string) => void
+  fornecedores: Fornecedor[]
+  inp: string
+  placeholder?: string
+  emptyLabel?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [busca, setBusca] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+  const termo = busca.toLowerCase().trim()
+  const filtered = fornecedores.filter(f => {
+    const campos = [f.razao_social, f.nome_fantasia, f.cnpj_cpf, f.empresa]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return !termo || campos.includes(termo)
+  }).slice(0, 80)
+  const selected = fornecedores.find(f => String(f.id) === String(value))
+
+  useEffect(() => {
+    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', fn)
+    return () => document.removeEventListener('mousedown', fn)
+  }, [])
+
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className={cn(inp, 'flex items-center justify-between gap-2 text-left')}>
+        <span className={cn('truncate', selected ? 'text-slate-700' : 'text-slate-400')}>
+          {selected ? fornecedorLabel(selected) : placeholder}
+        </span>
+        <ChevronsUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-[70] w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl">
+          <div className="p-2 border-b border-slate-100">
+            <input autoFocus value={busca} onChange={e => setBusca(e.target.value)}
+              placeholder="Buscar por nome, fantasia, CNPJ ou empresa…"
+              className="w-full px-2 py-1.5 text-xs rounded border border-slate-200 bg-white outline-none" />
+          </div>
+          <div className="max-h-56 overflow-y-auto">
+            <button type="button" onClick={() => { onChange(''); setOpen(false); setBusca('') }}
+              className="w-full text-left px-3 py-2 text-xs text-slate-400 hover:bg-slate-50">{emptyLabel}</button>
+            {filtered.map(f => (
+              <button key={f.id} type="button"
+                onClick={() => { onChange(String(f.id)); setOpen(false); setBusca('') }}
+                className={cn('w-full text-left px-3 py-2 text-xs hover:bg-blue-50', String(value) === String(f.id) && 'bg-blue-50 font-medium')}>
+                <span className="block truncate text-slate-700">{f.razao_social}</span>
+                <span className="block truncate text-[10px] text-slate-400">
+                  {[f.nome_fantasia, f.cnpj_cpf, f.empresa].filter(Boolean).join(' · ') || 'Sem dados complementares'}
+                </span>
+              </button>
+            ))}
+            {filtered.length === 0 && <p className="px-3 py-4 text-xs text-slate-400 text-center">Nenhum fornecedor encontrado</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function PagarPage() {
   const [lista,     setLista]     = useState<Lancamento[]>([])
   const [total,     setTotal]     = useState(0)
@@ -304,6 +391,7 @@ export default function PagarPage() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [deletingLoading, setDeletingLoading] = useState(false)
+  const [cancelandoBaixa, setCancelandoBaixa] = useState<string | null>(null)
   // banco brasileiro selecionado (código BACEN)
   const [fBancoCodigo, setFBancoCodigo] = useState('')
   const [baixaParcela, setBaixaParcela] = useState<Lancamento | null>(null)
@@ -552,8 +640,11 @@ export default function PagarPage() {
     if (!fValor || moneyToNumber(fValor) <= 0) e.valor = 'Informe um valor válido'
     if (fNF && fNF.replace(/\D/g, '').length > 0 && fNF.replace(/\D/g, '').length < 9)
       e.nf_doc = 'Mínimo 9 dígitos numéricos'
+    if (Object.keys(e).length) {
+      e._geral = 'Revise os campos: algum deles está impedindo o envio das informações.'
+    }
     setErrors(e)
-    return Object.keys(e).length === 0
+    return Object.keys(e).filter(k => k !== '_geral').length === 0
   }
 
   function handleDocumentoChange(file: File | null) {
@@ -764,7 +855,10 @@ export default function PagarPage() {
       closeForm()
       load()
     } catch (err: unknown) {
-      setErrors({ _geral: (err instanceof Error ? err.message : 'Erro ao salvar') || 'Erro ao salvar' })
+      const msg = (err as { response?: { data?: { message?: string } }; message?: string }).response?.data?.message
+        || (err instanceof Error ? err.message : 'Erro ao salvar')
+        || 'Erro ao salvar'
+      setErrors({ _geral: msg })
     } finally {
       setSaving(false)
     }
@@ -781,19 +875,20 @@ export default function PagarPage() {
 
   function openBaixaModal(l: Lancamento) {
     if (!l.parcela_id) return
-    const valor = Number(l.parcela_valor ?? l.valor_total ?? 0)
+    const valor = getValorFinalLancamento(l)
+    const baixaValorFinal = getBaixaValor(l, 'valor_final')
     const form: BaixaForm = {
       valor_parcela: valor.toFixed(2),
       motivo_baixa: l.parcela_motivo_baixa || '',
-      acrescimo: String(Number(l.parcela_acrescimo || 0)),
-      desconto: String(Number(l.parcela_desconto || 0)),
-      juros: String(Number(l.parcela_juros || 0)),
-      multa: String(Number(l.parcela_multa || 0)),
-      valor_final: String(Number(l.parcela_valor_final || valor).toFixed(2)),
+      acrescimo: String(getBaixaValor(l, 'acrescimo')),
+      desconto: String(getBaixaValor(l, 'desconto')),
+      juros: String(getBaixaValor(l, 'juros')),
+      multa: String(getBaixaValor(l, 'multa')),
+      valor_final: String((baixaValorFinal || valor).toFixed(2)),
       forma_pagamento: l.parcela_forma_pagamento || '',
       dt_pagamento: dateOnly(l.parcela_dt_pagamento) || todayISO(),
     }
-    form.valor_final = calculaValorFinalBaixa(form).toFixed(2)
+    if (!baixaValorFinal) form.valor_final = calculaValorFinalBaixa(form).toFixed(2)
     setBaixaParcela(l)
     setBaixaForm(form)
     setBaixaErrors({})
@@ -846,6 +941,61 @@ export default function PagarPage() {
     } finally {
       setSavingBaixa(false)
     }
+  }
+
+  async function cancelarBaixa(l: Lancamento) {
+    if (!l.id || !l.parcela_id) return
+    const ok = window.confirm('Cancelar a baixa desta parcela? O lançamento voltará para pendente e o movimento bancário gerado pela baixa será removido.')
+    if (!ok) return
+
+    const key = `${l.id}-${l.parcela_id}`
+    setCancelandoBaixa(key)
+    try {
+      await apiClient.put(`/financeiro/lancamentos-cp/${l.id}/parcelas/${l.parcela_id}/cancelar-baixa`)
+      load()
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao cancelar baixa')
+    } finally {
+      setCancelandoBaixa(null)
+    }
+  }
+
+  function getValorFinalLancamento(l: Lancamento) {
+    const valor = Number(l.parcela_valor ?? l.valor_total ?? 0)
+    const calculado = valor
+      + Number(l.parcela_acrescimo || 0)
+      + Number(l.parcela_multa || 0)
+      + Number(l.parcela_juros || 0)
+      - Number(l.parcela_desconto || 0)
+    const final = l.parcela_valor_final === null || l.parcela_valor_final === undefined
+      ? calculado
+      : Number(l.parcela_valor_final)
+    return Math.max(0, Number.isFinite(final) ? final : valor)
+  }
+
+  function hasAjustesLancamento(l: Lancamento) {
+    const valor = Number(l.parcela_valor ?? l.valor_total ?? 0)
+    const final = getValorFinalLancamento(l)
+    return Number(l.parcela_acrescimo || 0) !== 0
+      || Number(l.parcela_multa || 0) !== 0
+      || Number(l.parcela_juros || 0) !== 0
+      || Number(l.parcela_desconto || 0) !== 0
+      || Math.abs(final - valor) > 0.009
+  }
+
+  function getBaixaValor(l: Lancamento, key: 'acrescimo' | 'desconto' | 'juros' | 'multa' | 'valor_final') {
+    const baixaKey = `parcela_baixa_${key}` as keyof Lancamento
+    const baixaValue = l[baixaKey]
+    if (baixaValue !== null && baixaValue !== undefined) return Number(baixaValue || 0)
+
+    // Compatibilidade com baixas antigas, antes da separação entre valor do lançamento e valor da baixa.
+    if ((l.parcela_status || l.status) === 'pago') {
+      const legacyKey = key === 'valor_final' ? 'parcela_valor_final' : `parcela_${key}`
+      const legacyValue = l[legacyKey as keyof Lancamento]
+      if (legacyValue !== null && legacyValue !== undefined) return Number(legacyValue || 0)
+    }
+
+    return 0
   }
 
   const inp = 'w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100'
@@ -906,13 +1056,14 @@ export default function PagarPage() {
 
           <div>
             <label className="block text-[11px] font-medium text-slate-500 mb-1">Fornecedor</label>
-            <select value={fFornecedorFiltro} onChange={e => setFFornecedorFiltro(e.target.value)}
-              className="w-full text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
-              <option value="">Todos fornecedores</option>
-              {fornecedores
-                .filter(f => !fEmpresa || f.empresa === fEmpresa || f.empresa === 'TODOS')
-                .map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
-            </select>
+            <FornecedorSelect
+              value={fFornecedorFiltro}
+              onChange={setFFornecedorFiltro}
+              fornecedores={fornecedores.filter(f => !fEmpresa || f.empresa === fEmpresa || f.empresa === 'TODOS')}
+              inp="w-full text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700 focus:outline-none focus:border-blue-400"
+              placeholder="Todos fornecedores"
+              emptyLabel="Todos fornecedores"
+            />
           </div>
 
           <div>
@@ -996,8 +1147,11 @@ export default function PagarPage() {
               {!loading && sortedLista.map(l => {
                 const statusParcela = l.parcela_status || l.status
                 const valorParcela = Number(l.parcela_valor ?? l.valor_total ?? 0)
-                const valorFinalBaixa = Number(l.parcela_valor_final ?? valorParcela)
+                const valorFinalLancamento = getValorFinalLancamento(l)
+                const valorFinalBaixa = getBaixaValor(l, 'valor_final') || valorFinalLancamento
                 const mostrarBaixa = statusParcela === 'pago'
+                const mostrarAjustesLancamento = hasAjustesLancamento(l)
+                const cancelKey = `${l.id}-${l.parcela_id}`
                 return (
                   <tr key={`${l.id}-${l.parcela_id || l.parcela_numero || 'sem-parcela'}`} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                     <td className="px-3 py-2.5">
@@ -1015,7 +1169,16 @@ export default function PagarPage() {
                     <td className="px-3 py-2 text-center text-slate-600 whitespace-nowrap">
                       {l.parcela_numero ? `${l.parcela_numero}/${l.qtd_parcelas || 1}` : '—'}
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-800 whitespace-nowrap">{R$(valorParcela)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-800 whitespace-nowrap align-top">
+                      <p className="font-semibold">{R$(valorFinalLancamento)}</p>
+                      {mostrarAjustesLancamento && (
+                        <div className="mt-1 space-y-0.5 text-[10px] leading-4 text-slate-400 font-normal">
+                          <p>Base: {R$(valorParcela)}</p>
+                          <p>Multa {R$(Number(l.parcela_multa || 0))} · Juros {R$(Number(l.parcela_juros || 0))}</p>
+                          <p>Desc. {R$(Number(l.parcela_desconto || 0))} · Acrésc. {R$(Number(l.parcela_acrescimo || 0))}</p>
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.dt_emissao)}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.parcela_vencimento || l.proximo_venc)}</td>
                     <td className="px-3 py-2 min-w-[210px] text-slate-500 align-top">
@@ -1023,9 +1186,9 @@ export default function PagarPage() {
                       {mostrarBaixa && (
                         <div className="mt-1 space-y-0.5 text-[10px] leading-4 text-slate-400">
                           <p>Forma: {l.parcela_forma_pagamento || '—'}</p>
-                          <p>Multa {R$(Number(l.parcela_multa || 0))} · Juros {R$(Number(l.parcela_juros || 0))}</p>
-                          <p>Desc. {R$(Number(l.parcela_desconto || 0))} · Acrésc. {R$(Number(l.parcela_acrescimo || 0))}</p>
-                          <p className="font-semibold text-slate-500">Valor final: {R$(valorFinalBaixa)}</p>
+                          <p>Multa {R$(getBaixaValor(l, 'multa'))} · Juros {R$(getBaixaValor(l, 'juros'))}</p>
+                          <p>Desc. {R$(getBaixaValor(l, 'desconto'))} · Acrésc. {R$(getBaixaValor(l, 'acrescimo'))}</p>
+                          <p className="font-semibold text-slate-500">Valor final da baixa: {R$(valorFinalBaixa)}</p>
                           {l.parcela_motivo_baixa && <p className="truncate max-w-[190px]">Motivo: {l.parcela_motivo_baixa}</p>}
                         </div>
                       )}
@@ -1042,6 +1205,17 @@ export default function PagarPage() {
                             className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100"
                           >
                             Dar baixa
+                          </button>
+                        )}
+                        {statusParcela === 'pago' && l.parcela_id && (
+                          <button
+                            type="button"
+                            onClick={() => cancelarBaixa(l)}
+                            disabled={cancelandoBaixa === cancelKey}
+                            className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-60"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            {cancelandoBaixa === cancelKey ? 'Cancelando…' : 'Cancelar baixa'}
                           </button>
                         )}
                         <div className="flex items-center gap-1 mt-1">
@@ -1100,12 +1274,12 @@ export default function PagarPage() {
                         + Novo fornecedor
                       </button>
                     </div>
-                    <select className={inp} value={fForn} onChange={e => setFForn(e.target.value)}>
-                      <option value="">Selecione (opcional)</option>
-                      {fornecedores
-                        .filter(f => !fEmp || f.empresa === fEmp || f.empresa === 'TODOS')
-                        .map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
-                    </select>
+                    <FornecedorSelect
+                      value={fForn}
+                      onChange={setFForn}
+                      fornecedores={fornecedores.filter(f => !fEmp || f.empresa === fEmp || f.empresa === 'TODOS')}
+                      inp={inp}
+                    />
                   </div>
                   <div className="col-span-2">
                     <F label="Histórico" name="historico" required>
