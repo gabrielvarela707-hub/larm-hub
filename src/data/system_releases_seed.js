@@ -918,6 +918,41 @@ const SYSTEM_RELEASES = [
       ],
     },
   },
+  {
+    version: "0.2.3",
+    title: "Financeiro — importação de fornecedores por planilha",
+    description:
+      "Adicionado fluxo de importação de fornecedores por planilha no módulo Financeiro, com modelo padronizado, ciclos de até 100 registros e atualização automática quando o CNPJ/CPF já existir.",
+    frontend_version: "0.2.3",
+    backend_version: "0.2.3",
+    released_at: "2026-05-25T14:30:00.000Z",
+    changes: [
+      "Adicionado botão Importar fornecedores na tela Financeiro > Fornecedores.",
+      "Adicionado botão Baixar modelo da planilha com colunas padronizadas para o cliente preencher.",
+      "Implementada leitura de arquivos .xlsx, .xls e .csv no frontend usando a dependência XLSX já existente no projeto.",
+      "A importação envia fornecedores válidos ao backend em ciclos de 100 registros para evitar carga desnecessária.",
+      "Criado endpoint POST /financeiro/fornecedores/importar para criação e atualização em lote.",
+      "Quando o CNPJ/CPF já existe, o fornecedor é atualizado; quando não existe, um novo cadastro é criado.",
+      "Adicionado resumo de importação com criados, atualizados, ignorados e erros por linha.",
+      "Atualizada versão técnica do front-end e backend para 0.2.3.",
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "XLSX",
+        "Financeiro Fornecedores v0.2.3",
+      ],
+      backend: ["Node.js", "Express.js", "JWT", "REST API Financeiro", "PM2", "Auditoria"],
+      database: ["PostgreSQL", "fin_fornecedores", "hub_system_releases"],
+      integrations: [
+        "Importação XLSX/CSV local",
+        "Changelog versionado no banco",
+      ],
+    },
+  },
 ];
 
 module.exports = { SYSTEM_RELEASES };

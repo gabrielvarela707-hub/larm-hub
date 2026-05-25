@@ -21,7 +21,10 @@ import {
   CheckCircle2,
   Clock,
   TrendingDown,
+  Upload,
+  Download,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import { apiClient } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
 import BancoSearchSelect from "@/components/financeiro/BancoSearchSelect";
@@ -69,6 +72,35 @@ interface HistoricoResumo {
   itens: HistoricoItem[];
 }
 
+interface ImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+}
+
+type FornecedorImportField =
+  | "razao_social"
+  | "nome_fantasia"
+  | "cnpj_cpf"
+  | "tipo_pessoa"
+  | "categoria"
+  | "empresa"
+  | "email"
+  | "telefone"
+  | "cep"
+  | "endereco"
+  | "cidade_uf"
+  | "codigo_banco"
+  | "banco_nome"
+  | "agencia"
+  | "conta"
+  | "digito"
+  | "tipo_conta"
+  | "chave_pix"
+  | "obs"
+  | "ativo";
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const EMPTY: Partial<Fornecedor> = {
   razao_social: "",
@@ -102,6 +134,78 @@ const CATEGORIAS = [
   "Órgão Público",
   "Outros",
 ];
+
+
+const IMPORT_COLUMNS: { label: string; key: FornecedorImportField; required?: boolean; example: string }[] = [
+  { label: "Razão Social *", key: "razao_social", required: true, example: "Fornecedor Exemplo LTDA" },
+  { label: "Nome Fantasia", key: "nome_fantasia", example: "Fornecedor Exemplo" },
+  { label: "CNPJ/CPF", key: "cnpj_cpf", example: "12.345.678/0001-90" },
+  { label: "Tipo Pessoa", key: "tipo_pessoa", example: "PJ" },
+  { label: "Categoria", key: "categoria", example: "Serviços" },
+  { label: "Empresa *", key: "empresa", required: true, example: "TODOS" },
+  { label: "E-mail", key: "email", example: "financeiro@fornecedor.com.br" },
+  { label: "Telefone", key: "telefone", example: "(11) 99999-9999" },
+  { label: "CEP", key: "cep", example: "01001-000" },
+  { label: "Endereço", key: "endereco", example: "Rua Exemplo, 100" },
+  { label: "Cidade/UF", key: "cidade_uf", example: "São Paulo - SP" },
+  { label: "Código Banco", key: "codigo_banco", example: "341" },
+  { label: "Banco", key: "banco_nome", example: "Itaú" },
+  { label: "Agência", key: "agencia", example: "1234" },
+  { label: "Conta", key: "conta", example: "12345" },
+  { label: "Dígito", key: "digito", example: "6" },
+  { label: "Tipo Conta", key: "tipo_conta", example: "Corrente" },
+  { label: "Chave PIX", key: "chave_pix", example: "12.345.678/0001-90" },
+  { label: "Observações", key: "obs", example: "Fornecedor importado por planilha" },
+  { label: "Ativo", key: "ativo", example: "Sim" },
+];
+
+const IMPORT_HEADER_ALIASES: Record<string, FornecedorImportField> = {
+  razaosocial: "razao_social",
+  razaosocialfantasia: "razao_social",
+  razaosocialobrigatorio: "razao_social",
+  razao_social: "razao_social",
+  nomefantasia: "nome_fantasia",
+  fantasia: "nome_fantasia",
+  nome_fantasia: "nome_fantasia",
+  cnpjcpf: "cnpj_cpf",
+  cnpj: "cnpj_cpf",
+  cpf: "cnpj_cpf",
+  cnpj_cpf: "cnpj_cpf",
+  tipopessoa: "tipo_pessoa",
+  tipo: "tipo_pessoa",
+  tipo_pessoa: "tipo_pessoa",
+  categoria: "categoria",
+  empresa: "empresa",
+  empresaobrigatorio: "empresa",
+  email: "email",
+  "e-mail": "email",
+  telefone: "telefone",
+  celular: "telefone",
+  cep: "cep",
+  endereco: "endereco",
+  cidadeuf: "cidade_uf",
+  cidade: "cidade_uf",
+  cidade_uf: "cidade_uf",
+  codigobanco: "codigo_banco",
+  codbanco: "codigo_banco",
+  codigo_banco: "codigo_banco",
+  banco: "banco_nome",
+  banconome: "banco_nome",
+  banco_nome: "banco_nome",
+  agencia: "agencia",
+  conta: "conta",
+  digito: "digito",
+  tipoConta: "tipo_conta",
+  tipoconta: "tipo_conta",
+  tipo_conta: "tipo_conta",
+  chavepix: "chave_pix",
+  pix: "chave_pix",
+  chave_pix: "chave_pix",
+  observacoes: "obs",
+  obs: "obs",
+  ativo: "ativo",
+  status: "ativo",
+};
 
 // ─── Masks ────────────────────────────────────────────────────────────────────
 function maskCNPJ(v: string) {
@@ -137,6 +241,69 @@ function onlyDigits(v: string) {
 }
 function fmtMoeda(v: number) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+
+function normalizeImportHeader(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[*()/.\\\s-]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function cellToString(value: unknown) {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toLocaleDateString("pt-BR");
+  return String(value).trim();
+}
+
+function parseImportAtivo(value: string) {
+  const normalized = normalizeImportHeader(value);
+  if (!normalized) return true;
+  return !["nao", "n", "0", "false", "falso", "inativo", "inativa"].includes(normalized);
+}
+
+function normalizeImportRow(row: Record<string, unknown>) {
+  const mapped: Partial<Record<FornecedorImportField, string>> = {};
+
+  Object.entries(row).forEach(([header, value]) => {
+    const key = IMPORT_HEADER_ALIASES[normalizeImportHeader(header)];
+    if (key) mapped[key] = cellToString(value);
+  });
+
+  const docDigits = onlyDigits(mapped.cnpj_cpf || "");
+  const tipoInformado = (mapped.tipo_pessoa || "").toUpperCase().trim();
+  const tipoPessoa = tipoInformado === "PF" || tipoInformado === "PJ"
+    ? tipoInformado
+    : docDigits.length === 11
+      ? "PF"
+      : "PJ";
+  const tipoConta = /poup/i.test(mapped.tipo_conta || "") ? "Poupança" : "Corrente";
+
+  return {
+    razao_social: mapped.razao_social || "",
+    nome_fantasia: mapped.nome_fantasia || "",
+    cnpj_cpf: mapped.cnpj_cpf || "",
+    tipo_pessoa: tipoPessoa,
+    categoria: mapped.categoria || "",
+    empresa: (mapped.empresa || "TODOS").toUpperCase(),
+    email: mapped.email || "",
+    telefone: mapped.telefone || "",
+    cep: mapped.cep || "",
+    endereco: mapped.endereco || "",
+    cidade_uf: mapped.cidade_uf || "",
+    codigo_banco: mapped.codigo_banco || "",
+    banco_nome: mapped.banco_nome || "",
+    agencia: mapped.agencia || "",
+    conta: mapped.conta || "",
+    digito: mapped.digito || "",
+    tipo_conta: tipoConta,
+    chave_pix: mapped.chave_pix || "",
+    obs: mapped.obs || "",
+    ativo: parseImportAtivo(mapped.ativo || "Sim"),
+  } satisfies Partial<Fornecedor>;
 }
 
 // ─── MaskedInput ─────────────────────────────────────────────────────────────
@@ -276,6 +443,15 @@ export default function FornecedoresPage() {
   const [fBusca, setFBusca] = useState("");
   const [fEmpresa, setFEmpresa] = useState("");
   const [fCategoria, setFCategoria] = useState("");
+
+  // Importação
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [showImport, setShowImport] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importFileName, setImportFileName] = useState("");
+  const [importRows, setImportRows] = useState<Partial<Fornecedor>[]>([]);
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
   // Prevent re-render on every keystroke: use uncontrolled input + ref pattern for masks
 
@@ -476,6 +652,108 @@ export default function FornecedoresPage() {
     } catch {}
   }
 
+  function resetImportState() {
+    setImportFileName("");
+    setImportRows([]);
+    setImportErrors([]);
+    setImportResult(null);
+    if (importInputRef.current) importInputRef.current.value = "";
+  }
+
+  function closeImport() {
+    setShowImport(false);
+    resetImportState();
+  }
+
+  function downloadModeloFornecedores() {
+    const header = IMPORT_COLUMNS.map((c) => c.label);
+    const example = IMPORT_COLUMNS.map((c) => c.example);
+    const worksheet = XLSX.utils.aoa_to_sheet([header, example]);
+    worksheet["!cols"] = IMPORT_COLUMNS.map((c) => ({ wch: Math.max(16, c.label.length + 4) }));
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Fornecedores");
+    XLSX.writeFile(workbook, "modelo_importacao_fornecedores.xlsx");
+  }
+
+  async function handleImportFile(file?: File) {
+    resetImportState();
+    if (!file) return;
+
+    setImportFileName(file.name);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array", raw: false });
+      const firstSheet = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheet];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
+        defval: "",
+      });
+
+      const mappedRows: Partial<Fornecedor>[] = [];
+      const rowErrors: string[] = [];
+
+      rawRows.forEach((row, idx) => {
+        const excelLine = idx + 2;
+        const normalized = normalizeImportRow(row);
+        const hasAnyValue = Object.values(normalized).some((value) => String(value ?? "").trim() !== "");
+        if (!hasAnyValue) return;
+
+        if (!normalized.razao_social?.trim()) {
+          rowErrors.push(`Linha ${excelLine}: Razão Social é obrigatória.`);
+          return;
+        }
+
+        if (!normalized.empresa?.trim()) {
+          rowErrors.push(`Linha ${excelLine}: Empresa é obrigatória.`);
+          return;
+        }
+
+        mappedRows.push(normalized);
+      });
+
+      setImportRows(mappedRows);
+      setImportErrors(rowErrors);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Arquivo inválido";
+      setImportErrors([`Não foi possível ler a planilha: ${msg}`]);
+    }
+  }
+
+  async function importarFornecedores() {
+    if (!importRows.length) {
+      setImportErrors(["Selecione uma planilha com fornecedores válidos antes de importar."]);
+      return;
+    }
+
+    setImporting(true);
+    setImportResult(null);
+    const result: ImportResult = { created: 0, updated: 0, skipped: 0, errors: [] };
+
+    try {
+      for (let i = 0; i < importRows.length; i += 100) {
+        const chunk = importRows.slice(i, i + 100);
+        const response = await apiClient.post("/financeiro/fornecedores/importar", {
+          fornecedores: chunk,
+        });
+        const data = response.data?.data || {};
+        result.created += Number(data.created || 0);
+        result.updated += Number(data.updated || 0);
+        result.skipped += Number(data.skipped || 0);
+        result.errors.push(...(Array.isArray(data.errors) ? data.errors : []));
+      }
+
+      setImportResult(result);
+      await load();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message ||
+        (err instanceof Error ? err.message : "Erro ao importar fornecedores");
+      setImportErrors([msg]);
+    } finally {
+      setImporting(false);
+    }
+  }
+
   // ── Helpers UI ─────────────────────────────────────────────────────────────
   // Field wrapper (defined at module level below to avoid re-render on focus loss)
 
@@ -492,12 +770,20 @@ export default function FornecedoresPage() {
           <h1 className="text-xl font-bold text-slate-800">Fornecedores</h1>
           <p className="text-sm text-slate-500 mt-0.5">{total} cadastros</p>
         </div>
-        <button
-          onClick={openNew}
-          className="flex items-center gap-2 px-4 py-2 bg-[#1e3a5f] hover:bg-[#162d4a] text-white text-sm font-semibold rounded-lg transition-colors"
-        >
-          <Plus className="w-4 h-4" /> Novo Fornecedor
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setShowImport(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-[#1e3a5f] border border-slate-200 text-sm font-semibold rounded-lg transition-colors"
+          >
+            <Upload className="w-4 h-4" /> Importar fornecedores
+          </button>
+          <button
+            onClick={openNew}
+            className="flex items-center gap-2 px-4 py-2 bg-[#1e3a5f] hover:bg-[#162d4a] text-white text-sm font-semibold rounded-lg transition-colors"
+          >
+            <Plus className="w-4 h-4" /> Novo Fornecedor
+          </button>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -644,6 +930,140 @@ export default function FornecedoresPage() {
           </table>
         </div>
       </div>
+
+      {/* ── Modal Importação ────────────────────────────────────────────────── */}
+      {showImport && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 pt-8 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl mb-8">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <div>
+                <h2 className="text-base font-bold text-slate-800">Importar Fornecedores</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Use o modelo da planilha. A importação é enviada em ciclos de 100 fornecedores.
+                </p>
+              </div>
+              <button
+                onClick={closeImport}
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-800">
+                <p className="font-semibold mb-1">Modelo obrigatório</p>
+                <p>
+                  Campos obrigatórios: <strong>Razão Social</strong> e <strong>Empresa</strong>. Se o CNPJ/CPF já existir,
+                  o sistema atualiza o fornecedor; se não existir, cria um novo cadastro.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={downloadModeloFornecedores}
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-sm font-semibold rounded-lg transition-colors"
+                >
+                  <Download className="w-4 h-4" /> Baixar modelo da planilha
+                </button>
+                <label className="flex items-center justify-center gap-2 px-4 py-2 bg-[#1e3a5f] hover:bg-[#162d4a] text-white text-sm font-semibold rounded-lg transition-colors cursor-pointer">
+                  <Upload className="w-4 h-4" /> Selecionar planilha
+                  <input
+                    ref={importInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                    onChange={(e) => handleImportFile(e.target.files?.[0])}
+                  />
+                </label>
+              </div>
+
+              <div className="rounded-xl border border-slate-100 overflow-hidden">
+                <div className="bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600">
+                  Colunas aceitas no modelo
+                </div>
+                <div className="p-3 flex flex-wrap gap-2">
+                  {IMPORT_COLUMNS.map((col) => (
+                    <span
+                      key={col.key}
+                      className={cn(
+                        "px-2 py-1 rounded-full text-[10px] border",
+                        col.required
+                          ? "bg-red-50 text-red-700 border-red-100"
+                          : "bg-slate-50 text-slate-600 border-slate-100",
+                      )}
+                    >
+                      {col.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {importFileName && (
+                <div className="rounded-xl border border-slate-100 px-4 py-3 text-sm text-slate-600">
+                  <p>
+                    Arquivo: <strong>{importFileName}</strong>
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Fornecedores válidos encontrados: <strong>{importRows.length}</strong>
+                  </p>
+                </div>
+              )}
+
+              {importErrors.length > 0 && (
+                <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-xs text-red-700 max-h-32 overflow-y-auto">
+                  <p className="font-semibold mb-1">Atenção</p>
+                  {importErrors.slice(0, 12).map((error) => (
+                    <p key={error}>• {error}</p>
+                  ))}
+                  {importErrors.length > 12 && <p>• ...</p>}
+                </div>
+              )}
+
+              {importResult && (
+                <div className="rounded-xl border border-green-100 bg-green-50 px-4 py-3 text-sm text-green-700">
+                  <p className="font-semibold">Importação concluída</p>
+                  <p className="text-xs mt-1">
+                    Criados: <strong>{importResult.created}</strong> · Atualizados: <strong>{importResult.updated}</strong> · Ignorados: <strong>{importResult.skipped}</strong>
+                  </p>
+                  {importResult.errors.length > 0 && (
+                    <div className="mt-2 text-xs text-red-600">
+                      {importResult.errors.slice(0, 8).map((error) => (
+                        <p key={error}>• {error}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
+              <button
+                onClick={closeImport}
+                className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                Fechar
+              </button>
+              <button
+                onClick={importarFornecedores}
+                disabled={importing || importRows.length === 0}
+                className="flex items-center gap-2 px-5 py-2 text-sm font-semibold bg-[#1e3a5f] hover:bg-[#162d4a] text-white rounded-lg transition-colors disabled:opacity-60"
+              >
+                {importing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Importando…
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4" /> Importar {importRows.length || ""}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal Form ─────────────────────────────────────────────────────── */}
       {showForm && (
