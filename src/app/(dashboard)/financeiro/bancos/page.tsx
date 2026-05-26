@@ -2,7 +2,7 @@
 
 /**
  * src/app/(dashboard)/financeiro/bancos/page.tsx
- * → lotemobile2/src/app/(dashboard)/financeiro/bancos/page.tsx
+ * → larmhub-web/src/app/(dashboard)/financeiro/bancos/page.tsx
  */
 
 import { useState, useEffect, useCallback } from "react";

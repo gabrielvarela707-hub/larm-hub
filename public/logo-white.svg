@@ -27,6 +27,6 @@
   <path d="M33 10.5 L33 13.5" stroke="white" stroke-width="1.2" stroke-linecap="round"/>
   <text x="52" y="16" font-family="system-ui,sans-serif" font-size="8.5" font-weight="600" fill="rgba(255,255,255,0.5)" letter-spacing="2">LUCKY</text>
   <text x="50" y="32" font-family="system-ui,sans-serif" font-size="16" font-weight="700" fill="white" letter-spacing="-0.3">
-    <tspan fill="#93C5FD">Lote</tspan><tspan fill="white">Mobile</tspan>
+    <tspan fill="#93C5FD">Larm</tspan><tspan fill="white">Hub</tspan>
   </text>
 </svg>

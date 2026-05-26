@@ -20,7 +20,7 @@ type PortalId = 'santa_clara' | 'larm'
 
 const PORTAL_OPTIONS: { id: PortalId; label: string; description: string }[] = [
   { id: 'santa_clara', label: 'Santa Clara HUB', description: 'Loteadora, corretores, clientes e boletos' },
-  { id: 'larm', label: 'LARM HUB', description: 'Governança, financeiro e operações' },
+  { id: 'larm', label: 'LarmHub', description: 'Governança, financeiro e operações' },
 ]
 
 function normalizePortalAccess(value?: PortalId[] | string[] | null): PortalId[] {
@@ -320,7 +320,7 @@ export default function ConfiguracoesPage() {
   const logoInputRef        = useRef<HTMLInputElement>(null)
 
   // Visual
-  const [logoText,     setLogoText]  = useState(config.logoText || 'LoteMobile')
+  const [logoText,     setLogoText]  = useState(config.logoText || 'LarmHub')
   const [primaryColor, setPrimary]   = useState(config.primaryColor || '#2563EB')
   const [sidebarColor, setSidebar]   = useState(config.sidebarColor || '#0D1B2A')
   const [logoPreview,  setLogoPreview] = useState(config.logoUrl || '')
@@ -329,7 +329,7 @@ export default function ConfiguracoesPage() {
   const hydrated = useTenantConfig(s => s.hydrated)
   useEffect(() => {
     if (!hydrated) return
-    setLogoText(config.logoText || 'LoteMobile')
+    setLogoText(config.logoText || 'LarmHub')
     setLogoPreview(config.logoUrl || '')
     setPrimary(config.primaryColor || '#2563EB')
     setSidebar(config.sidebarColor || '#0D1B2A')
@@ -1113,7 +1113,7 @@ export default function ConfiguracoesPage() {
                           <div className="w-5 h-5 rounded flex items-center justify-center" style={{ background: primaryColor }}>
                             <MapPin className="w-3 h-3 text-white" />
                           </div>
-                          <span className="text-white text-xs font-semibold truncate">{logoText || 'LoteMobile'}</span>
+                          <span className="text-white text-xs font-semibold truncate">{logoText || 'LarmHub'}</span>
                         </>
                       )}
                     </div>
@@ -1178,7 +1178,7 @@ export default function ConfiguracoesPage() {
                   </div>
                 </Field>
                 <Field label="Nome da plataforma" sub="Aparece quando nao ha logo">
-                  <Input value={logoText} onChange={e => setLogoText(e.target.value)} placeholder="LoteMobile" />
+                  <Input value={logoText} onChange={e => setLogoText(e.target.value)} placeholder="LarmHub" />
                 </Field>
               </Section>
 
@@ -2412,7 +2412,7 @@ export default function ConfiguracoesPage() {
           {tab === 'crm_integ' && (
             <>
               <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800 leading-relaxed">
-                <strong>Estrategia de CRM:</strong> o LoteMobile cria e qualifica os leads, envia para o CRM externo via API e usa as automacoes nativas de cada plataforma. Voce escolhe a ferramenta que o cliente ja usa ou prefere.
+                <strong>Estrategia de CRM:</strong> o LarmHub cria e qualifica os leads, envia para o CRM externo via API e usa as automacoes nativas de cada plataforma. Voce escolhe a ferramenta que o cliente ja usa ou prefere.
                 <div className="mt-2 rounded-lg bg-white/70 px-3 py-2 text-xs text-blue-900">
                   O CRM do sistema <strong>nao dispara e-mails de marketing</strong>. Esse fluxo fica no FluentCRM, RD Station ou HubSpot. Aqui estamos preparando a camada de <strong>SMS via AWS SNS</strong> e os repasses de lead.
                 </div>
@@ -2648,7 +2648,7 @@ export default function ConfiguracoesPage() {
               <Field label="Subdominio padrao">
                 <div className="flex items-center gap-1">
                   <Input defaultValue="seuempresa" className="w-36" />
-                  <span className="text-slate-500 text-sm">.lotemobile.com.br</span>
+                  <span className="text-slate-500 text-sm">.larmhub.com.br</span>
                 </div>
               </Field>
               <Field label="Dominio proprio" sub="Configure CNAME no DNS">

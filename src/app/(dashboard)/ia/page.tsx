@@ -16,7 +16,7 @@ const INITIAL_MESSAGES: ChatMessage[] = [
   {
     id: 'sys_1',
     role: 'assistant',
-    content: `Olá! Sou o **Chat IA** do LoteMobile — sua inteligência artificial integrada aos dados reais do seu negócio.
+    content: `Olá! Sou o **Chat IA** do LarmHub — sua inteligência artificial integrada aos dados reais do seu negócio.
 
 Posso te ajudar com análises financeiras, status de leads, previsões de caixa, inadimplência e muito mais. O que você quer saber?`,
     createdAt: new Date().toISOString(),

@@ -2,7 +2,7 @@
 
 /**
  * src/app/(dashboard)/financeiro/fornecedores/page.tsx
- * → lotemobile2/src/app/(dashboard)/financeiro/fornecedores/page.tsx
+ * → larmhub-web/src/app/(dashboard)/financeiro/fornecedores/page.tsx
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";

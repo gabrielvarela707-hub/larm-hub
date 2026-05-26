@@ -1,4 +1,4 @@
-# LARM HUB — Plataforma Integrada de Gestão
+# LarmHub — Plataforma Integrada de Gestão
 
 > Plataforma white-label para gestão de loteamentos, CRM, financeiro, contratos, obras e governança corporativa.
 
@@ -12,22 +12,22 @@
 
 ## Visão Geral
 
-O LARM HUB é uma plataforma SaaS multi-tenant construída para o Grupo LARM, com foco em loteamentos residenciais e gestão corporativa. Cada tenant (empreendimento ou empresa) possui identidade visual, usuários, permissões e dados totalmente isolados.
+O LarmHub é uma plataforma SaaS multi-tenant construída para o Grupo LARM, com foco em loteamentos residenciais e gestão corporativa. Cada tenant (empreendimento ou empresa) possui identidade visual, usuários, permissões e dados totalmente isolados.
 
 A plataforma é dividida em dois hubs:
 
 | Hub | Público | Módulos principais |
 |---|---|---|
 | **Santa Clara HUB** | Corretores, clientes, equipe operacional | Empreendimentos, CRM, Contratos, Financeiro, Mapa |
-| **LARM HUB** | Holding, controladoria, diretoria | Governança, Financeiro Consolidado, Operações, Estratégia |
+| **LarmHub** | Holding, controladoria, diretoria | Governança, Financeiro Consolidado, Operações, Estratégia |
 
 ---
 
 ## Arquitetura
 
 ```
-lotemobile2/          → Frontend (Next.js 15 App Router)
-lotemobile-api/       → Backend  (Node.js + Express)
+larmhub-web/          → Frontend (Next.js 15 App Router)
+larmhub-api/       → Backend  (Node.js + Express)
 PostgreSQL 16         → Banco de dados
 PM2                   → Process manager (produção)
 Vercel                → Deploy frontend
@@ -237,10 +237,10 @@ PORT=3001
 FRONTEND_URL=https://larm-hub.vercel.app
 
 # CORS
-CORS_ORIGINS=https://larm-hub.vercel.app,https://lotemobile2.vercel.app,https://hub.loteamentosantaclara.imb.br,http://localhost:3000
+CORS_ORIGINS=https://larm-hub.vercel.app,https://larmhub-web.vercel.app,https://hub.loteamentosantaclara.imb.br,http://localhost:3000
 
 # Banco de dados
-DATABASE_URL=postgresql://user:password@localhost:5432/lotemobile
+DATABASE_URL=postgresql://user:password@localhost:5432/larmhub
 
 # JWT
 JWT_SECRET=sua_chave_secreta_aqui
@@ -269,7 +269,7 @@ NEXT_PUBLIC_GOOGLE_MAPS_KEY=sua_chave_google_maps   # fallback se não configura
 ### Backend
 
 ```bash
-cd lotemobile-api
+cd larmhub-api
 npm install
 
 # Configurar .env (ver seção acima)
@@ -285,13 +285,13 @@ node scripts/seed_tipos_documento.js
 npm run dev
 
 # Produção
-pm2 start src/server.js --name lotemobile-api
+pm2 start src/server.js --name larmhub-api
 ```
 
 ### Frontend
 
 ```bash
-cd lotemobile2
+cd larmhub-web
 npm install
 
 # Configurar .env.local (ver seção acima)
@@ -328,14 +328,14 @@ npm start
 
 ```bash
 # Clone e instale
-git clone https://github.com/seu-repo/lotemobile-api
-cd lotemobile-api && npm install
+git clone https://github.com/seu-repo/larmhub-api
+cd larmhub-api && npm install
 
 # Configure .env e rode as migrations
 node scripts/setup_all.js
 
 # Inicie com PM2
-pm2 start src/server.js --name lotemobile-api
+pm2 start src/server.js --name larmhub-api
 pm2 save
 pm2 startup
 
@@ -369,7 +369,7 @@ pm2 startup
 ## Estrutura de Pastas
 
 ```
-lotemobile2/
+larmhub-web/
 ├── src/
 │   ├── app/
 │   │   ├── (auth)/              # Login, convite, troca de senha
@@ -407,7 +407,7 @@ lotemobile2/
 │   │   └── tenant-config-store.ts  # Zustand: config white-label
 │   └── middleware.ts            # Proteção de rotas (Next.js)
 
-lotemobile-api/
+larmhub-api/
 ├── src/
 │   ├── routes/
 │   │   ├── auth.js

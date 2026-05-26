@@ -2,7 +2,7 @@
 
 /**
  * src/components/dynamic-title.tsx
- * → lotemobile2/src/components/dynamic-title.tsx  (arquivo novo)
+ * → larmhub-web/src/components/dynamic-title.tsx  (arquivo novo)
  *
  * Atualiza o <title> da aba com o nome da plataforma configurado pelo tenant.
  * Roda no cliente após hidratação — compatível com Next.js App Router.
@@ -16,7 +16,7 @@ export default function DynamicTitle() {
   const hydrated = useTenantConfig(s => s.hydrated)
 
   useEffect(() => {
-    if (!hydrated || !logoText || logoText === 'LoteMobile') return
+    if (!hydrated || !logoText || logoText === 'LarmHub') return
     // Atualiza o título padrão — preserva páginas que já têm título próprio
     if (document.title === 'HUB — Plataforma Integrada' || document.title.endsWith('| HUB')) {
       document.title = document.title.replace('HUB', logoText)

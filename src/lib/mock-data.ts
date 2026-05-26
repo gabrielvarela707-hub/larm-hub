@@ -9,8 +9,8 @@ import type {
 
 export const mockTenant: Tenant = {
   id: 'tenant_001',
-  slug: 'lotemobile',
-  name: 'LoteMobile',
+  slug: 'larmhub',
+  name: 'LarmHub',
   domain: null,
   plan: 'premium',
   theme: {
@@ -18,13 +18,13 @@ export const mockTenant: Tenant = {
     secondaryColor: '#3B82F6',
     sidebarColor: '#0D1B2A',
     logoUrl: null,
-    logoText: 'LoteMobile',
+    logoText: 'LarmHub',
     faviconUrl: null,
     fontFamily: 'Geist',
     borderRadius: 'rounded',
   },
-  sesEmailFrom: 'noreply@lotemobile.com.br',
-  sesEmailName: 'LoteMobile',
+  sesEmailFrom: 'noreply@larmhub.com.br',
+  sesEmailName: 'LarmHub',
   createdAt: '2024-01-01T00:00:00Z',
 }
 
@@ -191,7 +191,7 @@ export const mockContasPagar: ContaPagar[] = [
   { id: 'cp_001', description: 'Serviço de pavimentação — medição #8', supplier: 'Construtora Alfa Ltda', category: 'Obras', value: 85000, dueDate: '2024-07-20', paidAt: null, status: 'pendente', attachmentUrl: null, empreendimentoId: 'emp_001' },
   { id: 'cp_002', description: 'Material elétrico — cabos e transformadores', supplier: 'Elétrica Omega', category: 'Obras', value: 32400, dueDate: '2024-07-15', paidAt: null, status: 'vencido', attachmentUrl: null, empreendimentoId: 'emp_001' },
   { id: 'cp_003', description: 'Comissão de vendas — julho/2024', supplier: 'Imobiliária Parceira XYZ', category: 'Comissão', value: 21000, dueDate: '2024-07-31', paidAt: null, status: 'pendente', attachmentUrl: null },
-  { id: 'cp_004', description: 'Plano LoteMobile — mensalidade agosto', supplier: 'LoteMobile Tecnologia', category: 'Software', value: 2590, dueDate: '2024-08-05', paidAt: null, status: 'pendente', attachmentUrl: null },
+  { id: 'cp_004', description: 'Plano LarmHub — mensalidade agosto', supplier: 'LarmHub Tecnologia', category: 'Software', value: 2590, dueDate: '2024-08-05', paidAt: null, status: 'pendente', attachmentUrl: null },
   { id: 'cp_005', description: 'Serviço de contabilidade — julho', supplier: 'Escritório Contábil Silva', category: 'Contabilidade', value: 3800, dueDate: '2024-07-10', paidAt: '2024-07-09T10:00:00Z', status: 'pago', attachmentUrl: '#' },
 ]
 

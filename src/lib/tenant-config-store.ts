@@ -2,7 +2,7 @@
 
 /**
  * src/lib/tenant-config-store.ts
- * → lotemobile2/src/lib/tenant-config-store.ts
+ * → larmhub-web/src/lib/tenant-config-store.ts
  */
 
 import { create } from 'zustand'
@@ -55,7 +55,7 @@ interface TenantConfigState {
 
 const DEFAULT: TenantConfig = {
   logoUrl: '',
-  logoText: 'LoteMobile',
+  logoText: 'LarmHub',
   primaryColor: '#2563EB',
   sidebarColor: '#0D1B2A',
   googleMapsKey: '',

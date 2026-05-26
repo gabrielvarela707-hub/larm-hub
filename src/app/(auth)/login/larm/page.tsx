@@ -128,7 +128,7 @@ export default function LarmLoginPage() {
               style={{ color: '#0D2137' }}
             >
               Bem-vindo ao{' '}
-              <span style={{ color: '#1B5E3B' }}>LARM HUB</span>
+              <span style={{ color: '#1B5E3B' }}>LarmHub</span>
             </h2>
 
             <form onSubmit={handleSubmit} className="space-y-3">

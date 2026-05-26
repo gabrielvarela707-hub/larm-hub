@@ -9,7 +9,7 @@ const SYSTEM_RELEASES = [
     version: "0.0.1",
     title: "Base de versionamento e auditoria operacional",
     description:
-      "Primeira versão controlada do LARM HUB / Santa Clara HUB com histórico técnico e changelog administrativo.",
+      "Primeira versão controlada do LarmHub / Santa Clara HUB com histórico técnico e changelog administrativo.",
     frontend_version: "0.0.1",
     backend_version: "0.0.1",
     released_at: "2026-05-17T00:00:00.000Z",
@@ -295,7 +295,7 @@ const SYSTEM_RELEASES = [
     version: "0.0.7",
     title: "Relatórios Tools por projeto",
     description:
-      "Separação dos relatórios legados por projeto/obra, com novos módulos de Projetos/Obras, Unidades do Estoque e Implantação/Plantas no LARM HUB.",
+      "Separação dos relatórios legados por projeto/obra, com novos módulos de Projetos/Obras, Unidades do Estoque e Implantação/Plantas no LarmHub.",
     frontend_version: "0.0.7",
     backend_version: "0.0.7",
     released_at: "2026-05-17T08:00:00.000Z",
@@ -990,6 +990,39 @@ const SYSTEM_RELEASES = [
       integrations: [
         "Movimento Bancário integrado às contas bancárias",
         "Changelog versionado no banco",
+      ],
+    },
+  },
+
+  {
+    version: "0.2.5",
+    title: "Identidade — padronização LarmHub",
+    description:
+      "Remoção das referências antigas de marca no front-end, backend, configurações padrão, documentação técnica e mensagens do sistema, padronizando a identidade como LarmHub.",
+    frontend_version: "0.2.5",
+    backend_version: "0.2.5",
+    released_at: "2026-05-26T00:00:00.000Z",
+    changes: [
+      "Substituídas as ocorrências textuais da marca antiga por LarmHub em telas, defaults, mensagens, seeds, documentação e arquivos de configuração.",
+      "Atualizados os textos visíveis do logo SVG principal e do logo branco para exibir LarmHub.",
+      "Atualizados os nomes técnicos dos pacotes para larmhub-web e larmhub-api.",
+      "Atualizados os fallbacks de tenant, e-mails de teste, serviço de healthcheck, configurações de deploy e exemplos de ambiente para não expor a marca antiga.",
+      "Sincronizado o seed de versionamento entre front-end e backend.",
+      "Atualizada versão técnica do front-end e backend para 0.2.5."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Identidade LarmHub"
+      ],
+      backend: ["Node.js", "Express.js", "JWT", "REST API", "PM2", "Changelog"],
+      database: ["PostgreSQL", "hub_system_releases", "tenant_config"],
+      integrations: [
+        "Changelog versionado no banco",
+        "Padronização de marca em e-mails e configurações"
       ],
     },
   },

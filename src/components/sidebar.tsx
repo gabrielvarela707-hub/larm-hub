@@ -109,7 +109,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   useEffect(() => { hydrate() }, [hydrate])
 
   const logoUrl = config.logoUrl
-  const logoText = config.logoText || 'LoteMobile'
+  const logoText = config.logoText || 'LarmHub'
   const sidebarBg = config.sidebarColor || '#0D1B2A'
 
   function toggleGroup(label: string) {

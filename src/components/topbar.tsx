@@ -52,7 +52,7 @@ export default function Topbar({ sidebarCollapsed }: TopbarProps) {
       {/* Breadcrumb */}
       <div className="flex items-center gap-1.5 text-sm flex-1 min-w-0">
         <span className="text-slate-400 text-xs hidden sm:block truncate max-w-[120px]">
-          {user?.tenantName ?? 'LoteMobile'}
+          {user?.tenantName ?? 'LarmHub'}
         </span>
         <ChevronRight className="w-3.5 h-3.5 text-slate-300 flex-shrink-0 hidden sm:block" />
         <span className="text-slate-800 font-medium truncate">{label}</span>
