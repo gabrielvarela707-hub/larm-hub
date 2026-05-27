@@ -25,6 +25,13 @@ export interface PlanoContas {
 }
 
 export interface Fornecedor {
+  /**
+   * Alguns endpoints antigos de fornecedores retornam campos legados/achatados
+   * usados pelas telas de Contas a Pagar e Fornecedores. Mantemos a tipagem
+   * tolerante para não quebrar o build enquanto o backend ainda não está
+   * totalmente normalizado.
+   */
+  [key: string]: any
   id: number
   empresa?: Empresa | string
   codigo?: string
@@ -36,18 +43,53 @@ export interface Fornecedor {
   categoria?: string
   plano_contas_id?: number
   plano_descricao?: string
-  cep?: string; logradouro?: string; numero?: string
-  complemento?: string; bairro?: string; cidade?: string; estado?: string
-  telefone?: string; whatsapp?: string; email?: string
-  site?: string; nome_contato?: string
-  banco_pag?: string; agencia_pag?: string; conta_pag?: string
-  tipo_conta_pag?: 'CC' | 'CP'
-  pix_chave?: string; pix_tipo?: string
+
+  // Endereço — nomes novos e legados usados no front
+  cep?: string
+  endereco?: string
+  logradouro?: string
+  numero?: string
+  complemento?: string
+  bairro?: string
+  cidade?: string
+  estado?: string
+  cidade_uf?: string
+  uf?: string
+
+  // Contato
+  telefone?: string
+  telefone_2?: string
+  celular?: string
+  whatsapp?: string
+  email?: string
+  site?: string
+  nome_contato?: string
+  contato?: string
+
+  // Dados bancários — nomes novos e legados usados no front
+  banco_nome?: string
+  codigo_banco?: string
+  cod_banco?: string
+  banco_pag?: string
+  agencia?: string
+  agencia_pag?: string
+  conta?: string
+  conta_corrente?: string
+  conta_pag?: string
+  digito?: string
+  tipo_conta?: string
+  tipo_conta_pag?: 'CC' | 'CP' | string
+  pix_chave?: string
+  pix_tipo?: string
+  chave_pix?: string
+  tipo_chave_pix?: string
+
   ativo: boolean
   bloquear_lanc: boolean
   requer_aprova: boolean
   limite_aprova: number
   obs?: string
+  observacoes?: string
 }
 
 export interface BancoConta {
