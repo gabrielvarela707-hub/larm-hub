@@ -26,6 +26,8 @@ export interface PlanoContas {
 
 export interface Fornecedor {
   id: number
+  empresa?: Empresa | string
+  codigo?: string
   tipo_pessoa: 'PJ' | 'PF'
   cnpj_cpf: string
   razao_social: string
