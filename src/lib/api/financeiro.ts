@@ -10,7 +10,7 @@ import { apiClient } from '@/lib/auth-store'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type Empresa = string
+export type Empresa = 'LARM' | 'LARM FILIAL' | 'MANTIQUEIRA' | 'RM' | 'LM' | 'HOLDING' | 'CONSOLIDADO'
 
 export interface PlanoContas {
   id: number
@@ -25,72 +25,33 @@ export interface PlanoContas {
 }
 
 export interface Fornecedor {
-  /**
-   * Alguns endpoints antigos de fornecedores retornam campos legados/achatados
-   * usados pelas telas de Contas a Pagar e Fornecedores. Mantemos a tipagem
-   * tolerante para não quebrar o build enquanto o backend ainda não está
-   * totalmente normalizado.
-   */
-  [key: string]: any
   id: number
-  empresa?: string
-  codigo?: string
   tipo_pessoa: 'PJ' | 'PF'
-  cnpj_cpf: string
+  cnpj_cpf?: string
   razao_social: string
   nome_fantasia?: string
-  inscricao_est?: string
   categoria?: string
-  plano_contas_id?: number
-  plano_descricao?: string
-
-  // Endereço — nomes novos e legados usados no front
+  empresa?: string
+  // Código interno (mín. 6 dígitos)
+  codigo?: string
+  // Contato
+  email?: string
+  telefone?: string
+  // Endereço
   cep?: string
   endereco?: string
-  logradouro?: string
-  numero?: string
-  complemento?: string
-  bairro?: string
-  cidade?: string
-  estado?: string
   cidade_uf?: string
-  uf?: string
-
-  // Contato
-  telefone?: string
-  telefone_2?: string
-  celular?: string
-  whatsapp?: string
-  email?: string
-  site?: string
-  nome_contato?: string
-  contato?: string
-
-  // Dados bancários — nomes novos e legados usados no front
+  // Dados bancários — nomes reais do banco/API
   banco_nome?: string
   codigo_banco?: string
-  cod_banco?: string
-  banco_pag?: string
   agencia?: string
-  agencia_pag?: string
   conta?: string
-  conta_corrente?: string
-  conta_pag?: string
   digito?: string
-  tipo_conta?: string
-  tipo_conta_pag?: 'CC' | 'CP' | string
-  pix_chave?: string
-  pix_tipo?: string
+  tipo_conta?: 'Corrente' | 'Poupança'
   chave_pix?: string
-  tipo_chave_pix?: string
   tipo_pix?: string
-
-  ativo: boolean
-  bloquear_lanc: boolean
-  requer_aprova: boolean
-  limite_aprova: number
   obs?: string
-  observacoes?: string
+  ativo?: boolean
 }
 
 export interface BancoConta {
@@ -98,6 +59,7 @@ export interface BancoConta {
   empresa: Empresa
   banco: string
   cod_banco?: string
+  codigo_banco?: string
   agencia: string
   conta: string
   tipo_conta: 'CC' | 'CP' | 'CI'
@@ -114,6 +76,9 @@ export interface Parcela {
   total_parcelas: number
   data_vencimento: string
   valor: number
+  multa?: number
+  juros?: number
+  desconto?: number
   banco_conta_id?: number
   status: 'P' | 'Q' | 'V' | 'C'
   data_pagamento?: string
@@ -134,8 +99,10 @@ export interface ContaPagar {
   historico: string
   nf_doc?: string
   data_emissao: string
+  dt_emissao?: string
   valor_total: number
   num_parcelas: number
+  qtd_parcelas?: number
   status: 'P' | 'Q' | 'V' | 'C' | 'X'
   parcelas?: Parcela[]
   obs?: string
@@ -152,12 +119,10 @@ export interface Movimento {
   fornecedor?: string
   historico?: string
   nf_doc?: string
-  emissao_doc?: string
   conta_contabil?: string
   natureza_financeira?: string
   centro_custo?: string
   obra?: string
-  n_cheque?: string
   mes: number
   ano: number
 }
@@ -188,11 +153,11 @@ export const getFornecedor = (id: number) =>
   apiClient.get<{ ok: boolean; data: Fornecedor }>(`/financeiro/fornecedores/${id}`)
     .then(data)
 
-export const createFornecedor = (body: Record<string, unknown> | Partial<Fornecedor>) =>
+export const createFornecedor = (body: Partial<Fornecedor>) =>
   apiClient.post<{ ok: boolean; data: Fornecedor }>('/financeiro/fornecedores', body)
     .then(data)
 
-export const updateFornecedor = (id: number, body: Record<string, unknown> | Partial<Fornecedor>) =>
+export const updateFornecedor = (id: number, body: Partial<Fornecedor>) =>
   apiClient.put<{ ok: boolean; data: Fornecedor }>(`/financeiro/fornecedores/${id}`, body)
     .then(data)
 
@@ -245,8 +210,10 @@ export const createContaPagar = (body: {
   historico: string
   nf_doc?: string
   data_emissao: string
+  dt_emissao?: string
   valor_total: number
   num_parcelas: number
+  qtd_parcelas?: number
   parcelas: Parcela[]
   obs?: string
 }) => apiClient.post<{ ok: boolean; data: ContaPagar }>('/financeiro/contas-pagar', body)
@@ -293,11 +260,11 @@ export const getMovimento = (params?: MovimentoParams) =>
 export const getMovimentoFiltros = () =>
   apiClient.get<{
     ok: boolean
-    data: { empresas: string[]; bancos: string[]; contas: any[]; anos: number[] }
+    data: { empresas: string[]; bancos: string[]; contas: Record<string, unknown>[]; anos: number[] }
   }>('/financeiro/movimento/filtros').then(data)
 
 export const getMovimentoResumo = (empresa?: Empresa, ano?: number) =>
-  apiClient.get<{ ok: boolean; data: any }>(
+  apiClient.get<{ ok: boolean; data: Record<string, unknown> }>(
     '/financeiro/movimento/resumo', { params: { empresa, ano } }
   ).then(data)
 
@@ -309,12 +276,12 @@ export interface CashflowParams {
 }
 
 export const getCashflow = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: CashflowParams) =>
-  apiClient.get<{ ok: boolean; data: any }>(
+  apiClient.get<{ ok: boolean; data: Record<string, unknown> }>(
     '/financeiro/cashflow', { params: { empresa, ano, ...params } }
   ).then(data)
 
 export const getCashflowResumo = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: Pick<CashflowParams, 'mes'>) =>
-  apiClient.get<{ ok: boolean; data: any }>(
+  apiClient.get<{ ok: boolean; data: Record<string, unknown> }>(
     '/financeiro/cashflow/resumo', { params: { empresa, ano, ...params } }
   ).then(data)
 
