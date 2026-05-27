@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Map, Users, FileText, DollarSign,
   BarChart3, Building2, Bot, Settings, MapPin,
   Globe, HardHat, ChevronDown, ChevronRight,
-  TrendingUp, ChevronLeft, LogOut, HelpCircle, Receipt, Tag, MessageSquare, Megaphone, BookMarked, FileCheck, CalendarDays, Percent, Landmark,
+  TrendingUp, ChevronLeft, LogOut, HelpCircle, Receipt, Tag, MessageSquare, Megaphone, BookMarked, FileCheck, CalendarDays, Percent,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTenantConfig } from '@/lib/tenant-config-store'
@@ -52,8 +52,7 @@ const NAV: NavItem[] = [
   { label: 'Marketing & Midia', href: '/marketing', icon: Megaphone, moduleIds: ['crm'] },
   { label: 'Landing Pages', href: '/landing-pages', icon: Globe, moduleIds: ['landing_pages'] },
   { label: 'Simulador de Vendas', href: '/simulador', icon: TrendingUp, moduleIds: ['simulador'] },
-  { label: 'Contratos',  href: '/contratos',  icon: FileText, badge: 2, badgeColor: 'bg-amber-500', moduleIds: ['contratos'] },
-  { label: 'Recebiveis',  href: '/recebiveis', icon: Landmark, moduleIds: ['recebiveis'] },
+  { label: 'Contratos', href: '/contratos', icon: FileText, badge: 2, badgeColor: 'bg-amber-500', moduleIds: ['contratos'] },
   {
     label: 'Financeiro', icon: DollarSign,
     children: [
@@ -109,7 +108,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   useEffect(() => { hydrate() }, [hydrate])
 
   const logoUrl = config.logoUrl
-  const logoText = config.logoText || 'LarmHub'
+  const logoText = config.logoText || 'LoteMobile'
   const sidebarBg = config.sidebarColor || '#0D1B2A'
 
   function toggleGroup(label: string) {
