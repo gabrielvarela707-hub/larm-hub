@@ -177,7 +177,7 @@ function LPPreview({ cfg, lots }: { cfg: LPConfig; lots: MapLot[] }) {
       )}
 
       <div className="text-center py-3 text-[10px] text-slate-400 border-t">
-        Landing page gerada pelo LoteMobile
+        Landing page gerada pelo LarmHub
       </div>
     </div>
   )

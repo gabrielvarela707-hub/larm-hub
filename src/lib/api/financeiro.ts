@@ -27,25 +27,31 @@ export interface PlanoContas {
 export interface Fornecedor {
   id: number
   tipo_pessoa: 'PJ' | 'PF'
-  cnpj_cpf: string
+  cnpj_cpf?: string
   razao_social: string
   nome_fantasia?: string
-  inscricao_est?: string
   categoria?: string
-  plano_contas_id?: number
-  plano_descricao?: string
-  cep?: string; logradouro?: string; numero?: string
-  complemento?: string; bairro?: string; cidade?: string; estado?: string
-  telefone?: string; whatsapp?: string; email?: string
-  site?: string; nome_contato?: string
-  banco_pag?: string; agencia_pag?: string; conta_pag?: string
-  tipo_conta_pag?: 'CC' | 'CP'
-  pix_chave?: string; pix_tipo?: string
-  ativo: boolean
-  bloquear_lanc: boolean
-  requer_aprova: boolean
-  limite_aprova: number
+  empresa?: string
+  // Código interno (mín. 6 dígitos)
+  codigo?: string
+  // Contato
+  email?: string
+  telefone?: string
+  // Endereço
+  cep?: string
+  endereco?: string
+  cidade_uf?: string
+  // Dados bancários — nomes reais do banco/API
+  banco_nome?: string
+  codigo_banco?: string
+  agencia?: string
+  conta?: string
+  digito?: string
+  tipo_conta?: 'Corrente' | 'Poupança'
+  chave_pix?: string
+  tipo_pix?: string
   obs?: string
+  ativo?: boolean
 }
 
 export interface BancoConta {
@@ -53,6 +59,7 @@ export interface BancoConta {
   empresa: Empresa
   banco: string
   cod_banco?: string
+  codigo_banco?: string
   agencia: string
   conta: string
   tipo_conta: 'CC' | 'CP' | 'CI'
@@ -69,6 +76,9 @@ export interface Parcela {
   total_parcelas: number
   data_vencimento: string
   valor: number
+  multa?: number
+  juros?: number
+  desconto?: number
   banco_conta_id?: number
   status: 'P' | 'Q' | 'V' | 'C'
   data_pagamento?: string
@@ -89,8 +99,10 @@ export interface ContaPagar {
   historico: string
   nf_doc?: string
   data_emissao: string
+  dt_emissao?: string
   valor_total: number
   num_parcelas: number
+  qtd_parcelas?: number
   status: 'P' | 'Q' | 'V' | 'C' | 'X'
   parcelas?: Parcela[]
   obs?: string
@@ -198,8 +210,10 @@ export const createContaPagar = (body: {
   historico: string
   nf_doc?: string
   data_emissao: string
+  dt_emissao?: string
   valor_total: number
   num_parcelas: number
+  qtd_parcelas?: number
   parcelas: Parcela[]
   obs?: string
 }) => apiClient.post<{ ok: boolean; data: ContaPagar }>('/financeiro/contas-pagar', body)
@@ -246,11 +260,11 @@ export const getMovimento = (params?: MovimentoParams) =>
 export const getMovimentoFiltros = () =>
   apiClient.get<{
     ok: boolean
-    data: { empresas: string[]; bancos: string[]; contas: any[]; anos: number[] }
+    data: { empresas: string[]; bancos: string[]; contas: Record<string, unknown>[]; anos: number[] }
   }>('/financeiro/movimento/filtros').then(data)
 
 export const getMovimentoResumo = (empresa?: Empresa, ano?: number) =>
-  apiClient.get<{ ok: boolean; data: any }>(
+  apiClient.get<{ ok: boolean; data: Record<string, unknown> }>(
     '/financeiro/movimento/resumo', { params: { empresa, ano } }
   ).then(data)
 
@@ -262,12 +276,12 @@ export interface CashflowParams {
 }
 
 export const getCashflow = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: CashflowParams) =>
-  apiClient.get<{ ok: boolean; data: any }>(
+  apiClient.get<{ ok: boolean; data: Record<string, unknown> }>(
     '/financeiro/cashflow', { params: { empresa, ano, ...params } }
   ).then(data)
 
 export const getCashflowResumo = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: Pick<CashflowParams, 'mes'>) =>
-  apiClient.get<{ ok: boolean; data: any }>(
+  apiClient.get<{ ok: boolean; data: Record<string, unknown> }>(
     '/financeiro/cashflow/resumo', { params: { empresa, ano, ...params } }
   ).then(data)
 

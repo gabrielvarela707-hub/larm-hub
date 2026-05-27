@@ -23,14 +23,17 @@ export interface AuthUser {
   tenantName: string
   tenantSlug: string
   hubType:    'santa_clara' | 'larm' | 'generic'
+  allowedHubs?: Array<'santa_clara' | 'larm'>
   mustChangePassword: boolean
+  profiles?: Array<{ id: string; name: string; color?: string }>
+  permissions?: Record<string, { read: boolean; write: boolean }>
 }
 
 interface AuthState {
   user:        AuthUser | null
   accessToken: string | null
   loading:     boolean
-  login:   (email: string, password: string) => Promise<{ ok: boolean; error?: string }>
+  login:   (email: string, password: string, hub?: 'santa_clara' | 'larm') => Promise<{ ok: boolean; error?: string }>
   logout:  () => Promise<void>
   refresh: () => Promise<boolean>
   hydrate: () => void
@@ -121,10 +124,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   accessToken: null,
   loading:     false,
 
-  login: async (email, password) => {
+  login: async (email, password, hub) => {
     set({ loading: true })
     try {
-      const { data } = await apiClient.post('/auth/login', { email, password })
+      const { data } = await apiClient.post('/auth/login', { email, password, hub })
       if (!data.ok) return { ok: false, error: data.message }
 
       const { accessToken, refreshToken, user } = data.data
@@ -142,9 +145,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ user, accessToken })
       return { ok: true }
     } catch (err: unknown) {
-      const msg = axios.isAxiosError(err)
-        ? (err.response?.data?.message ?? 'Erro ao conectar com o servidor')
-        : 'Erro inesperado'
+      const axiosErr = axios.isAxiosError(err)
+        ? err as { response?: { data?: { message?: string } } }
+        : null
+      const msg = axiosErr?.response?.data?.message ?? (axiosErr ? 'Erro ao conectar com o servidor' : 'Erro inesperado')
       return { ok: false, error: msg }
     } finally {
       set({ loading: false })

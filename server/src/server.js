@@ -10,6 +10,7 @@ const { connectDB }     = require('./config/database')
 const logger            = require('./config/logger')
 const errorHandler      = require('./middleware/errorHandler')
 const rateLimiter       = require('./middleware/rateLimiter')
+const auditRequestLogger = require('./middleware/auditRequestLogger')
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 const authRoutes              = require('./routes/auth')
@@ -21,6 +22,11 @@ const usersRoutes             = require('./routes/users')
 const tenantConfigRoutes      = require('./routes/tenant-config')
 const profilesRoutes          = require('./routes/profiles')
 const tiposDocumentoRoutes    = require('./routes/tipos-documento')
+const auditRoutes             = require('./routes/audit')
+const systemRoutes            = require('./routes/system')
+const crmRoutes               = require('./routes/crm')
+const mapaVendasRoutes        = require('./routes/mapa-vendas')
+const relatoriosToolsRoutes   = require('./routes/relatorios-tools')
 
 const app  = express()
 const PORT = process.env.PORT || 3001
@@ -58,6 +64,9 @@ app.use(morgan('combined', {
 // ─── Rate Limit global ────────────────────────────────────────────────────────
 app.use(rateLimiter)
 
+// ─── Log automático de ações autenticadas ─────────────────────────────────────
+app.use(auditRequestLogger)
+
 // ─── Rotas ────────────────────────────────────────────────────────────────────
 app.use('/health', healthRoutes)
 app.use('/auth',   authRoutes)
@@ -68,6 +77,11 @@ app.use('/',       usersRoutes)
 app.use('/',       tenantConfigRoutes)
 app.use('/',       profilesRoutes)
 app.use('/',       tiposDocumentoRoutes)
+app.use('/',       auditRoutes)
+app.use('/',       systemRoutes)
+app.use('/crm',    crmRoutes)
+app.use('/mapa-vendas', mapaVendasRoutes)
+app.use('/relatorios-tools', relatoriosToolsRoutes)
 
 // 404
 app.use((req, res) => {

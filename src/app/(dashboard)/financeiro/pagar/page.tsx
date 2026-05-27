@@ -1,21 +1,37 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Plus, Search, X, Check, FileText, Loader2, Sparkles } from 'lucide-react'
+import { Plus, Search, X, Check, FileText, Loader2, Sparkles, Pencil, Trash2, ChevronsUpDown, RotateCcw } from 'lucide-react'
 import { apiClient } from '@/lib/auth-store'
+import { BANCOS_BR } from '@/lib/bancos-br'
 import { cn } from '@/lib/utils'
+import FornecedorFormModal from '@/components/financeiro/FornecedorFormModal'
 
 interface Fornecedor { id: number; razao_social: string; empresa: string; cnpj_cpf?: string | null; nome_fantasia?: string | null }
 interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null }
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
 interface TipoDocumento { id: number; nome: string }
-interface Parcela     { id?: number; numero: number; valor: number; vencimento: string; status: string }
+interface Parcela     { id?: number; numero: number; valor: number | string; vencimento: string; status: string; acrescimo?: number | string; multa?: number | string; juros?: number | string; desconto?: number | string; valor_final?: number | string }
 interface NovoFornecedorForm {
   razao_social: string
   nome_fantasia: string
   cnpj_cpf: string
   tipo_pessoa: 'PJ' | 'PF'
   empresa: string
+  codigo: string
+  email: string
+  telefone: string
+  cep: string
+  endereco: string
+  cidade_uf: string
+  codigo_banco: string
+  banco_nome: string
+  agencia: string
+  conta: string
+  digito: string
+  tipo_conta: string
+  chave_pix: string
+  tipo_pix: string
 }
 type SortKey = 'empresa' | 'fornecedor' | 'tipo_documento' | 'numero' | 'parcela' | 'valor' | 'emissao' | 'vencimento' | 'pagamento' | 'status'
 interface AiContaPagarResult {
@@ -41,6 +57,8 @@ interface Lancamento {
   parcela_vencimento?: string | null; parcela_status?: string | null; parcela_dt_pagamento?: string | null
   parcela_motivo_baixa?: string | null; parcela_acrescimo?: number | null; parcela_desconto?: number | null
   parcela_juros?: number | null; parcela_multa?: number | null; parcela_valor_final?: number | null
+  parcela_baixa_acrescimo?: number | null; parcela_baixa_desconto?: number | null
+  parcela_baixa_juros?: number | null; parcela_baixa_multa?: number | null; parcela_baixa_valor_final?: number | null
   parcela_forma_pagamento?: string | null
 }
 
@@ -66,7 +84,24 @@ const STATUS_COLORS: Record<string, string> = {
 
 const R$ = (v: number | null | undefined) =>
   (v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-const todayISO = () => new Date().toISOString().split('T')[0]
+const toDateInputValue = (date = new Date()) => {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+  return local.toISOString().slice(0, 10)
+}
+const todayISO = () => toDateInputValue()
+const dateOnly = (value: string | null | undefined) => {
+  if (!value) return ''
+  const raw = String(value).slice(0, 10)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+  const dt = new Date(value)
+  return Number.isNaN(dt.getTime()) ? '' : toDateInputValue(dt)
+}
+const addMonthsDateOnly = (baseDate: string, months: number) => {
+  const [ano, mes, dia] = (dateOnly(baseDate) || todayISO()).split('-').map(Number)
+  const dt = new Date(ano, mes - 1, dia)
+  dt.setMonth(dt.getMonth() + months)
+  return toDateInputValue(dt)
+}
 const moneyToNumber = (v: string | number | null | undefined) => {
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0
 
@@ -84,8 +119,55 @@ const moneyToNumber = (v: string | number | null | undefined) => {
   return Number.isFinite(n) ? n : 0
 }
 const fmtDate = (d: string | null | undefined) => {
-  if (!d) return '—'
-  try { return new Date(d).toLocaleDateString('pt-BR') } catch { return String(d) }
+  const iso = dateOnly(d)
+  if (!iso) return '—'
+  const [ano, mes, dia] = iso.split('-')
+  return `${dia}/${mes}/${ano}`
+}
+const toFiniteNumber = (v: string | number | null | undefined, fallback = 0) => {
+  const n = moneyToNumber(v)
+  return Number.isFinite(n) ? n : fallback
+}
+const decimalInputValue = (v: string | number | null | undefined) => {
+  if (v === undefined || v === null || v === '') return ''
+
+  if (typeof v === 'string') {
+    const raw = v.trim()
+    if (!raw) return ''
+
+    // Valores vindos do PostgreSQL podem chegar como string decimal técnico,
+    // ex.: "1500.0000". Nesse caso, formatamos para PT-BR.
+    // Valores digitados pelo usuário com vírgula ou sem separador são preservados
+    // para não atrapalhar a digitação.
+    if (/^-?\d+\.\d+$/.test(raw) && !raw.includes(',')) {
+      const n = moneyToNumber(raw)
+      if (n === 0) return ''
+      return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    }
+
+    return raw
+  }
+
+  const n = toFiniteNumber(v, 0)
+  if (n === 0) return ''
+  return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+const calculaValorFinalParcela = (p: Pick<Parcela, 'valor' | 'acrescimo' | 'multa' | 'juros' | 'desconto'>) =>
+  Math.max(0, toFiniteNumber(p.valor) + toFiniteNumber(p.acrescimo) + toFiniteNumber(p.multa) + toFiniteNumber(p.juros) - toFiniteNumber(p.desconto))
+const normalizaParcelaPayload = (p: Parcela, idx: number): Parcela => {
+  const next: Parcela = {
+    id: p.id,
+    numero: Number(p.numero) || idx + 1,
+    valor: toFiniteNumber(p.valor),
+    vencimento: dateOnly(p.vencimento) || todayISO(),
+    status: p.status || 'pendente',
+    acrescimo: toFiniteNumber(p.acrescimo),
+    multa: toFiniteNumber(p.multa),
+    juros: toFiniteNumber(p.juros),
+    desconto: toFiniteNumber(p.desconto),
+  }
+  next.valor_final = calculaValorFinalParcela(next)
+  return next
 }
 const sortText = (v: unknown) => String(v ?? '').toLocaleLowerCase('pt-BR')
 const sortDate = (v: string | null | undefined) => v ? (Date.parse(v) || 0) : 0
@@ -96,13 +178,200 @@ const getSortValue = (l: Lancamento, key: SortKey): string | number => {
     case 'tipo_documento': return sortText(l.tipo_documento_nome)
     case 'numero': return sortText(l.nf_doc)
     case 'parcela': return Number(l.parcela_numero || 0)
-    case 'valor': return Number(l.parcela_valor ?? l.valor_total ?? 0)
+    case 'valor': {
+      const valor = Number(l.parcela_valor ?? l.valor_total ?? 0)
+      const final = l.parcela_valor_final === null || l.parcela_valor_final === undefined
+        ? valor + Number(l.parcela_acrescimo || 0) + Number(l.parcela_multa || 0) + Number(l.parcela_juros || 0) - Number(l.parcela_desconto || 0)
+        : Number(l.parcela_valor_final)
+      return Number.isFinite(final) ? final : valor
+    }
     case 'emissao': return sortDate(l.dt_emissao)
     case 'vencimento': return sortDate(l.parcela_vencimento || l.proximo_venc)
     case 'pagamento': return sortDate(l.parcela_dt_pagamento)
     case 'status': return sortText(l.parcela_status || l.status)
     default: return ''
   }
+}
+
+
+// ─── BancoSelect ─────────────────────────────────────────────────────────────
+function BancoSelect({ value, onChange, inp }: { value: string; onChange: (v: string) => void; inp: string }) {
+  const [open, setOpen] = useState(false)
+  const [busca, setBusca] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+  const filtered = BANCOS_BR.filter(b =>
+    b.codigo.includes(busca) || b.nome.toLowerCase().includes(busca.toLowerCase())
+  ).slice(0, 60)
+  const selected = BANCOS_BR.find(b => b.codigo === value)
+  useEffect(() => {
+    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', fn)
+    return () => document.removeEventListener('mousedown', fn)
+  }, [])
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className={cn(inp, 'flex items-center justify-between gap-2 text-left')}>
+        <span className={selected ? 'text-slate-700' : 'text-slate-400'}>
+          {selected ? `${selected.codigo} — ${selected.nome}` : 'Selecione o banco…'}
+        </span>
+        <ChevronsUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-[70] w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl">
+          <div className="p-2 border-b border-slate-100">
+            <input autoFocus value={busca} onChange={e => setBusca(e.target.value)}
+              placeholder="Buscar por código ou nome…"
+              className="w-full px-2 py-1.5 text-xs rounded border border-slate-200 bg-white outline-none" />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            <button type="button" onClick={() => { onChange(''); setOpen(false); setBusca('') }}
+              className="w-full text-left px-3 py-2 text-xs text-slate-400 hover:bg-slate-50">— Nenhum —</button>
+            {filtered.map(b => (
+              <button key={b.codigo} type="button"
+                onClick={() => { onChange(b.codigo); setOpen(false); setBusca('') }}
+                className={cn('w-full text-left px-3 py-2 text-xs hover:bg-blue-50', value === b.codigo && 'bg-blue-50 font-medium')}>
+                <span className="font-mono text-blue-600 mr-2">{b.codigo}</span>{b.nome}
+              </button>
+            ))}
+            {filtered.length === 0 && <p className="px-3 py-4 text-xs text-slate-400 text-center">Nenhum banco encontrado</p>}
+          </div>
+        </div>
+      )}
+
+    </div>
+  )
+}
+
+
+// ─── PlanoContasSelect ───────────────────────────────────────────────────────
+function PlanoContasSelect({ value, onChange, contas, inp }: { value: string; onChange: (v: string) => void; contas: PlanoConta[]; inp: string }) {
+  const [open, setOpen] = useState(false)
+  const [busca, setBusca] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+  const termo = busca.toLowerCase().trim()
+  const filtered = contas.filter(c =>
+    c.codigo.includes(busca) || c.descricao.toLowerCase().includes(termo)
+  ).slice(0, 80)
+  const selected = contas.find(c => c.codigo === value)
+
+  useEffect(() => {
+    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', fn)
+    return () => document.removeEventListener('mousedown', fn)
+  }, [])
+
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className={cn(inp, 'flex items-center justify-between gap-2 text-left')}>
+        <span className={cn('truncate', selected ? 'text-slate-700' : 'text-slate-400')}>
+          {selected ? `${selected.codigo} — ${selected.descricao}` : 'Selecione o plano…'}
+        </span>
+        <ChevronsUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-[70] w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl">
+          <div className="p-2 border-b border-slate-100">
+            <input autoFocus value={busca} onChange={e => setBusca(e.target.value)}
+              placeholder="Buscar por código ou descrição…"
+              className="w-full px-2 py-1.5 text-xs rounded border border-slate-200 bg-white outline-none" />
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            <button type="button" onClick={() => { onChange(''); setOpen(false); setBusca('') }}
+              className="w-full text-left px-3 py-2 text-xs text-slate-400 hover:bg-slate-50">— Nenhum —</button>
+            {filtered.map(c => (
+              <button key={c.codigo} type="button"
+                onClick={() => { onChange(c.codigo); setOpen(false); setBusca('') }}
+                className={cn('w-full text-left px-3 py-2 text-xs hover:bg-blue-50', value === c.codigo && 'bg-blue-50 font-medium')}>
+                <span className="font-mono text-blue-600 mr-2">{c.codigo}</span>{c.descricao}
+              </button>
+            ))}
+            {filtered.length === 0 && <p className="px-3 py-4 text-xs text-slate-400 text-center">Nenhum plano encontrado</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+// ─── FornecedorSelect ───────────────────────────────────────────────────────
+function fornecedorLabel(f: Fornecedor) {
+  const nome = f.nome_fantasia?.trim() || f.razao_social
+  const doc = f.cnpj_cpf ? ` · ${f.cnpj_cpf}` : ''
+  return `${nome}${doc}`
+}
+
+function FornecedorSelect({
+  value,
+  onChange,
+  fornecedores,
+  inp,
+  placeholder = 'Selecione (opcional)',
+  emptyLabel = '— Nenhum —',
+}: {
+  value: string
+  onChange: (v: string) => void
+  fornecedores: Fornecedor[]
+  inp: string
+  placeholder?: string
+  emptyLabel?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [busca, setBusca] = useState('')
+  const ref = useRef<HTMLDivElement>(null)
+  const termo = busca.toLowerCase().trim()
+  const filtered = fornecedores.filter(f => {
+    const campos = [f.razao_social, f.nome_fantasia, f.cnpj_cpf, f.empresa]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return !termo || campos.includes(termo)
+  }).slice(0, 80)
+  const selected = fornecedores.find(f => String(f.id) === String(value))
+
+  useEffect(() => {
+    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    document.addEventListener('mousedown', fn)
+    return () => document.removeEventListener('mousedown', fn)
+  }, [])
+
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className={cn(inp, 'flex items-center justify-between gap-2 text-left')}>
+        <span className={cn('truncate', selected ? 'text-slate-700' : 'text-slate-400')}>
+          {selected ? fornecedorLabel(selected) : placeholder}
+        </span>
+        <ChevronsUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute z-[70] w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl">
+          <div className="p-2 border-b border-slate-100">
+            <input autoFocus value={busca} onChange={e => setBusca(e.target.value)}
+              placeholder="Buscar por nome, fantasia, CNPJ ou empresa…"
+              className="w-full px-2 py-1.5 text-xs rounded border border-slate-200 bg-white outline-none" />
+          </div>
+          <div className="max-h-56 overflow-y-auto">
+            <button type="button" onClick={() => { onChange(''); setOpen(false); setBusca('') }}
+              className="w-full text-left px-3 py-2 text-xs text-slate-400 hover:bg-slate-50">{emptyLabel}</button>
+            {filtered.map(f => (
+              <button key={f.id} type="button"
+                onClick={() => { onChange(String(f.id)); setOpen(false); setBusca('') }}
+                className={cn('w-full text-left px-3 py-2 text-xs hover:bg-blue-50', String(value) === String(f.id) && 'bg-blue-50 font-medium')}>
+                <span className="block truncate text-slate-700">{f.razao_social}</span>
+                <span className="block truncate text-[10px] text-slate-400">
+                  {[f.nome_fantasia, f.cnpj_cpf, f.empresa].filter(Boolean).join(' · ') || 'Sem dados complementares'}
+                </span>
+              </button>
+            ))}
+            {filtered.length === 0 && <p className="px-3 py-4 text-xs text-slate-400 text-center">Nenhum fornecedor encontrado</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function PagarPage() {
@@ -118,6 +387,13 @@ export default function PagarPage() {
   const [showBaixaModal, setShowBaixaModal] = useState(false)
   const [savingBaixa, setSavingBaixa] = useState(false)
   const [baixaErrors, setBaixaErrors] = useState<Record<string, string>>({})
+  // ── edit / delete ──────────────────────────────────────────────────────
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [deletingLoading, setDeletingLoading] = useState(false)
+  const [cancelandoBaixa, setCancelandoBaixa] = useState<string | null>(null)
+  // banco brasileiro selecionado (código BACEN)
+  const [fBancoCodigo, setFBancoCodigo] = useState('')
   const [baixaParcela, setBaixaParcela] = useState<Lancamento | null>(null)
   const [baixaForm, setBaixaForm] = useState<BaixaForm>({
     valor_parcela: '',
@@ -162,11 +438,10 @@ export default function PagarPage() {
   const [fCC,      setFCC]      = useState('')
   const [fObs,     setFObs]     = useState('')
   const [novoFornecedor, setNovoFornecedor] = useState<NovoFornecedorForm>({
-    razao_social: '',
-    nome_fantasia: '',
-    cnpj_cpf: '',
-    tipo_pessoa: 'PJ',
-    empresa: '',
+    razao_social: '', nome_fantasia: '', cnpj_cpf: '',
+    tipo_pessoa: 'PJ', empresa: '', codigo: '', email: '', telefone: '',
+    cep: '', endereco: '', cidade_uf: '', codigo_banco: '', banco_nome: '',
+    agencia: '', conta: '', digito: '', tipo_conta: 'Corrente', chave_pix: '', tipo_pix: '',
   })
   const [fDocumentoNome,   setFDocumentoNome]   = useState('')
   const [fDocumentoMime,   setFDocumentoMime]   = useState('')
@@ -221,25 +496,52 @@ export default function PagarPage() {
       return
     }
 
-    const vlr = parseFloat(fValor) || 0
+    const vlr = moneyToNumber(fValor) || 0
     const n   = fNParc || 1
     if (vlr <= 0) { setParcelas([]); return }
-    const base = new Date(fEmissao || new Date())
     const ps: Parcela[] = Array.from({ length: n }, (_, i) => {
-      const d = new Date(base)
-      d.setMonth(d.getMonth() + i + 1)
+      const valor = parseFloat((vlr / n).toFixed(2))
       return {
         numero: i + 1,
-        valor: parseFloat((vlr / n).toFixed(2)),
-        vencimento: d.toISOString().split('T')[0],
+        valor,
+        vencimento: addMonthsDateOnly(fEmissao || todayISO(), i + 1),
         status: 'pendente',
+        acrescimo: 0,
+        multa: 0,
+        juros: 0,
+        desconto: 0,
+        valor_final: valor,
       }
     })
-    setParcelas(ps)
+
+    setParcelas(prev => ps.map((base, i) => {
+      const atual = prev[i]
+      if (!atual) return base
+
+      const next: Parcela = {
+        ...base,
+        id: atual.id,
+        vencimento: atual.vencimento || base.vencimento,
+        status: atual.status || base.status,
+        acrescimo: atual.acrescimo ?? 0,
+        multa: atual.multa ?? 0,
+        juros: atual.juros ?? 0,
+        desconto: atual.desconto ?? 0,
+      }
+      next.valor_final = calculaValorFinalParcela(next)
+      return next
+    }))
   }, [fValor, fNParc, fEmissao])
 
   function updateParcela(i: number, key: keyof Parcela, val: string | number) {
-    setParcelas(p => p.map((x, idx) => idx === i ? { ...x, [key]: val } : x))
+    setParcelas(p => p.map((x, idx) => {
+      if (idx !== i) return x
+      const next = { ...x, [key]: val } as Parcela
+      if (['valor', 'acrescimo', 'multa', 'juros', 'desconto'].includes(String(key))) {
+        next.valor_final = calculaValorFinalParcela(next)
+      }
+      return next
+    }))
   }
 
   function sortBy(key: SortKey) {
@@ -254,11 +556,10 @@ export default function PagarPage() {
   function openFornecedorModal() {
     setFornecedorErrors({})
     setNovoFornecedor({
-      razao_social: '',
-      nome_fantasia: '',
-      cnpj_cpf: '',
-      tipo_pessoa: 'PJ',
-      empresa: fEmp || 'TODOS',
+      razao_social: '', nome_fantasia: '', cnpj_cpf: '',
+      tipo_pessoa: 'PJ', empresa: fEmp || 'TODOS', codigo: '', email: '', telefone: '',
+      cep: '', endereco: '', cidade_uf: '', codigo_banco: '', banco_nome: '',
+      agencia: '', conta: '', digito: '', tipo_conta: 'Corrente', chave_pix: '', tipo_pix: '',
     })
     setShowFornecedorModal(true)
   }
@@ -273,17 +574,34 @@ export default function PagarPage() {
     const e: Record<string, string> = {}
     if (!novoFornecedor.razao_social.trim()) e.razao_social = 'Obrigatório'
     if (!novoFornecedor.empresa) e.empresa = 'Obrigatório'
+    if (novoFornecedor.codigo && novoFornecedor.codigo.replace(/\D/g, '').length > 0 && novoFornecedor.codigo.replace(/\D/g, '').length < 6)
+      e.codigo = 'Mínimo 6 dígitos'
     setFornecedorErrors(e)
     if (Object.keys(e).length) return
 
     setSavingFornecedor(true)
     try {
+      const bancoSelecionado = BANCOS_BR.find(b => b.codigo === novoFornecedor.codigo_banco)
       const payload = {
         razao_social: novoFornecedor.razao_social.trim(),
         nome_fantasia: novoFornecedor.nome_fantasia.trim() || null,
         cnpj_cpf: novoFornecedor.cnpj_cpf.trim() || null,
         tipo_pessoa: novoFornecedor.tipo_pessoa,
         empresa: novoFornecedor.empresa,
+        codigo: novoFornecedor.codigo.trim() || null,
+        email: novoFornecedor.email.trim() || null,
+        telefone: novoFornecedor.telefone.trim() || null,
+        cep: novoFornecedor.cep.trim() || null,
+        endereco: novoFornecedor.endereco.trim() || null,
+        cidade_uf: novoFornecedor.cidade_uf.trim() || null,
+        banco_nome: bancoSelecionado?.nome || novoFornecedor.banco_nome || null,
+        codigo_banco: novoFornecedor.codigo_banco || null,
+        agencia: novoFornecedor.agencia.trim() || null,
+        conta: novoFornecedor.conta.trim() || null,
+        digito: novoFornecedor.digito.trim() || null,
+        tipo_conta: novoFornecedor.tipo_conta || null,
+        chave_pix: novoFornecedor.chave_pix.trim() || null,
+        tipo_pix: novoFornecedor.tipo_pix || null,
         categoria: null,
       }
       const r = await apiClient.post('/financeiro/fornecedores', payload)
@@ -312,15 +630,21 @@ export default function PagarPage() {
     setParcelas([]); setErrors({})
     setShowFornecedorModal(false); setFornecedorErrors({})
     setShowBaixaModal(false); setBaixaParcela(null); setBaixaErrors({})
+    setFBancoCodigo(''); setEditingId(null)
   }
 
   function validate() {
     const e: Record<string, string> = {}
     if (!fEmp)       e.empresa   = 'Obrigatório'
     if (!fHistorico) e.historico = 'Obrigatório'
-    if (!fValor || parseFloat(fValor) <= 0) e.valor = 'Informe um valor válido'
+    if (!fValor || moneyToNumber(fValor) <= 0) e.valor = 'Informe um valor válido'
+    if (fNF && fNF.replace(/\D/g, '').length > 0 && fNF.replace(/\D/g, '').length < 9)
+      e.nf_doc = 'Mínimo 9 dígitos numéricos'
+    if (Object.keys(e).length) {
+      e._geral = 'Revise os campos: algum deles está impedindo o envio das informações.'
+    }
     setErrors(e)
-    return Object.keys(e).length === 0
+    return Object.keys(e).filter(k => k !== '_geral').length === 0
   }
 
   function handleDocumentoChange(file: File | null) {
@@ -400,12 +724,20 @@ export default function PagarPage() {
       : (data.data_vencimento && valor > 0 ? [{ numero: 1, valor, vencimento: data.data_vencimento }] : [])
 
     if (aiParcelas.length) {
-      aiParcelasRef.current = aiParcelas.map((p, idx) => ({
-        numero: Number(p.numero) || idx + 1,
-        valor: Number(p.valor) || valor || 0,
-        vencimento: p.vencimento,
-        status: 'pendente',
-      }))
+      aiParcelasRef.current = aiParcelas.map((p, idx) => {
+        const valorParcela = Number(p.valor) || valor || 0
+        return {
+          numero: Number(p.numero) || idx + 1,
+          valor: valorParcela,
+          vencimento: p.vencimento,
+          status: 'pendente',
+          acrescimo: 0,
+          multa: 0,
+          juros: 0,
+          desconto: 0,
+          valor_final: valorParcela,
+        }
+      })
       setFNParc(aiParcelasRef.current.length)
     }
   }
@@ -437,12 +769,65 @@ export default function PagarPage() {
     }
   }
 
+  async function handleEdit(l: Lancamento) {
+    try {
+      const r = await apiClient.get(`/financeiro/lancamentos-cp/${l.id}`)
+      const d = r.data.data
+      setFEmp(d.empresa || '')
+      setFForn(d.fornecedor_id ? String(d.fornecedor_id) : '')
+      setFBanco(d.banco_conta_id ? String(d.banco_conta_id) : '')
+      setFHistorico(d.historico || '')
+      setFTipoDoc(d.tipo_documento_id ? String(d.tipo_documento_id) : '')
+      setFNF(d.nf_doc || '')
+      setFEmissao(dateOnly(d.dt_emissao) || todayISO())
+      setFValor(decimalInputValue(d.valor_total))
+      setFNParc(d.qtd_parcelas || 1)
+      setFConta(d.conta_contabil || '')
+      setFCC(d.centro_custo || '')
+      setFObs(d.obs || '')
+      if (d.parcelas?.length) {
+        const loadedParcelas = d.parcelas.map((p: { id?: number; numero: number; valor: number | string; vencimento: string; status: string; acrescimo?: number | string; multa?: number | string; juros?: number | string; desconto?: number | string; valor_final?: number | string }, idx: number) =>
+          normalizaParcelaPayload({
+            id: p.id,
+            numero: p.numero,
+            valor: toFiniteNumber(p.valor),
+            vencimento: dateOnly(p.vencimento),
+            status: p.status || 'pendente',
+            acrescimo: toFiniteNumber(p.acrescimo),
+            multa: toFiniteNumber(p.multa),
+            juros: toFiniteNumber(p.juros),
+            desconto: toFiniteNumber(p.desconto),
+            valor_final: toFiniteNumber(p.valor_final),
+          }, idx)
+        )
+        // Evita o efeito automático de parcelamento sobrescrever os valores
+        // carregados do banco com multa/juros/desconto zerados.
+        aiParcelasRef.current = loadedParcelas
+        setParcelas(loadedParcelas)
+      }
+      setEditingId(l.id)
+      setShowForm(true)
+    } catch { alert('Erro ao carregar lançamento') }
+  }
+
+  async function handleDeleteConfirm() {
+    if (!deletingId) return
+    setDeletingLoading(true)
+    try {
+      await apiClient.delete(`/financeiro/lancamentos-cp/${deletingId}`)
+      setDeletingId(null)
+      load()
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao excluir')
+    } finally { setDeletingLoading(false) }
+  }
+
   async function save() {
     if (!validate()) return
     setSaving(true)
     try {
       const contaObj = plano.find(p => p.codigo === fConta)
-      await apiClient.post('/financeiro/lancamentos-cp', {
+      const payload = {
         empresa:         fEmp,
         fornecedor_id:   fForn   || null,
         banco_conta_id:  fBanco  || null,
@@ -455,17 +840,25 @@ export default function PagarPage() {
         documento_nome:  fDocumentoNome   || null,
         documento_mime:  fDocumentoMime   || null,
         documento_base64:fDocumentoBase64 || null,
-        dt_emissao:      fEmissao || null,
-        valor_total:     parseFloat(fValor),
+        dt_emissao:      dateOnly(fEmissao) || null,
+        valor_total:     moneyToNumber(fValor),
         qtd_parcelas:    fNParc,
         centro_custo:    fCC      || null,
         obs:             fObs     || null,
-        parcelas,
-      })
+        parcelas:        parcelas.map((p, idx) => normalizaParcelaPayload(p, idx)),
+      }
+      if (editingId) {
+        await apiClient.put(`/financeiro/lancamentos-cp/${editingId}`, payload)
+      } else {
+        await apiClient.post('/financeiro/lancamentos-cp', payload)
+      }
       closeForm()
       load()
     } catch (err: unknown) {
-      setErrors({ _geral: (err instanceof Error ? err.message : 'Erro ao salvar') || 'Erro ao salvar' })
+      const msg = (err as { response?: { data?: { message?: string } }; message?: string }).response?.data?.message
+        || (err instanceof Error ? err.message : 'Erro ao salvar')
+        || 'Erro ao salvar'
+      setErrors({ _geral: msg })
     } finally {
       setSaving(false)
     }
@@ -482,19 +875,20 @@ export default function PagarPage() {
 
   function openBaixaModal(l: Lancamento) {
     if (!l.parcela_id) return
-    const valor = Number(l.parcela_valor ?? l.valor_total ?? 0)
+    const valor = getValorFinalLancamento(l)
+    const baixaValorFinal = getBaixaValor(l, 'valor_final')
     const form: BaixaForm = {
       valor_parcela: valor.toFixed(2),
       motivo_baixa: l.parcela_motivo_baixa || '',
-      acrescimo: String(Number(l.parcela_acrescimo || 0)),
-      desconto: String(Number(l.parcela_desconto || 0)),
-      juros: String(Number(l.parcela_juros || 0)),
-      multa: String(Number(l.parcela_multa || 0)),
-      valor_final: String(Number(l.parcela_valor_final || valor).toFixed(2)),
+      acrescimo: String(getBaixaValor(l, 'acrescimo')),
+      desconto: String(getBaixaValor(l, 'desconto')),
+      juros: String(getBaixaValor(l, 'juros')),
+      multa: String(getBaixaValor(l, 'multa')),
+      valor_final: String((baixaValorFinal || valor).toFixed(2)),
       forma_pagamento: l.parcela_forma_pagamento || '',
-      dt_pagamento: l.parcela_dt_pagamento || todayISO(),
+      dt_pagamento: dateOnly(l.parcela_dt_pagamento) || todayISO(),
     }
-    form.valor_final = calculaValorFinalBaixa(form).toFixed(2)
+    if (!baixaValorFinal) form.valor_final = calculaValorFinalBaixa(form).toFixed(2)
     setBaixaParcela(l)
     setBaixaForm(form)
     setBaixaErrors({})
@@ -529,7 +923,7 @@ export default function PagarPage() {
     setSavingBaixa(true)
     try {
       await apiClient.put(`/financeiro/lancamentos-cp/${baixaParcela.id}/parcelas/${baixaParcela.parcela_id}/pagar`, {
-        dt_pagamento: baixaForm.dt_pagamento,
+        dt_pagamento: dateOnly(baixaForm.dt_pagamento),
         valor_parcela: moneyToNumber(baixaForm.valor_parcela),
         motivo_baixa: baixaForm.motivo_baixa.trim() || null,
         acrescimo: moneyToNumber(baixaForm.acrescimo),
@@ -547,6 +941,61 @@ export default function PagarPage() {
     } finally {
       setSavingBaixa(false)
     }
+  }
+
+  async function cancelarBaixa(l: Lancamento) {
+    if (!l.id || !l.parcela_id) return
+    const ok = window.confirm('Cancelar a baixa desta parcela? O lançamento voltará para pendente e o movimento bancário gerado pela baixa será removido.')
+    if (!ok) return
+
+    const key = `${l.id}-${l.parcela_id}`
+    setCancelandoBaixa(key)
+    try {
+      await apiClient.put(`/financeiro/lancamentos-cp/${l.id}/parcelas/${l.parcela_id}/cancelar-baixa`)
+      load()
+    } catch (err: unknown) {
+      alert((err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Erro ao cancelar baixa')
+    } finally {
+      setCancelandoBaixa(null)
+    }
+  }
+
+  function getValorFinalLancamento(l: Lancamento) {
+    const valor = Number(l.parcela_valor ?? l.valor_total ?? 0)
+    const calculado = valor
+      + Number(l.parcela_acrescimo || 0)
+      + Number(l.parcela_multa || 0)
+      + Number(l.parcela_juros || 0)
+      - Number(l.parcela_desconto || 0)
+    const final = l.parcela_valor_final === null || l.parcela_valor_final === undefined
+      ? calculado
+      : Number(l.parcela_valor_final)
+    return Math.max(0, Number.isFinite(final) ? final : valor)
+  }
+
+  function hasAjustesLancamento(l: Lancamento) {
+    const valor = Number(l.parcela_valor ?? l.valor_total ?? 0)
+    const final = getValorFinalLancamento(l)
+    return Number(l.parcela_acrescimo || 0) !== 0
+      || Number(l.parcela_multa || 0) !== 0
+      || Number(l.parcela_juros || 0) !== 0
+      || Number(l.parcela_desconto || 0) !== 0
+      || Math.abs(final - valor) > 0.009
+  }
+
+  function getBaixaValor(l: Lancamento, key: 'acrescimo' | 'desconto' | 'juros' | 'multa' | 'valor_final') {
+    const baixaKey = `parcela_baixa_${key}` as keyof Lancamento
+    const baixaValue = l[baixaKey]
+    if (baixaValue !== null && baixaValue !== undefined) return Number(baixaValue || 0)
+
+    // Compatibilidade com baixas antigas, antes da separação entre valor do lançamento e valor da baixa.
+    if ((l.parcela_status || l.status) === 'pago') {
+      const legacyKey = key === 'valor_final' ? 'parcela_valor_final' : `parcela_${key}`
+      const legacyValue = l[legacyKey as keyof Lancamento]
+      if (legacyValue !== null && legacyValue !== undefined) return Number(legacyValue || 0)
+    }
+
+    return 0
   }
 
   const inp = 'w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white text-slate-700 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100'
@@ -607,13 +1056,14 @@ export default function PagarPage() {
 
           <div>
             <label className="block text-[11px] font-medium text-slate-500 mb-1">Fornecedor</label>
-            <select value={fFornecedorFiltro} onChange={e => setFFornecedorFiltro(e.target.value)}
-              className="w-full text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700">
-              <option value="">Todos fornecedores</option>
-              {fornecedores
-                .filter(f => !fEmpresa || f.empresa === fEmpresa || f.empresa === 'TODOS')
-                .map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
-            </select>
+            <FornecedorSelect
+              value={fFornecedorFiltro}
+              onChange={setFFornecedorFiltro}
+              fornecedores={fornecedores.filter(f => !fEmpresa || f.empresa === fEmpresa || f.empresa === 'TODOS')}
+              inp="w-full text-xs border border-slate-200 rounded-lg px-2 py-2 bg-white text-slate-700 focus:outline-none focus:border-blue-400"
+              placeholder="Todos fornecedores"
+              emptyLabel="Todos fornecedores"
+            />
           </div>
 
           <div>
@@ -697,6 +1147,11 @@ export default function PagarPage() {
               {!loading && sortedLista.map(l => {
                 const statusParcela = l.parcela_status || l.status
                 const valorParcela = Number(l.parcela_valor ?? l.valor_total ?? 0)
+                const valorFinalLancamento = getValorFinalLancamento(l)
+                const valorFinalBaixa = getBaixaValor(l, 'valor_final') || valorFinalLancamento
+                const mostrarBaixa = statusParcela === 'pago'
+                const mostrarAjustesLancamento = hasAjustesLancamento(l)
+                const cancelKey = `${l.id}-${l.parcela_id}`
                 return (
                   <tr key={`${l.id}-${l.parcela_id || l.parcela_numero || 'sem-parcela'}`} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                     <td className="px-3 py-2.5">
@@ -714,10 +1169,30 @@ export default function PagarPage() {
                     <td className="px-3 py-2 text-center text-slate-600 whitespace-nowrap">
                       {l.parcela_numero ? `${l.parcela_numero}/${l.qtd_parcelas || 1}` : '—'}
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-800 whitespace-nowrap">{R$(valorParcela)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-800 whitespace-nowrap align-top">
+                      <p className="font-semibold">{R$(valorFinalLancamento)}</p>
+                      {mostrarAjustesLancamento && (
+                        <div className="mt-1 space-y-0.5 text-[10px] leading-4 text-slate-400 font-normal">
+                          <p>Base: {R$(valorParcela)}</p>
+                          <p>Multa {R$(Number(l.parcela_multa || 0))} · Juros {R$(Number(l.parcela_juros || 0))}</p>
+                          <p>Desc. {R$(Number(l.parcela_desconto || 0))} · Acrésc. {R$(Number(l.parcela_acrescimo || 0))}</p>
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.dt_emissao)}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.parcela_vencimento || l.proximo_venc)}</td>
-                    <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.parcela_dt_pagamento)}</td>
+                    <td className="px-3 py-2 min-w-[210px] text-slate-500 align-top">
+                      <p className="whitespace-nowrap">{fmtDate(l.parcela_dt_pagamento)}</p>
+                      {mostrarBaixa && (
+                        <div className="mt-1 space-y-0.5 text-[10px] leading-4 text-slate-400">
+                          <p>Forma: {l.parcela_forma_pagamento || '—'}</p>
+                          <p>Multa {R$(getBaixaValor(l, 'multa'))} · Juros {R$(getBaixaValor(l, 'juros'))}</p>
+                          <p>Desc. {R$(getBaixaValor(l, 'desconto'))} · Acrésc. {R$(getBaixaValor(l, 'acrescimo'))}</p>
+                          <p className="font-semibold text-slate-500">Valor final da baixa: {R$(valorFinalBaixa)}</p>
+                          {l.parcela_motivo_baixa && <p className="truncate max-w-[190px]">Motivo: {l.parcela_motivo_baixa}</p>}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex flex-col items-start gap-1.5">
                         <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', STATUS_COLORS[statusParcela] || STATUS_COLORS.cancelado)}>
@@ -732,6 +1207,27 @@ export default function PagarPage() {
                             Dar baixa
                           </button>
                         )}
+                        {statusParcela === 'pago' && l.parcela_id && (
+                          <button
+                            type="button"
+                            onClick={() => cancelarBaixa(l)}
+                            disabled={cancelandoBaixa === cancelKey}
+                            className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-60"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            {cancelandoBaixa === cancelKey ? 'Cancelando…' : 'Cancelar baixa'}
+                          </button>
+                        )}
+                        <div className="flex items-center gap-1 mt-1">
+                          <button type="button" onClick={() => handleEdit(l)} title="Editar"
+                            className="p-1 rounded hover:bg-blue-50 text-blue-500">
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button type="button" onClick={() => setDeletingId(l.id)} title="Excluir"
+                            className="p-1 rounded hover:bg-red-50 text-red-400">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     </td>
                   </tr>
@@ -745,10 +1241,10 @@ export default function PagarPage() {
       {/* Modal Form */}
       {showForm && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 pt-6 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
               <div>
-                <h2 className="text-base font-bold text-slate-800">Novo Lançamento — Contas a Pagar</h2>
+                <h2 className="text-base font-bold text-slate-800">{editingId ? 'Editar' : 'Novo'} Lançamento — Contas a Pagar</h2>
                 <p className="text-xs text-slate-500 mt-0.5">Preencha os dados do lançamento e suas parcelas</p>
               </div>
               <button onClick={closeForm} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
@@ -778,12 +1274,12 @@ export default function PagarPage() {
                         + Novo fornecedor
                       </button>
                     </div>
-                    <select className={inp} value={fForn} onChange={e => setFForn(e.target.value)}>
-                      <option value="">Selecione (opcional)</option>
-                      {fornecedores
-                        .filter(f => !fEmp || f.empresa === fEmp || f.empresa === 'TODOS')
-                        .map(f => <option key={f.id} value={f.id}>{f.razao_social}</option>)}
-                    </select>
+                    <FornecedorSelect
+                      value={fForn}
+                      onChange={setFForn}
+                      fornecedores={fornecedores.filter(f => !fEmp || f.empresa === fEmp || f.empresa === 'TODOS')}
+                      inp={inp}
+                    />
                   </div>
                   <div className="col-span-2">
                     <F label="Histórico" name="historico" required>
@@ -798,7 +1294,7 @@ export default function PagarPage() {
                     </select>
                   </F>
                   <F label="Número do Documento" name="nf_doc">
-                    <input className={inp} value={fNF} onChange={e => setFNF(e.target.value)} placeholder="Ex.: NF, boleto, recibo" />
+                    <input className={cn(inp, errors.nf_doc && 'border-red-300')} value={fNF} onChange={e => setFNF(e.target.value)} placeholder="Mín. 9 dígitos numéricos" />
                   </F>
                   <F label="Documento em PDF ou imagem" name="documento_arquivo" full>
                     <label className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-600 cursor-pointer hover:bg-slate-100">
@@ -826,18 +1322,25 @@ export default function PagarPage() {
                     {fDocumentoErro && <p className="text-[10px] text-red-500">{fDocumentoErro}</p>}
                   </F>
                   <F label="Plano de Contas" name="conta_contabil">
-                    <select className={inp} value={fConta} onChange={e => setFConta(e.target.value)}>
-                      <option value="">Selecione</option>
-                      {plano.map(c => <option key={c.codigo} value={c.codigo}>{c.codigo} – {c.descricao}</option>)}
-                    </select>
+                    <PlanoContasSelect value={fConta} onChange={setFConta} contas={plano} inp={inp} />
                   </F>
                   <F label="Banco para Pagamento" name="banco_conta_id">
-                    <select className={inp} value={fBanco} onChange={e => setFBanco(e.target.value)}>
-                      <option value="">Selecione</option>
-                      {bancos
-                        .filter(b => !fEmp || b.empresa === fEmp)
-                        .map(b => <option key={b.id} value={b.id}>{b.empresa} – {b.banco_nome} {b.agencia ? `ag.${b.agencia}` : ''} {b.conta || ''}</option>)}
-                    </select>
+                    <BancoSelect
+                      value={fBancoCodigo}
+                      onChange={v => {
+                        setFBancoCodigo(v)
+                        const match = bancos.find(b => b.banco_nome?.toLowerCase().includes(BANCOS_BR.find(x=>x.codigo===v)?.nome?.split(' ')[0]?.toLowerCase()||'__') || String(b.id) === v)
+                        setFBanco(match ? String(match.id) : '')
+                      }}
+                      inp={inp}
+                    />
+                    {bancos.filter(b => !fEmp || b.empresa === fEmp).length > 0 && (
+                      <select className={cn(inp,'mt-1 text-[10px] text-slate-500')} value={fBanco} onChange={e => setFBanco(e.target.value)}>
+                        <option value="">Conta cadastrada (opcional)</option>
+                        {bancos.filter(b => !fEmp || b.empresa === fEmp)
+                          .map(b => <option key={b.id} value={b.id}>{b.empresa} – {b.banco_nome} {b.agencia ? `ag.${b.agencia}` : ''} {b.conta || ''}</option>)}
+                      </select>
+                    )}
                   </F>
                   <F label="Data de Emissão" name="dt_emissao">
                     <input className={inp} type="date" value={fEmissao} onChange={e => setFEmissao(e.target.value)} />
@@ -853,7 +1356,7 @@ export default function PagarPage() {
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Valor e Parcelas</p>
                 <div className="grid grid-cols-2 gap-3 mb-4">
                   <F label="Valor Total (R$)" name="valor" required>
-                    <input className={inp} type="number" step="0.01" min="0"
+                    <input className={inp} type="text" inputMode="decimal"
                       value={fValor} onChange={e => setFValor(e.target.value)} placeholder="0,00" />
                   </F>
                   <F label="Número de Parcelas" name="qtd_parcelas">
@@ -870,7 +1373,7 @@ export default function PagarPage() {
                     <p className="text-xs font-medium text-slate-600 mb-2">Parcelas e Vencimentos</p>
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
                       {parcelas.map((p, i) => (
-                        <div key={i} className="grid grid-cols-[76px_1fr_120px_120px] items-end gap-3 bg-slate-50 rounded-lg px-3 py-2">
+                        <div key={i} className="grid grid-cols-[60px_1fr_95px_85px_85px_85px_105px] items-end gap-2 bg-slate-50 rounded-lg px-3 py-2">
                           <div>
                             <label className="block text-[10px] text-slate-500 mb-1">Parcela</label>
                             <div className="text-xs font-semibold text-slate-600">{p.numero || i + 1}/{parcelas.length}</div>
@@ -883,19 +1386,33 @@ export default function PagarPage() {
                           </div>
                           <div>
                             <label className="block text-[10px] text-slate-500 mb-1">Valor</label>
-                            <input type="number" step="0.01" value={p.valor}
-                              onChange={e => updateParcela(i, 'valor', parseFloat(e.target.value) || 0)}
+                            <input type="text" inputMode="decimal" value={decimalInputValue(p.valor)}
+                              onChange={e => updateParcela(i, 'valor', e.target.value)}
                               className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums" />
                           </div>
                           <div>
-                            <label className="block text-[10px] text-slate-500 mb-1">Status</label>
-                            <select value={p.status || 'pendente'} onChange={e => updateParcela(i, 'status', e.target.value)}
-                              className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full">
-                              <option value="pendente">Pendente</option>
-                              <option value="pago">Pago</option>
-                              <option value="vencido">Vencido</option>
-                              <option value="cancelado">Cancelado</option>
-                            </select>
+                            <label className="block text-[10px] text-red-400 mb-1">Multa</label>
+                            <input type="text" inputMode="decimal" value={decimalInputValue(p.multa)} placeholder="0,00"
+                              onChange={e => updateParcela(i, 'multa', e.target.value)}
+                              className="text-xs border border-red-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-red-600" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-orange-400 mb-1">Juros</label>
+                            <input type="text" inputMode="decimal" value={decimalInputValue(p.juros)} placeholder="0,00"
+                              onChange={e => updateParcela(i, 'juros', e.target.value)}
+                              className="text-xs border border-orange-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-orange-600" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-green-500 mb-1">Desconto</label>
+                            <input type="text" inputMode="decimal" value={decimalInputValue(p.desconto)} placeholder="0,00"
+                              onChange={e => updateParcela(i, 'desconto', e.target.value)}
+                              className="text-xs border border-green-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-green-700" />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-500 mb-1">Final</label>
+                            <div className="text-xs border border-slate-200 rounded px-2 py-1 bg-slate-100 w-full text-right tabular-nums font-semibold text-slate-700">
+                              {R$(calculaValorFinalParcela(p))}
+                            </div>
                           </div>
                         </div>
                       ))}
@@ -947,7 +1464,7 @@ export default function PagarPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-slate-600">Valor da parcela</label>
-                  <input className={inp} type="number" step="0.01" min="0"
+                  <input className={inp} type="text" inputMode="decimal"
                     value={baixaForm.valor_parcela} onChange={e => updateBaixaForm('valor_parcela', e.target.value)} />
                 </div>
                 <div>
@@ -958,28 +1475,28 @@ export default function PagarPage() {
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Acréscimos</label>
-                  <input className={inp} type="number" step="0.01" min="0"
+                  <input className={inp} type="text" inputMode="decimal"
                     value={baixaForm.acrescimo} onChange={e => updateBaixaForm('acrescimo', e.target.value)} />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Descontos</label>
-                  <input className={inp} type="number" step="0.01" min="0"
+                  <input className={inp} type="text" inputMode="decimal"
                     value={baixaForm.desconto} onChange={e => updateBaixaForm('desconto', e.target.value)} />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Juros</label>
-                  <input className={inp} type="number" step="0.01" min="0"
+                  <input className={inp} type="text" inputMode="decimal"
                     value={baixaForm.juros} onChange={e => updateBaixaForm('juros', e.target.value)} />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Multa</label>
-                  <input className={inp} type="number" step="0.01" min="0"
+                  <input className={inp} type="text" inputMode="decimal"
                     value={baixaForm.multa} onChange={e => updateBaixaForm('multa', e.target.value)} />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Valor final</label>
                   <input className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50 text-slate-700 focus:outline-none"
-                    type="number" step="0.01" value={baixaForm.valor_final} readOnly />
+                    type="text" inputMode="decimal" value={baixaForm.valor_final} readOnly />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Forma de pagamento <span className="text-red-500">*</span></label>
@@ -1018,66 +1535,31 @@ export default function PagarPage() {
         </div>
       )}
 
-      {showFornecedorModal && (
-        <div className="fixed inset-0 z-[60] bg-black/50 flex items-start justify-center p-4 pt-10 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-              <div>
-                <h3 className="text-base font-bold text-slate-800">Novo Fornecedor</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Cadastro rápido para usar neste lançamento</p>
-              </div>
-              <button type="button" onClick={closeFornecedorModal} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      <FornecedorFormModal
+        open={showFornecedorModal}
+        onClose={closeFornecedorModal}
+        onSaved={criado => {
+          apiClient.get('/financeiro/fornecedores/select').then(sel => {
+            setFornecedores(sel.data.data || [])
+            setFForn(String(criado.id))
+            if (!fEmp && criado.empresa && criado.empresa !== 'TODOS') setFEmp(criado.empresa)
+          })
+          closeFornecedorModal()
+        }}
+      />
 
-            <div className="px-5 py-4 space-y-3">
-              {fornecedorErrors._geral && (
-                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">{fornecedorErrors._geral}</div>
-              )}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="text-xs font-medium text-slate-600">Razão Social <span className="text-red-500">*</span></label>
-                  <input className={cn(inp, fornecedorErrors.razao_social && 'border-red-300')} value={novoFornecedor.razao_social}
-                    onChange={e => setNovoFornecedor(v => ({ ...v, razao_social: e.target.value }))} placeholder="Nome completo / razão social" />
-                  {fornecedorErrors.razao_social && <p className="text-[10px] text-red-500 mt-1">{fornecedorErrors.razao_social}</p>}
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Nome Fantasia</label>
-                  <input className={inp} value={novoFornecedor.nome_fantasia}
-                    onChange={e => setNovoFornecedor(v => ({ ...v, nome_fantasia: e.target.value }))} placeholder="Opcional" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-600">CNPJ / CPF</label>
-                  <input className={inp} value={novoFornecedor.cnpj_cpf}
-                    onChange={e => setNovoFornecedor(v => ({ ...v, cnpj_cpf: e.target.value }))} placeholder="Opcional" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Tipo de Pessoa</label>
-                  <select className={inp} value={novoFornecedor.tipo_pessoa} onChange={e => setNovoFornecedor(v => ({ ...v, tipo_pessoa: e.target.value as 'PJ' | 'PF' }))}>
-                    <option value="PJ">Pessoa Jurídica</option>
-                    <option value="PF">Pessoa Física</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Empresa <span className="text-red-500">*</span></label>
-                  <select className={cn(inp, fornecedorErrors.empresa && 'border-red-300')} value={novoFornecedor.empresa} onChange={e => setNovoFornecedor(v => ({ ...v, empresa: e.target.value }))}>
-                    <option value="">Selecione</option>
-                    <option value="TODOS">Todas</option>
-                    {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
-                  </select>
-                  {fornecedorErrors.empresa && <p className="text-[10px] text-red-500 mt-1">{fornecedorErrors.empresa}</p>}
-                </div>
-              </div>
-            </div>
 
-            <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-100 bg-slate-50/50 rounded-b-2xl">
-              <button type="button" onClick={closeFornecedorModal} className="px-4 py-2 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50">
-                Cancelar
-              </button>
-              <button type="button" onClick={saveFornecedorRapido} disabled={savingFornecedor}
-                className="flex items-center gap-2 px-5 py-2 text-xs font-semibold bg-[#1e3a5f] hover:bg-[#162d4a] text-white rounded-lg disabled:opacity-60">
-                {savingFornecedor ? 'Salvando…' : <><Check className="w-3.5 h-3.5" /> Salvar Fornecedor</>}
+      {/* ── Modal confirmar exclusão ── */}
+      {deletingId !== null && (
+        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-5">
+            <h3 className="font-bold text-slate-800 mb-2">Excluir lançamento?</h3>
+            <p className="text-xs text-slate-500 mb-4">Esta ação não pode ser desfeita. Se houver baixa vinculada, o movimento bancário gerado por ela também será removido.</p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setDeletingId(null)} className="px-4 py-2 text-xs rounded-lg border border-slate-200 hover:bg-slate-50">Cancelar</button>
+              <button onClick={handleDeleteConfirm} disabled={deletingLoading}
+                className="px-4 py-2 text-xs rounded-lg bg-red-500 hover:bg-red-600 text-white font-semibold disabled:opacity-60">
+                {deletingLoading ? 'Excluindo…' : 'Excluir'}
               </button>
             </div>
           </div>

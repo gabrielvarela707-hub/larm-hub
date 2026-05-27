@@ -7,6 +7,7 @@ const express          = require('express')
 const { query }        = require('../config/database')
 const { authenticate } = require('../middleware/authenticate')
 const logger           = require('../config/logger')
+const { PLANO_CONTAS_SEED } = require('../data/plano_contas_seed')
 
 const router = express.Router()
 router.use(authenticate)
@@ -536,13 +537,192 @@ router.delete('/bancos/:id', async (req, res) => {
 // PLANO DE CONTAS
 // ══════════════════════════════════════════════════════════════════════════════
 
+function sanitizePlanoTipo(tipo) {
+  const t = String(tipo || 'A').trim().toUpperCase()
+  return ['T', 'S', 'A'].includes(t) ? t : 'A'
+}
+
+async function resolvePlanoPaiId(paiId, codigoAtual = null) {
+  if (!paiId) return null
+
+  const { rows } = await query(
+    'SELECT id, codigo FROM fin_plano_contas WHERE id=$1 LIMIT 1',
+    [parseInt(paiId)]
+  )
+
+  if (!rows.length) return null
+  if (codigoAtual && rows[0].codigo === codigoAtual) return null
+  return rows[0].id
+}
+
+async function seedPlanoContasFromExcel() {
+  let upserts = 0
+
+  for (const item of PLANO_CONTAS_SEED) {
+    await query(
+      `INSERT INTO fin_plano_contas (codigo, descricao, tipo, ativo)
+       VALUES ($1, $2, $3, true)
+       ON CONFLICT (codigo) DO UPDATE
+          SET descricao = EXCLUDED.descricao,
+              tipo = EXCLUDED.tipo,
+              ativo = true`,
+      [item.codigo, item.descricao, sanitizePlanoTipo(item.tipo)]
+    )
+    upserts++
+  }
+
+  for (const item of PLANO_CONTAS_SEED) {
+    if (!item.pai_codigo) {
+      await query('UPDATE fin_plano_contas SET pai_id=NULL WHERE codigo=$1', [item.codigo])
+      continue
+    }
+
+    await query(
+      `UPDATE fin_plano_contas filho
+          SET pai_id = pai.id
+         FROM fin_plano_contas pai
+        WHERE filho.codigo = $1
+          AND pai.codigo = $2
+          AND filho.id <> pai.id`,
+      [item.codigo, item.pai_codigo]
+    )
+  }
+
+  return upserts
+}
+
 // GET /plano-contas
 router.get('/plano-contas', async (req, res) => {
+  const { busca, tipo, ativo = '1' } = req.query
+
   try {
+    const conditions = []
+    const params = []
+
+    if (ativo !== 'todos') {
+      params.push(ativo === '0' ? false : true)
+      conditions.push(`c.ativo = $${params.length}`)
+    }
+
+    if (tipo && tipo !== 'todos') {
+      params.push(sanitizePlanoTipo(tipo))
+      conditions.push(`c.tipo = $${params.length}`)
+    }
+
+    if (busca) {
+      params.push(`%${busca}%`)
+      conditions.push(`(c.codigo ILIKE $${params.length} OR c.descricao ILIKE $${params.length})`)
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+
     const { rows } = await query(
-      `SELECT id, codigo, descricao, tipo, pai_id FROM fin_plano_contas WHERE ativo=true ORDER BY codigo`
+      `SELECT
+         c.id,
+         c.codigo,
+         c.descricao,
+         c.tipo,
+         c.pai_id,
+         c.ativo,
+         p.codigo AS pai_codigo,
+         p.descricao AS pai_descricao
+       FROM fin_plano_contas c
+       LEFT JOIN fin_plano_contas p ON p.id = c.pai_id
+       ${where}
+       ORDER BY string_to_array(regexp_replace(c.codigo, '\\.$', ''), '.')::int[] NULLS LAST, c.codigo`,
+      params
     )
+
     return res.json({ ok: true, data: rows })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+// POST /plano-contas/seed
+router.post('/plano-contas/seed', async (req, res) => {
+  try {
+    const total = await seedPlanoContasFromExcel()
+    logger.info(`Plano de contas seed atualizado: ${total} contas`)
+    return res.json({ ok: true, total })
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+// POST /plano-contas
+router.post('/plano-contas', async (req, res) => {
+  const { codigo, descricao, tipo = 'A', pai_id, ativo = true } = req.body
+
+  if (!String(codigo || '').trim()) {
+    return res.status(400).json({ ok: false, message: 'Código obrigatório' })
+  }
+  if (!String(descricao || '').trim()) {
+    return res.status(400).json({ ok: false, message: 'Descrição obrigatória' })
+  }
+
+  try {
+    const codigoLimpo = String(codigo).trim()
+    const paiId = await resolvePlanoPaiId(pai_id, codigoLimpo)
+
+    const { rows } = await query(
+      `INSERT INTO fin_plano_contas (codigo, descricao, tipo, pai_id, ativo)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, codigo, descricao, tipo, pai_id, ativo`,
+      [codigoLimpo, String(descricao).trim(), sanitizePlanoTipo(tipo), paiId, ativo !== false]
+    )
+
+    return res.status(201).json({ ok: true, data: rows[0] })
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ ok: false, message: 'Já existe uma conta com este código' })
+    }
+    return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+// PUT /plano-contas/:id
+router.put('/plano-contas/:id', async (req, res) => {
+  const { codigo, descricao, tipo = 'A', pai_id, ativo = true } = req.body
+
+  if (!String(codigo || '').trim()) {
+    return res.status(400).json({ ok: false, message: 'Código obrigatório' })
+  }
+  if (!String(descricao || '').trim()) {
+    return res.status(400).json({ ok: false, message: 'Descrição obrigatória' })
+  }
+
+  try {
+    const codigoLimpo = String(codigo).trim()
+    const paiId = await resolvePlanoPaiId(pai_id, codigoLimpo)
+
+    const { rows } = await query(
+      `UPDATE fin_plano_contas
+          SET codigo=$1,
+              descricao=$2,
+              tipo=$3,
+              pai_id=$4,
+              ativo=$5
+        WHERE id=$6
+        RETURNING id, codigo, descricao, tipo, pai_id, ativo`,
+      [codigoLimpo, String(descricao).trim(), sanitizePlanoTipo(tipo), paiId, ativo !== false, req.params.id]
+    )
+
+    if (!rows.length) return res.status(404).json({ ok: false, message: 'Não encontrado' })
+    return res.json({ ok: true, data: rows[0] })
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ ok: false, message: 'Já existe uma conta com este código' })
+    }
+    return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+// DELETE /plano-contas/:id
+router.delete('/plano-contas/:id', async (req, res) => {
+  try {
+    await query('UPDATE fin_plano_contas SET ativo=false WHERE id=$1', [req.params.id])
+    return res.json({ ok: true })
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message })
   }

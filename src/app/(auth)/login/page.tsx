@@ -149,7 +149,7 @@ export default function HubSelectorPage() {
           <div className="w-[1px] flex-1 bg-white/[0.06]" />
         </div>
 
-        {/* LARM HUB */}
+        {/* LarmHub */}
         <button
           onClick={() => router.push('/login/larm')}
           onMouseEnter={() => setHovering('larm')}

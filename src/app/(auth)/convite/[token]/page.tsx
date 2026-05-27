@@ -12,7 +12,10 @@ interface InviteInfo {
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador', manager: 'Gerente', broker: 'Corretor',
+  financial: 'Financeiro', controller: 'Controladoria',
   accountant: 'Contador', viewer: 'Visualizador',
+  assistant: 'Assistente', supplier: 'Fornecedor',
+  client: 'Cliente', consultant: 'Consultor',
 }
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'

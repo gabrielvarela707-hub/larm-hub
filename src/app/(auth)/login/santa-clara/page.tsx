@@ -39,7 +39,7 @@ export default function SantaClaraLoginPage() {
     e.preventDefault()
     setError('')
     setLoading(true)
-    const result = await login(email.trim(), password)
+    const result = await login(email.trim(), password, 'santa_clara')
     setLoading(false)
     if (result.ok) {
       const user = useAuthStore.getState().user

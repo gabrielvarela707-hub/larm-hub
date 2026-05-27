@@ -2,7 +2,7 @@
 
 /**
  * src/app/(dashboard)/cadastros/tipo-documento/page.tsx
- * → lotemobile2/src/app/(dashboard)/cadastros/tipo-documento/page.tsx  (novo)
+ * → larmhub-web/src/app/(dashboard)/cadastros/tipo-documento/page.tsx  (novo)
  */
 
 import { useState, useEffect, useCallback } from 'react'

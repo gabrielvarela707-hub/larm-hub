@@ -2,7 +2,7 @@
 
 /**
  * src/app/(auth)/trocar-senha/page.tsx
- * → lotemobile2/src/app/(auth)/trocar-senha/page.tsx
+ * → larmhub-web/src/app/(auth)/trocar-senha/page.tsx
  *
  * Exibida após o primeiro login com senha temporária.
  * Obriga o usuário a definir uma nova senha antes de acessar o sistema.
