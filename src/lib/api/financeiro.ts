@@ -33,7 +33,7 @@ export interface Fornecedor {
    */
   [key: string]: any
   id: number
-  empresa?: Empresa | string
+  empresa?: Empresa | 'TODOS' | 'LUCKY'
   codigo?: string
   tipo_pessoa: 'PJ' | 'PF'
   cnpj_cpf: string
@@ -77,12 +77,13 @@ export interface Fornecedor {
   conta_corrente?: string
   conta_pag?: string
   digito?: string
-  tipo_conta?: string
+  tipo_conta?: 'Corrente' | 'Poupança'
   tipo_conta_pag?: 'CC' | 'CP' | string
   pix_chave?: string
   pix_tipo?: string
   chave_pix?: string
   tipo_chave_pix?: string
+  tipo_pix?: string
 
   ativo: boolean
   bloquear_lanc: boolean
