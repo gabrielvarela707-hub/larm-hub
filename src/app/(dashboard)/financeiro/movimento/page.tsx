@@ -6,6 +6,8 @@ import { Search, TrendingUp, TrendingDown, DollarSign, ChevronLeft, ChevronRight
 import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 
+const DEFAULT_YEAR = 2026
+
 const R$ = (v: number | string | null | undefined) => {
   const n = typeof v === 'string' ? Number(v) : (v ?? 0)
   if (!Number.isFinite(n) || n === 0) return '—'
@@ -28,25 +30,22 @@ interface Mov {
   id: number
   data: string | null
   empresa: string | null
-  origem: string | null
   banco: string | null
-  agencia: string | null
-  conta: string | null
-  fornecedor: string | null
-  tipo_documento: string | null
-  documento: string | null
-  parcela: string | null
-  vencimento: string | null
-  valor_principal: number
-  multa: number
-  juros: number
-  desconto: number
-  valor_final: number
-  saldo: number | null
-  status: string | null
   entradas: number
   saidas: number
+  fornecedor: string | null
+  historico: string | null
+  nf_doc: string | null
+  emissao_doc: string | null
+  conta_contabil: string | null
+  centro_custo: string | null
+  obra: string | null
+  natureza_financeira: string | null
+  n_cheque: string | null
+  saldo: number | null
+  status: string | null
   mes: number
+  ano: number
 }
 
 interface SelectOption { id: number | string; nome: string }
@@ -71,19 +70,18 @@ interface ResumoMensal {
 type SortKey =
   | 'data'
   | 'empresa'
-  | 'origem'
   | 'banco'
-  | 'agencia'
-  | 'conta'
+  | 'entradas'
+  | 'saidas'
   | 'fornecedor'
-  | 'documento'
-  | 'parcela'
-  | 'vencimento'
-  | 'valor_principal'
-  | 'multa'
-  | 'juros'
-  | 'desconto'
-  | 'valor_final'
+  | 'historico'
+  | 'nf_doc'
+  | 'emissao_doc'
+  | 'conta_contabil'
+  | 'centro_custo'
+  | 'obra'
+  | 'natureza_financeira'
+  | 'n_cheque'
   | 'saldo'
 
 type SortDir = 'asc' | 'desc'
@@ -170,7 +168,7 @@ export default function MovimentoPage() {
   const [fStatus, setFStatus] = useState('')
   const [fDataDe, setFDataDe] = useState('')
   const [fDataAte, setFDataAte] = useState('')
-  const [fAno, setFAno] = useState<number>(new Date().getFullYear())
+  const [fAno, setFAno] = useState<number>(DEFAULT_YEAR)
   const [fMes, setFMes] = useState<number | null>(null)
   const [fTipo, setFTipo] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('data')
@@ -181,18 +179,24 @@ export default function MovimentoPage() {
 
   useEffect(() => {
     apiClient.get('/financeiro/movimento/filtros').then(r => {
-      const data = r.data.data as Filtros
-      setFiltros(data)
-      if (data?.anos?.length) setFAno(data.anos[0])
+      setFiltros(r.data.data as Filtros)
     }).catch(() => {})
   }, [])
 
   const ordenar = `${sortKey}_${sortDir}`
 
+  const yearOptions = Array.from(new Set([
+    ...Array.from({ length: DEFAULT_YEAR - 2021 + 1 }, (_, i) => 2021 + i),
+    ...(filtros?.anos ?? []),
+  ]))
+    .filter(a => Number.isFinite(Number(a)) && Number(a) >= 2021)
+    .map(Number)
+    .sort((a, b) => a - b)
+
   const loadMovs = useCallback(async (pg = 1) => {
     setLoading(true)
     try {
-      const params: Record<string, unknown> = { page: pg, limit: LIMIT, ordenar }
+      const params: Record<string, unknown> = { page: pg, limit: LIMIT, ordenar, ano: fAno }
       if (fEmpresa) params.empresa = fEmpresa
       if (fBanco) params.banco = fBanco
       if (fConta) params.conta_id = fConta
@@ -209,7 +213,7 @@ export default function MovimentoPage() {
       setSummary(r.data.summary)
     } catch { }
     finally { setLoading(false) }
-  }, [ordenar, fEmpresa, fBanco, fConta, fFornecedor, fTipoDocumento, fStatus, fDataDe, fDataAte, fTipo, busca])
+  }, [ordenar, fAno, fEmpresa, fBanco, fConta, fFornecedor, fTipoDocumento, fStatus, fDataDe, fDataAte, fTipo, busca])
 
   const loadResumo = useCallback(async () => {
     try {
@@ -224,13 +228,13 @@ export default function MovimentoPage() {
   useEffect(() => {
     if (activeTab === 'lista') loadMovs(1)
     else loadResumo()
-  }, [fEmpresa, fBanco, fConta, fFornecedor, fTipoDocumento, fStatus, fDataDe, fDataAte, fTipo, ordenar, activeTab, loadMovs, loadResumo])
+  }, [fAno, fEmpresa, fBanco, fConta, fFornecedor, fTipoDocumento, fStatus, fDataDe, fDataAte, fTipo, ordenar, activeTab, loadMovs, loadResumo])
 
   const changeSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(prev => prev === 'asc' ? 'desc' : 'asc')
     else {
       setSortKey(key)
-      setSortDir(key === 'data' || key === 'vencimento' ? 'desc' : 'asc')
+      setSortDir(key === 'data' || key === 'emissao_doc' ? 'desc' : 'asc')
     }
   }
 
@@ -258,6 +262,8 @@ export default function MovimentoPage() {
     setFDataAte('')
     setFTipo('')
     setBusca('')
+    setFAno(DEFAULT_YEAR)
+    setFMes(null)
   }
 
   return (
@@ -273,6 +279,24 @@ export default function MovimentoPage() {
               className={cn('px-4 py-2 rounded-lg text-xs font-medium transition-colors',
                 activeTab === t ? 'bg-[#1e3a5f] text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50')}>
               {t === 'lista' ? 'Extrato' : 'Resumo'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-3 flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Filtro por ano</p>
+          <p className="text-xs text-slate-400">Selecione o ano importado para consultar o movimento bancário</p>
+        </div>
+        <div className="flex gap-1.5 flex-wrap">
+          {yearOptions.map(year => (
+            <button key={year} type="button" onClick={() => setFAno(year)}
+              className={cn('px-4 py-2 rounded-lg text-xs font-semibold transition-colors border',
+                fAno === year
+                  ? 'bg-[#1e3a5f] text-white border-[#1e3a5f]'
+                  : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100')}>
+              {year}
             </button>
           ))}
         </div>
@@ -358,7 +382,7 @@ export default function MovimentoPage() {
               className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold rounded-lg">
               Limpar filtros
             </button>
-            <button onClick={() => loadMovs(1)}
+            <button onClick={() => activeTab === 'lista' ? loadMovs(1) : loadResumo()}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg">
               Buscar
             </button>
@@ -388,31 +412,30 @@ export default function MovimentoPage() {
 
           <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-xs min-w-[1700px]">
+              <table className="w-full text-xs min-w-[1900px]">
                 <thead>
                   <tr className="bg-[#0d1b2a] text-white">
                     <SortTh k="data">Data</SortTh>
                     <SortTh k="empresa">Empresa</SortTh>
-                    <SortTh k="origem">Origem</SortTh>
                     <SortTh k="banco">Banco</SortTh>
-                    <SortTh k="agencia">Agência</SortTh>
-                    <SortTh k="conta">Conta</SortTh>
+                    <SortTh k="entradas" align="right">Entradas</SortTh>
+                    <SortTh k="saidas" align="right">Saídas</SortTh>
                     <SortTh k="fornecedor">Fornecedor</SortTh>
-                    <SortTh k="documento">Documento</SortTh>
-                    <SortTh k="parcela" align="center">Parcela</SortTh>
-                    <SortTh k="vencimento">Vencimento</SortTh>
-                    <SortTh k="valor_principal" align="right">Valor Principal</SortTh>
-                    <SortTh k="multa" align="right">Multa</SortTh>
-                    <SortTh k="juros" align="right">Juros</SortTh>
-                    <SortTh k="desconto" align="right">Desconto</SortTh>
-                    <SortTh k="valor_final" align="right">Valor Final</SortTh>
+                    <SortTh k="historico">Histórico</SortTh>
+                    <SortTh k="nf_doc">NF/DOC</SortTh>
+                    <SortTh k="emissao_doc">Emissão DOC</SortTh>
+                    <SortTh k="conta_contabil">Conta Contábil</SortTh>
+                    <SortTh k="centro_custo">Centro de Custo</SortTh>
+                    <SortTh k="obra">Obra</SortTh>
+                    <SortTh k="natureza_financeira">Natureza Financeira</SortTh>
+                    <SortTh k="n_cheque">N. Cheque</SortTh>
                     <SortTh k="saldo" align="right">Saldo</SortTh>
                   </tr>
                 </thead>
                 <tbody>
-                  {loading && <Skel cols={16} />}
+                  {loading && <Skel cols={15} />}
                   {!loading && movs.length === 0 && (
-                    <tr><td colSpan={16} className="text-center text-slate-400 py-12 text-sm">Nenhuma movimentação encontrada</td></tr>
+                    <tr><td colSpan={15} className="text-center text-slate-400 py-12 text-sm">Nenhuma movimentação encontrada para {fAno}</td></tr>
                   )}
                   {!loading && movs.map(m => (
                     <tr key={m.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
@@ -420,25 +443,21 @@ export default function MovimentoPage() {
                       <td className="px-3 py-2">
                         <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 font-medium">{m.empresa || '—'}</span>
                       </td>
-                      <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{m.origem || '—'}</td>
                       <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{m.banco || '—'}</td>
-                      <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{m.agencia || '—'}</td>
-                      <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{m.conta || '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600">{R$(m.entradas)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-semibold text-red-600">{R$(m.saidas)}</td>
                       <td className="px-3 py-2 max-w-[180px]">
                         <p className="font-medium text-slate-700 truncate">{m.fornecedor || '—'}</p>
                         {m.status && <span className={cn('inline-block mt-1 text-[10px] px-2 py-0.5 rounded-full font-medium', statusClass(m.status))}>{labelStatus(m.status)}</span>}
                       </td>
-                      <td className="px-3 py-2 max-w-[180px]">
-                        <p className="text-slate-700 truncate">{m.documento || '—'}</p>
-                        {m.tipo_documento && <p className="text-[10px] text-slate-400 truncate">{m.tipo_documento}</p>}
-                      </td>
-                      <td className="px-3 py-2 text-center whitespace-nowrap text-slate-600">{m.parcela || '—'}</td>
-                      <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(m.vencimento)}</td>
-                      <td className={cn('px-3 py-2 text-right tabular-nums font-semibold', (m.valor_principal ?? 0) < 0 ? 'text-red-600' : 'text-green-600')}>{R$(m.valor_principal)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{R$(m.multa)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{R$(m.juros)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{R$(m.desconto)}</td>
-                      <td className={cn('px-3 py-2 text-right tabular-nums font-semibold', (m.valor_final ?? 0) < 0 ? 'text-red-600' : 'text-green-600')}>{R$(m.valor_final)}</td>
+                      <td className="px-3 py-2 max-w-[360px]"><p className="text-slate-700 truncate" title={m.historico || ''}>{m.historico || '—'}</p></td>
+                      <td className="px-3 py-2 whitespace-nowrap text-slate-600">{m.nf_doc || '—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(m.emissao_doc)}</td>
+                      <td className="px-3 py-2 max-w-[180px]"><p className="text-slate-600 truncate" title={m.conta_contabil || ''}>{m.conta_contabil || '—'}</p></td>
+                      <td className="px-3 py-2 max-w-[180px]"><p className="text-slate-600 truncate" title={m.centro_custo || ''}>{m.centro_custo || '—'}</p></td>
+                      <td className="px-3 py-2 max-w-[160px]"><p className="text-slate-600 truncate" title={m.obra || ''}>{m.obra || '—'}</p></td>
+                      <td className="px-3 py-2 whitespace-nowrap text-slate-600">{m.natureza_financeira || '—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-slate-600">{m.n_cheque || '—'}</td>
                       <td className={cn('px-3 py-2 text-right tabular-nums font-medium', (m.saldo ?? 0) >= 0 ? 'text-blue-600' : 'text-orange-600')}>{R$(m.saldo)}</td>
                     </tr>
                   ))}
@@ -455,7 +474,7 @@ export default function MovimentoPage() {
           <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 flex gap-3 flex-wrap">
             <FilterField label="Ano">
               <select value={fAno} onChange={e => setFAno(Number(e.target.value))} className={inp}>
-                {(filtros?.anos ?? [new Date().getFullYear()]).map(a => <option key={a} value={a}>{a}</option>)}
+                {yearOptions.map(a => <option key={a} value={a}>{a}</option>)}
               </select>
             </FilterField>
             <FilterField label="Mês">
