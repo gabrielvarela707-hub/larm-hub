@@ -10,7 +10,7 @@ import { apiClient } from '@/lib/auth-store'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type Empresa = 'LARM' | 'LARM FILIAL' | 'MANTIQUEIRA' | 'RM' | 'LM' | 'HOLDING' | 'CONSOLIDADO'
+export type Empresa = string
 
 export interface PlanoContas {
   id: number
@@ -33,7 +33,7 @@ export interface Fornecedor {
    */
   [key: string]: any
   id: number
-  empresa?: Empresa | 'TODOS' | 'LUCKY'
+  empresa?: string
   codigo?: string
   tipo_pessoa: 'PJ' | 'PF'
   cnpj_cpf: string
@@ -77,7 +77,7 @@ export interface Fornecedor {
   conta_corrente?: string
   conta_pag?: string
   digito?: string
-  tipo_conta?: 'Corrente' | 'Poupança'
+  tipo_conta?: string
   tipo_conta_pag?: 'CC' | 'CP' | string
   pix_chave?: string
   pix_tipo?: string
@@ -188,11 +188,11 @@ export const getFornecedor = (id: number) =>
   apiClient.get<{ ok: boolean; data: Fornecedor }>(`/financeiro/fornecedores/${id}`)
     .then(data)
 
-export const createFornecedor = (body: Partial<Fornecedor>) =>
+export const createFornecedor = (body: Record<string, unknown> | Partial<Fornecedor>) =>
   apiClient.post<{ ok: boolean; data: Fornecedor }>('/financeiro/fornecedores', body)
     .then(data)
 
-export const updateFornecedor = (id: number, body: Partial<Fornecedor>) =>
+export const updateFornecedor = (id: number, body: Record<string, unknown> | Partial<Fornecedor>) =>
   apiClient.put<{ ok: boolean; data: Fornecedor }>(`/financeiro/fornecedores/${id}`, body)
     .then(data)
 
