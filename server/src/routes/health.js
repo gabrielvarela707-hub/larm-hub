@@ -19,7 +19,7 @@ router.get('/', async (req, res) => {
 
   return res.status(status).json({
     ok:      dbOk,
-    service: 'lotemobile-api',
+    service: 'larmhub-api',
     version: process.env.npm_package_version || '1.0.0',
     env:     process.env.NODE_ENV,
     uptime:  Math.floor(process.uptime()),

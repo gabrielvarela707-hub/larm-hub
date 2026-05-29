@@ -1026,6 +1026,42 @@ const SYSTEM_RELEASES = [
       ],
     },
   },
+  {
+    version: "0.3.9",
+    title: "Fornecedores — gestão de contratos",
+    description:
+      "Adiciona aba de contratos no cadastro de fornecedores, com controle de assinatura, renovação, índice de correção, valores, serviços, importação/exportação por planilha e anexo de PDF assinado.",
+    frontend_version: "0.3.9",
+    backend_version: "0.3.9",
+    released_at: "2026-05-29T00:00:00.000Z",
+    changes: [
+      "Adicionada aba Contratos no modal de Fornecedores sem alterar a aba Dados nem a aba Histórico.",
+      "Criado cadastro de contratos por fornecedor com título/serviço, número, status, datas de assinatura, início, fim e renovação.",
+      "Incluídos campos de índice de correção, valor mensal, valor total, valor pago, serviços contratados, responsável e observações.",
+      "Adicionado anexo de contrato assinado em PDF vinculado ao fornecedor.",
+      "Adicionada importação e exportação de contratos por planilha dentro da aba Contratos.",
+      "Adicionado botão Exportar fornecedores na listagem para usar a exportação backend já prevista no módulo.",
+      "Mantidas as telas e regras existentes de fornecedores, bancos e histórico sem alteração estrutural."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "XLSX",
+        "Fornecedores Contratos v0.3.9"
+      ],
+      backend: ["Node.js", "Express.js", "JWT", "REST API Financeiro", "PM2"],
+      database: ["PostgreSQL", "fin_fornecedor_contratos", "hub_system_releases"],
+      integrations: [
+        "Importação/exportação Excel",
+        "Anexo PDF em base64",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };

@@ -9,6 +9,7 @@ const logger = require('../src/config/logger')
 
 const TIPOS = [
   { nome: 'Nota Fiscal',              descricao: 'NF-e, NFS-e ou nota fiscal avulsa',      usado_em: ['pagar','receber'] },
+  { nome: 'NFS',                      descricao: 'Nota Fiscal de Serviço',                  usado_em: ['pagar','receber'] },
   { nome: 'Boleto',                   descricao: 'Boleto bancário',                          usado_em: ['pagar','receber'] },
   { nome: 'Recibo',                   descricao: 'Recibo de pagamento ou recebimento',       usado_em: ['pagar','receber'] },
   { nome: 'Contrato',                 descricao: 'Documento contratual',                     usado_em: ['pagar','receber'] },

@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS fin_movimento (
   fornecedor          TEXT,
   historico           TEXT,
   nf_doc              VARCHAR(100),
+  emissao_doc         DATE,
   conta_contabil      TEXT,
   centro_custo        TEXT,
   obra                TEXT,

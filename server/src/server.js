@@ -27,6 +27,9 @@ const systemRoutes            = require('./routes/system')
 const crmRoutes               = require('./routes/crm')
 const mapaVendasRoutes        = require('./routes/mapa-vendas')
 const relatoriosToolsRoutes   = require('./routes/relatorios-tools')
+const reservasPropostasRoutes  = require('./routes/reservas_propostas')
+const corretoresComissoesRoutes = require('./routes/corretores_comissoes')
+const recebiveisRoutes          = require('./routes/recebiveis')
 
 const app  = express()
 const PORT = process.env.PORT || 3001
@@ -80,6 +83,9 @@ app.use('/',       tiposDocumentoRoutes)
 app.use('/',       auditRoutes)
 app.use('/',       systemRoutes)
 app.use('/crm',    crmRoutes)
+app.use('/',       reservasPropostasRoutes)
+app.use('/',       corretoresComissoesRoutes)
+app.use('/',       recebiveisRoutes)
 app.use('/mapa-vendas', mapaVendasRoutes)
 app.use('/relatorios-tools', relatoriosToolsRoutes)
 
@@ -105,3 +111,4 @@ bootstrap().catch(err => {
   logger.error('Falha ao iniciar servidor:', err)
   process.exit(1)
 })
+

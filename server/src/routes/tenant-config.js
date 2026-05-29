@@ -28,7 +28,7 @@ router.get('/tenant-config', async (req, res) => {
       data: {
         // Identidade visual
         logoUrl:            c.logo_url             || '',
-        logoText:           c.logo_text            || 'LoteMobile',
+        logoText:           c.logo_text            || 'LarmHub',
         primaryColor:       c.primary_color        || '#2563EB',
         sidebarColor:       c.sidebar_color        || '#0D1B2A',
         // Google Maps
@@ -177,21 +177,21 @@ router.post('/tenant-config/test-email', async (req, res) => {
       },
     })
 
-    const fromName  = cfg.ses_from_name || 'LoteMobile'
+    const fromName  = cfg.ses_from_name || 'LarmHub'
     const fromEmail = cfg.ses_from_email
 
     await client.send(new SendEmailCommand({
       Source: `${fromName} <${fromEmail}>`,
       Destination: { ToAddresses: [to] },
       Message: {
-        Subject: { Data: '✅ Teste de e-mail — LoteMobile HUB', Charset: 'UTF-8' },
+        Subject: { Data: '✅ Teste de e-mail — LarmHub', Charset: 'UTF-8' },
         Body: {
           Html: {
             Charset: 'UTF-8',
             Data: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
               <h2 style="color:#1e3a5f">AWS SES funcionando!</h2>
               <p style="color:#475569;line-height:1.6">
-                Configuração via <strong>AWS SES</strong> está ativa. Teste enviado pelo painel LoteMobile HUB.
+                Configuração via <strong>AWS SES</strong> está ativa. Teste enviado pelo painel LarmHub.
               </p>
               <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0"/>
               <p style="color:#94a3b8;font-size:12px">
@@ -199,7 +199,7 @@ router.post('/tenant-config/test-email', async (req, res) => {
               </p>
             </div>`,
           },
-          Text: { Charset: 'UTF-8', Data: 'AWS SES funcionando. Teste enviado pelo LoteMobile HUB.' },
+          Text: { Charset: 'UTF-8', Data: 'AWS SES funcionando. Teste enviado pelo LarmHub.' },
         },
       },
     }))

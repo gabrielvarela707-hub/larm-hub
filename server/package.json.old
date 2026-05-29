@@ -1,7 +1,7 @@
 {
-  "name": "lotemobile-api",
-  "version": "1.0.0",
-  "description": "API backend LoteMobile / Santa Clara HUB / LARM HUB",
+  "name": "larmhub-api",
+  "version": "0.2.5",
+  "description": "API backend LarmHub / Santa Clara HUB",
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",

@@ -35,12 +35,12 @@ npm install -g pm2
 
 useradd -m -s /bin/bash apiuser
 # Cria diretório do projeto
-mkdir -p /var/www/lotemobile-api
-chown apiuser:apiuser /var/www/lotemobile-api
+mkdir -p /var/www/larmhub-api
+chown apiuser:apiuser /var/www/larmhub-api
 
 # Cria diretório de logs
-mkdir -p /var/log/lotemobile-api
-chown apiuser:apiuser /var/log/lotemobile-api
+mkdir -p /var/log/larmhub-api
+chown apiuser:apiuser /var/log/larmhub-api
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -48,18 +48,18 @@ chown apiuser:apiuser /var/log/lotemobile-api
 # ═══════════════════════════════════════════════════════════════════
 
 # Execute isso na SUA MÁQUINA (não no servidor):
-# scp -r ./backend-api/* root@185.2.103.185:/var/www/lotemobile-api/
+# scp -r ./backend-api/* root@185.2.103.185:/var/www/larmhub-api/
 
 # Ou se usar Git (recomendado para o futuro):
-# cd /var/www/lotemobile-api
-# git clone https://github.com/SEU_USUARIO/lotemobile-api.git .
+# cd /var/www/larmhub-api
+# git clone https://github.com/SEU_USUARIO/larmhub-api.git .
 
 
 # ═══════════════════════════════════════════════════════════════════
 # ETAPA 5 — Configurar o .env de produção
 # ═══════════════════════════════════════════════════════════════════
 
-cd /var/www/lotemobile-api
+cd /var/www/larmhub-api
 
 # Cria o .env a partir do exemplo
 cp .env.example .env
@@ -75,8 +75,8 @@ nano .env
 #
 # DB_HOST=localhost
 # DB_PORT=5432
-# DB_NAME=lotemobile_prod
-# DB_USER=lotemobile
+# DB_NAME=larmhub_prod
+# DB_USER=larmhub
 # DB_PASSWORD=SUA_SENHA_REAL_DO_POSTGRES
 #
 # JWT_SECRET=$(openssl rand -hex 64)
@@ -87,7 +87,7 @@ nano .env
 # CORS_ORIGINS=https://hub.loteamentosantaclara.imb.br,https://loteamentosantaclara.imb.br
 #
 # LOG_LEVEL=info
-# LOG_DIR=/var/log/lotemobile-api
+# LOG_DIR=/var/log/larmhub-api
 #
 # ─── Para gerar os JWT secrets automaticamente: ───────────────────
 # openssl rand -hex 64
@@ -98,7 +98,7 @@ nano .env
 # ETAPA 6 — Instalar dependências e rodar migrations
 # ═══════════════════════════════════════════════════════════════════
 
-cd /var/www/lotemobile-api
+cd /var/www/larmhub-api
 
 # Instala as dependências Node
 npm install --omit=dev
@@ -134,7 +134,7 @@ node src/server.js &
 
 # Testa o health check
 curl http://localhost:3001/health
-# Saída esperada: {"ok":true,"service":"lotemobile-api","db":{"ok":true,...}}
+# Saída esperada: {"ok":true,"service":"larmhub-api","db":{"ok":true,...}}
 
 # Testa o login (Santa Clara)
 curl -X POST http://localhost:3001/auth/login \
@@ -150,11 +150,11 @@ kill %1
 # ETAPA 8 — Iniciar com PM2 (daemon + restart automático)
 # ═══════════════════════════════════════════════════════════════════
 
-cd /var/www/lotemobile-api
+cd /var/www/larmhub-api
 
 # Inicia a API com PM2
 pm2 start src/server.js \
-  --name "lotemobile-api" \
+  --name "larmhub-api" \
   --instances 2 \
   --exec-mode cluster \
   --max-memory-restart 512M \
@@ -162,7 +162,7 @@ pm2 start src/server.js \
 
 # Verifica se está rodando
 pm2 status
-pm2 logs lotemobile-api --lines 30
+pm2 logs larmhub-api --lines 30
 
 # Configura PM2 para iniciar com o sistema (após reboot)
 pm2 startup systemd
@@ -180,7 +180,7 @@ pm2 save
 apt install -y nginx
 
 # Cria o arquivo de configuração do site
-cat > /etc/nginx/sites-available/lotemobile-api << 'EOF'
+cat > /etc/nginx/sites-available/larmhub-api << 'EOF'
 server {
     listen 80;
     server_name api.loteamentosantaclara.imb.br;
@@ -208,7 +208,7 @@ server {
 EOF
 
 # Ativa o site e testa a configuração
-ln -sf /etc/nginx/sites-available/lotemobile-api /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/larmhub-api /etc/nginx/sites-enabled/
 nginx -t
 systemctl reload nginx
 
@@ -247,7 +247,7 @@ curl -X POST https://api.loteamentosantaclara.imb.br/auth/login \
   -d '{"email":"admin@santaclara.com.br","password":"Troque@2024!"}'
 
 # Ver logs em tempo real
-pm2 logs lotemobile-api
+pm2 logs larmhub-api
 
 # Status do PM2
 pm2 status
@@ -257,19 +257,19 @@ pm2 status
 # ═══════════════════════════════════════════════════════════════════
 
 # Reiniciar a API (após atualização de código)
-pm2 restart lotemobile-api
+pm2 restart larmhub-api
 
 # Ver logs
-pm2 logs lotemobile-api --lines 100
+pm2 logs larmhub-api --lines 100
 
 # Monitoramento em tempo real
 pm2 monit
 
 # Atualizar código (quando usar Git)
-cd /var/www/lotemobile-api
+cd /var/www/larmhub-api
 git pull
 npm install --omit=dev
-pm2 restart lotemobile-api
+pm2 restart larmhub-api
 
 # Verificar uso de recursos
 pm2 status

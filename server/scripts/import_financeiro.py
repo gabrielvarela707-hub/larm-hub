@@ -11,6 +11,7 @@ Uso:
 Flags:
   --limpar       Apaga dados antes de importar (recarga completa)
   --ano=2026     Importa apenas o ano especificado (somente movimento)
+  --ate=2026-06-28 Importa movimentos somente até a data informada (somente movimento)
 """
 import sys, os
 import pandas as pd
@@ -25,8 +26,8 @@ def get_conn():
     return psycopg2.connect(
         host=os.getenv('DB_HOST', 'localhost'),
         port=os.getenv('DB_PORT', '5432'),
-        dbname=os.getenv('DB_NAME', 'lotemobile_prod'),
-        user=os.getenv('DB_USER', 'lotemobile'),
+        dbname=os.getenv('DB_NAME', 'larmhub_prod'),
+        user=os.getenv('DB_USER', 'larmhub'),
         password=os.getenv('DB_PASSWORD'),
     )
 
@@ -181,44 +182,164 @@ def import_cashflow(xlsx_path, limpar=False):
     print("\n✅  CashFlow importado!")
 
 # ── MOVIMENTO ─────────────────────────────────────────────────────────────────
-SHEETS_HIST = ['2021','2022','2023','2024','2025']
+SHEETS_HIST = ['2021','2022','2023','2024','2025','2026']
 
-def _import_df(cur, conn, df, label):
+COLUMN_ALIASES = {
+    'Data': ['Data', 'DATA'],
+    'Empresa': ['Empresa', 'EMPRESA'],
+    'Banco': ['Banco', 'BANCO'],
+    'Entradas': ['Entradas', 'Entrada', 'ENTRADAS'],
+    'Saídas': ['Saídas', 'Saidas', 'Saída', 'Saida', 'SAÍDAS', 'SAIDAS'],
+    'Fornecedor': ['Fornecedor', 'FORNECEDOR'],
+    'Histórico': ['Histórico', 'Historico', 'HISTÓRICO', 'HISTORICO'],
+    'NF/DOC': ['NF/DOC', 'NF DOC', 'NF_DOC', 'Documento', 'DOCUMENTO'],
+    'Emissão DOC': ['Emissão DOC', 'Emissao DOC', 'Emissão', 'Emissao', 'Data Emissão', 'Data Emissao'],
+    'Conta Contábil': ['Conta Contábil', 'Conta Contabil', 'CONTA CONTÁBIL', 'CONTA CONTABIL'],
+    'Centro de Custo': ['Centro de Custo', 'CENTRO DE CUSTO'],
+    'Obra': ['Obra', 'OBRA'],
+    'Natureza Financeira': ['Natureza Financeira', 'NATUREZA FINANCEIRA', 'Natureza'],
+    'N. Cheque': ['N. Cheque', 'N Cheque', 'Cheque', 'Nº Cheque'],
+    'Saldo': ['Saldo', 'SALDO'],
+}
+
+def normalize_headers(df):
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    rename = {}
+    existing = {str(c).strip().lower(): c for c in df.columns}
+    for canonical, aliases in COLUMN_ALIASES.items():
+        for alias in aliases:
+            key = alias.strip().lower()
+            if key in existing:
+                rename[existing[key]] = canonical
+                break
+    return df.rename(columns=rename)
+
+def get_val(row, col):
+    return row.get(col) if col in row else None
+
+def safe_int(v):
+    n = safe_num(v)
+    if n is None: return None
+    try: return int(n)
+    except (TypeError, ValueError): return None
+
+def safe_num(v):
+    if v is None: return None
+    try:
+        if pd.isna(v): return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, str):
+        s = v.strip()
+        if s in ('', 'nan', 'None', '#N/D', '#N/A'): return None
+        # Suporta número no formato brasileiro: 1.234,56
+        if ',' in s:
+            s = s.replace('.', '').replace(',', '.')
+        try:
+            f = float(s)
+        except ValueError:
+            return None
+    else:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+    import math
+    return None if math.isnan(f) else f
+
+def safe_str(v):
+    if v is None: return None
+    try:
+        if pd.isna(v): return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, float) and v.is_integer():
+        s = str(int(v))
+    else:
+        s = str(v).strip()
+    return None if s in ('', 'nan', 'None', '#N/D', '#N/A') else s
+
+def safe_date(v):
+    if v is None: return None
+    try:
+        if pd.isna(v): return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(v, date) and not isinstance(v, datetime): return v
+    if isinstance(v, datetime): return v.date()
+    if isinstance(v, (int, float)) and v > 20000:
+        try:
+            return pd.to_datetime(v, unit='D', origin='1899-12-30').date()
+        except Exception:
+            pass
+    try:
+        return pd.to_datetime(v, dayfirst=True).date()
+    except Exception:
+        return None
+
+def sheet_year(label):
+    s = str(label or '').strip()
+    return int(s) if s.isdigit() and len(s) == 4 else None
+
+def _import_df(cur, conn, df, label, import_year=None, filter_year=None, data_ate=None):
     if df is None or len(df) == 0:
         print(f"  '{label}' vazia — pulando."); return 0
 
-    # Remove anos que já existem no banco para evitar duplicatas
-    anos = set()
-    if 'ano' in df.columns:
-        anos = set(int(a) for a in df['ano'].dropna().unique())
-    elif 'Data' in df.columns:
-        anos = set(pd.to_datetime(df['Data'], errors='coerce').dropna().dt.year.unique())
-    for a in anos:
-        cur.execute("DELETE FROM fin_movimento WHERE ano=%s", (a,))
-    conn.commit()
+    df = normalize_headers(df).dropna(how='all')
+    if len(df) == 0:
+        print(f"  '{label}' sem linhas úteis — pulando."); return 0
+
+    if 'Data' in df.columns:
+        if filter_year and import_year is None:
+            datas = df['Data'].apply(safe_date)
+            df = df[datas.apply(lambda d: d is not None and d.year == filter_year)].copy()
+
+        if data_ate:
+            antes = len(df)
+            datas = df['Data'].apply(safe_date)
+            df = df[datas.apply(lambda d: d is not None and d <= data_ate)].copy()
+            removidas = antes - len(df)
+            if removidas:
+                print(f"  Recorte por data: {removidas} linhas após {data_ate.strftime('%d/%m/%Y')} ignoradas.")
 
     rows = []
+    skipped = 0
     for _, r in df.iterrows():
-        nat  = safe_str(r.get('Natureza Financeira'))
+        data_mov = safe_date(get_val(r, 'Data'))
+        entrada = safe_num(get_val(r, 'Entradas')) or 0
+        saida = safe_num(get_val(r, 'Saídas')) or 0
+        historico = safe_str(get_val(r, 'Histórico'))
+
+        if data_mov is None and entrada == 0 and saida == 0 and not historico:
+            skipped += 1
+            continue
+
+        nat  = safe_str(get_val(r, 'Natureza Financeira'))
         tipo = classificar_tipo(nat)
+        dia  = data_mov.day if data_mov else safe_int(get_val(r, 'dia'))
+        mes  = data_mov.month if data_mov else safe_int(get_val(r, 'mês'))
+        ano  = import_year or (data_mov.year if data_mov else safe_int(get_val(r, 'ano')))
+
         rows.append((
-            safe_date(r.get('Data')),
-            safe_str(r.get('Empresa')),
-            safe_str(r.get('Banco')),
-            safe_num(r.get('Entradas')),
-            safe_num(r.get('Saídas')),
-            safe_str(r.get('Fornecedor')),
-            safe_str(r.get('Histórico')),
-            safe_str(r.get('NF/DOC')),
-            safe_str(r.get('Conta Contábil')),
-            safe_str(r.get('Centro de Custo')),
-            safe_str(r.get('Obra')),
+            data_mov,
+            safe_str(get_val(r, 'Empresa')),
+            safe_str(get_val(r, 'Banco')),
+            entrada if entrada != 0 else None,
+            saida if saida != 0 else None,
+            safe_str(get_val(r, 'Fornecedor')),
+            historico,
+            safe_str(get_val(r, 'NF/DOC')),
+            safe_date(get_val(r, 'Emissão DOC')),
+            safe_str(get_val(r, 'Conta Contábil')),
+            safe_str(get_val(r, 'Centro de Custo')),
+            safe_str(get_val(r, 'Obra')),
             nat,
-            safe_str(r.get('N. Cheque')),
-            safe_num(r.get('dia')),
-            safe_num(r.get('mês')),
-            safe_num(r.get('ano')),
-            safe_num(r.get('Saldo')),
+            safe_str(get_val(r, 'N. Cheque')),
+            dia,
+            mes,
+            ano,
+            safe_num(get_val(r, 'Saldo')),
             tipo,
         ))
 
@@ -226,24 +347,27 @@ def _import_df(cur, conn, df, label):
         execute_values(cur,
             """INSERT INTO fin_movimento
                (data, empresa, banco, entradas, saidas, fornecedor, historico,
-                nf_doc, conta_contabil, centro_custo, obra, natureza_financeira,
-                n_cheque, dia, mes, ano, saldo, tipo_lancamento)
+                nf_doc, emissao_doc, conta_contabil, centro_custo, obra,
+                natureza_financeira, n_cheque, dia, mes, ano, saldo, tipo_lancamento)
                VALUES %s""",
             rows, page_size=500)
         conn.commit()
+
+    if skipped:
+        print(f"  Linhas ignoradas: {skipped}")
     return len(rows)
 
-def import_movimento(xlsx_path, limpar=False, apenas_ano=None):
+def import_movimento(xlsx_path, limpar=False, apenas_ano=None, data_ate=None):
     print(f"\n{'='*60}\nImportando Movimento: {xlsx_path}\n{'='*60}")
     conn = get_conn(); cur = conn.cursor()
 
     if limpar:
         if apenas_ano:
-            cur.execute("DELETE FROM fin_movimento WHERE ano=%s", (apenas_ano,))
-            print(f"Dados do ano {apenas_ano} removidos.")
+            cur.execute("DELETE FROM fin_movimento WHERE COALESCE(ano, EXTRACT(YEAR FROM data)::int)=%s", (apenas_ano,))
+            print(f"Dados do ano {apenas_ano} removidos antes da importação.")
         else:
             cur.execute("DELETE FROM fin_movimento")
-            print("Todos os dados de movimento removidos.")
+            print("Todos os dados de movimento removidos antes da importação.")
         conn.commit()
 
     xls    = pd.ExcelFile(xlsx_path)
@@ -251,23 +375,37 @@ def import_movimento(xlsx_path, limpar=False, apenas_ano=None):
     total  = 0
     dtype  = {'NF/DOC': str, 'N. Cheque': str, 'Natureza Financeira': str}
 
+    if data_ate:
+        print(f"Filtro de data ativo: importando movimentos até {data_ate.strftime('%d/%m/%Y')}.")
+
     # Sheet principal (ano atual / orçado)
     if 'Movimento' in sheets:
         print(f"\nSheet: Movimento (principal)")
         df = pd.read_excel(xlsx_path, sheet_name='Movimento', dtype=dtype)
-        if apenas_ano and 'ano' in df.columns:
-            df = df[df['ano'] == apenas_ano]
-        n = _import_df(cur, conn, df, 'Movimento')
+        n = _import_df(cur, conn, df, 'Movimento', import_year=apenas_ano, filter_year=apenas_ano, data_ate=data_ate)
         print(f"  ✅ {n} registros"); total += n
 
-    # Sheets históricas
+    # Sheets históricas por ano. Quando a aba é 2021, 2022 etc., o campo ano
+    # fica igual ao ano da aba para permitir os botões de filtro por safra/importação.
     for sheet in SHEETS_HIST:
         if sheet not in sheets: continue
-        if apenas_ano and str(apenas_ano) != sheet: continue
+        sheet_ref_year = sheet_year(sheet)
+        if apenas_ano and sheet_ref_year != apenas_ano: continue
         print(f"\nSheet: {sheet} (histórico)")
         df = pd.read_excel(xlsx_path, sheet_name=sheet, dtype=dtype)
-        n  = _import_df(cur, conn, df, sheet)
+        n  = _import_df(cur, conn, df, sheet, import_year=sheet_ref_year, data_ate=data_ate)
         print(f"  ✅ {n} registros"); total += n
+
+    # Caso o arquivo tenha somente uma aba com outro nome, mas o usuário informe --ano.
+    if total == 0 and apenas_ano:
+        for sheet in sheets:
+            if sheet in ('Movimento', 'Pgtos fora orçado') or sheet in SHEETS_HIST:
+                continue
+            print(f"\nSheet: {sheet} (importação genérica ano {apenas_ano})")
+            df = pd.read_excel(xlsx_path, sheet_name=sheet, dtype=dtype)
+            n = _import_df(cur, conn, df, sheet, import_year=apenas_ano, data_ate=data_ate)
+            print(f"  ✅ {n} registros"); total += n
+            break
 
     # Pagamentos fora do orçado (sem filtro de ano)
     if 'Pgtos fora orçado' in sheets and not apenas_ano:
@@ -275,15 +413,14 @@ def import_movimento(xlsx_path, limpar=False, apenas_ano=None):
         try:
             df = pd.read_excel(xlsx_path, sheet_name='Pgtos fora orçado', dtype=dtype, header=1)
             df = df.dropna(how='all')
-            if len(df) > 0 and 'Data' in df.columns:
-                n  = _import_df(cur, conn, df, 'Pgtos fora orçado')
+            if len(df) > 0 and 'Data' in [str(c).strip() for c in df.columns]:
+                n  = _import_df(cur, conn, df, 'Pgtos fora orçado', data_ate=data_ate)
                 print(f"  ✅ {n} registros"); total += n
         except Exception as e:
             print(f"  ⚠  Erro ao ler 'Pgtos fora orçado': {e}")
 
     cur.close(); conn.close()
     print(f"\n✅  Total: {total} transações importadas!")
-    fin = int(conn.closed == 0)  # apenas para evitar warning
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
@@ -294,16 +431,17 @@ if __name__ == '__main__':
     flags      = [a for a in sys.argv[1:] if a.startswith('--')]
     limpar     = '--limpar' in flags
     apenas_ano = next((int(f.split('=')[1]) for f in flags if f.startswith('--ano=')), None)
+    data_ate   = next((safe_date(f.split('=', 1)[1]) for f in flags if f.startswith('--ate=')), None)
     cmd        = args[0].lower() if args else ''
 
     if cmd == 'cashflow':
         import_cashflow(args[1], limpar=limpar)
     elif cmd == 'movimento':
-        import_movimento(args[1], limpar=limpar, apenas_ano=apenas_ano)
+        import_movimento(args[1], limpar=limpar, apenas_ano=apenas_ano, data_ate=data_ate)
     elif cmd == 'ambos':
         if len(args) < 3:
             print("Uso: python3 import_financeiro.py ambos <cashflow.xlsx> <movimento.xlsx>"); sys.exit(1)
         import_cashflow(args[1], limpar=limpar)
-        import_movimento(args[2], limpar=limpar, apenas_ano=apenas_ano)
+        import_movimento(args[2], limpar=limpar, apenas_ano=apenas_ano, data_ate=data_ate)
     else:
         print(f"Comando desconhecido: {cmd}\nUse: cashflow | movimento | ambos"); sys.exit(1)

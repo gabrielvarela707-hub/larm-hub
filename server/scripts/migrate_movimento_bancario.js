@@ -14,6 +14,7 @@ async function migrate() {
     await pool.query(`
       ALTER TABLE fin_movimento
         ADD COLUMN IF NOT EXISTS tipo_lancamento VARCHAR(20) DEFAULT 'financeiro',
+        ADD COLUMN IF NOT EXISTS emissao_doc DATE,
         ADD COLUMN IF NOT EXISTS vencimento DATE,
         ADD COLUMN IF NOT EXISTS fornecedor_id INTEGER REFERENCES fin_fornecedores(id),
         ADD COLUMN IF NOT EXISTS banco_conta_id INTEGER REFERENCES fin_bancos_contas(id)

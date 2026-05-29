@@ -7,7 +7,7 @@ const { logAudit } = require('./auditService')
 
 const PORTAL_OPTIONS = {
   santa_clara: 'Santa Clara HUB',
-  larm: 'LARM HUB',
+  larm: 'LarmHub',
 }
 
 function normalizeAllowedHubs(value) {

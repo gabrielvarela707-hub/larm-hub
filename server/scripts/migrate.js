@@ -12,7 +12,7 @@ const logger = require('../src/config/logger')
 const SQL = `
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- TENANTS (Santa Clara HUB, LARM HUB, futuros white-labels)
+-- TENANTS (Santa Clara HUB, LarmHub, futuros white-labels)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS hub_tenants (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS hub_tenants (
   secondary_color VARCHAR(10)  DEFAULT '#059669',
   sidebar_color   VARCHAR(10)  DEFAULT '#0D1B2A',
   logo_url        TEXT,
-  logo_text       VARCHAR(80)  DEFAULT 'LoteMobile',
+  logo_text       VARCHAR(80)  DEFAULT 'LarmHub',
   favicon_url     TEXT,
 
   -- Integrações (armazenadas criptografadas no futuro)

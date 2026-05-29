@@ -47,14 +47,14 @@ function baseSystemInfo(currentRelease, releases) {
     version,
     released_at: currentRelease?.released_at || null,
     frontend: {
-      name: frontendPkg?.name || 'lotemobile-web',
+      name: frontendPkg?.name || 'larmhub-web',
       version: cleanVersion(frontendPkg?.version, version),
       framework: `Next.js ${cleanVersion(frontendDeps.next || '', '')}`.trim(),
       language: 'TypeScript / React',
       ui: ['TailwindCSS', 'Lucide React', 'Recharts', 'Zustand'],
     },
     backend: {
-      name: backendPkg?.name || 'lotemobile-api',
+      name: backendPkg?.name || 'larmhub-api',
       version: cleanVersion(backendPkg?.version, version),
       runtime: backendPkg?.engines?.node || 'Node.js >=18',
       framework: `Express ${cleanVersion(backendDeps.express || '', '')}`.trim(),

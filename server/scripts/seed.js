@@ -36,7 +36,7 @@ const SEEDS = {
       primary_color:   '#1B4332',
       secondary_color: '#1E3A5F',
       sidebar_color:   '#0D1B2A',
-      logo_text:       'LARM HUB',
+      logo_text:       'LarmHub',
     },
   ],
   users: [

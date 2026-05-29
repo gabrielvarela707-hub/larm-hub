@@ -23,6 +23,12 @@ import {
   TrendingDown,
   Upload,
   Download,
+  FileSignature,
+  CalendarClock,
+  Trash2,
+  Save,
+  Paperclip,
+  ExternalLink,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { apiClient } from "@/lib/auth-store";
@@ -79,6 +85,39 @@ interface ImportResult {
   errors: string[];
 }
 
+interface FornecedorContrato {
+  id: number;
+  fornecedor_id: number;
+  titulo: string;
+  numero_contrato: string | null;
+  status: string;
+  data_assinatura: string | null;
+  data_inicio: string | null;
+  data_fim: string | null;
+  data_renovacao: string | null;
+  indice_correcao: string | null;
+  valor_mensal: number;
+  valor_total: number;
+  valor_pago: number;
+  servicos: string | null;
+  responsavel: string | null;
+  observacoes: string | null;
+  arquivo_nome: string | null;
+  arquivo_mime?: string | null;
+  arquivo_base64?: string | null;
+  tem_arquivo?: boolean;
+  ativo: boolean;
+}
+
+type FormTab = "dados" | "historico" | "contratos";
+
+interface ContratoImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+}
+
 type FornecedorImportField =
   | "razao_social"
   | "nome_fantasia"
@@ -100,6 +139,22 @@ type FornecedorImportField =
   | "chave_pix"
   | "obs"
   | "ativo";
+
+type ContratoImportField =
+  | "titulo"
+  | "numero_contrato"
+  | "status"
+  | "data_assinatura"
+  | "data_inicio"
+  | "data_fim"
+  | "data_renovacao"
+  | "indice_correcao"
+  | "valor_mensal"
+  | "valor_total"
+  | "valor_pago"
+  | "servicos"
+  | "responsavel"
+  | "observacoes";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const EMPTY: Partial<Fornecedor> = {
@@ -135,6 +190,36 @@ const CATEGORIAS = [
   "Outros",
 ];
 
+const CONTRATO_STATUS = [
+  { value: "ativo", label: "Ativo" },
+  { value: "pendente_assinatura", label: "Pendente assinatura" },
+  { value: "em_renovacao", label: "Em renovação" },
+  { value: "vencido", label: "Vencido" },
+  { value: "encerrado", label: "Encerrado" },
+  { value: "cancelado", label: "Cancelado" },
+];
+
+const EMPTY_CONTRATO: Partial<FornecedorContrato> = {
+  titulo: "",
+  numero_contrato: "",
+  status: "ativo",
+  data_assinatura: "",
+  data_inicio: "",
+  data_fim: "",
+  data_renovacao: "",
+  indice_correcao: "",
+  valor_mensal: 0,
+  valor_total: 0,
+  valor_pago: 0,
+  servicos: "",
+  responsavel: "",
+  observacoes: "",
+  arquivo_nome: "",
+  arquivo_mime: "",
+  arquivo_base64: "",
+  ativo: true,
+};
+
 
 const IMPORT_COLUMNS: { label: string; key: FornecedorImportField; required?: boolean; example: string }[] = [
   { label: "Razão Social *", key: "razao_social", required: true, example: "Fornecedor Exemplo LTDA" },
@@ -158,6 +243,66 @@ const IMPORT_COLUMNS: { label: string; key: FornecedorImportField; required?: bo
   { label: "Observações", key: "obs", example: "Fornecedor importado por planilha" },
   { label: "Ativo", key: "ativo", example: "Sim" },
 ];
+
+const CONTRATO_IMPORT_COLUMNS: { label: string; key: ContratoImportField; required?: boolean; example: string }[] = [
+  { label: "Título / Serviço *", key: "titulo", required: true, example: "Contrato de manutenção" },
+  { label: "Número do contrato", key: "numero_contrato", example: "CTR-2026-001" },
+  { label: "Status", key: "status", example: "Ativo" },
+  { label: "Data assinatura", key: "data_assinatura", example: "28/06/2026" },
+  { label: "Data início", key: "data_inicio", example: "01/07/2026" },
+  { label: "Data fim", key: "data_fim", example: "30/06/2027" },
+  { label: "Data renovação", key: "data_renovacao", example: "01/06/2027" },
+  { label: "Índice correção", key: "indice_correcao", example: "IPCA" },
+  { label: "Valor mensal", key: "valor_mensal", example: "1500,00" },
+  { label: "Valor total", key: "valor_total", example: "18000,00" },
+  { label: "Valor pago", key: "valor_pago", example: "3000,00" },
+  { label: "Serviços", key: "servicos", example: "Manutenção preventiva mensal" },
+  { label: "Responsável", key: "responsavel", example: "Financeiro" },
+  { label: "Observações", key: "observacoes", example: "Contrato importado por planilha" },
+];
+
+const CONTRATO_HEADER_ALIASES: Record<string, ContratoImportField> = {
+  titulo: "titulo",
+  tituloservico: "titulo",
+  servicotitulo: "titulo",
+  contrato: "titulo",
+  numerocontrato: "numero_contrato",
+  numerodocontrato: "numero_contrato",
+  ncontrato: "numero_contrato",
+  numero_contrato: "numero_contrato",
+  status: "status",
+  dataassinatura: "data_assinatura",
+  assinatura: "data_assinatura",
+  data_assinatura: "data_assinatura",
+  datainicio: "data_inicio",
+  inicio: "data_inicio",
+  data_inicio: "data_inicio",
+  datafim: "data_fim",
+  fim: "data_fim",
+  vencimento: "data_fim",
+  data_fim: "data_fim",
+  datarenovacao: "data_renovacao",
+  renovacao: "data_renovacao",
+  data_renovacao: "data_renovacao",
+  indicecorrecao: "indice_correcao",
+  indice: "indice_correcao",
+  reajuste: "indice_correcao",
+  indice_correcao: "indice_correcao",
+  valormensal: "valor_mensal",
+  mensal: "valor_mensal",
+  valor_mensal: "valor_mensal",
+  valortotal: "valor_total",
+  total: "valor_total",
+  valor_total: "valor_total",
+  valorpago: "valor_pago",
+  pago: "valor_pago",
+  valor_pago: "valor_pago",
+  servicos: "servicos",
+  servico: "servicos",
+  responsavel: "responsavel",
+  observacoes: "observacoes",
+  obs: "observacoes",
+};
 
 const IMPORT_HEADER_ALIASES: Record<string, FornecedorImportField> = {
   razaosocial: "razao_social",
@@ -306,6 +451,88 @@ function normalizeImportRow(row: Record<string, unknown>) {
   } satisfies Partial<Fornecedor>;
 }
 
+function parseMoneyInput(value: unknown) {
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const normalized = String(value)
+    .replace(/\s/g, "")
+    .replace(/R\$/gi, "")
+    .replace(/\./g, "")
+    .replace(",", ".")
+    .replace(/[^0-9.-]/g, "");
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeDateInput(value: unknown) {
+  const raw = cellToString(value);
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const br = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (br) return `${br[3]}-${br[2].padStart(2, "0")}-${br[1].padStart(2, "0")}`;
+  const asDate = new Date(raw);
+  if (!Number.isNaN(asDate.getTime())) return asDate.toISOString().slice(0, 10);
+  return "";
+}
+
+function fmtData(value?: string | null) {
+  if (!value) return "—";
+  return new Date(`${value}T00:00:00`).toLocaleDateString("pt-BR");
+}
+
+function statusContratoLabel(status?: string | null) {
+  return CONTRATO_STATUS.find((s) => s.value === status)?.label || "Ativo";
+}
+
+function normalizeContratoStatus(value: string) {
+  const normalized = normalizeImportHeader(value);
+  if (["pendenteassinatura", "pendente", "aguardandoassinatura"].includes(normalized)) return "pendente_assinatura";
+  if (["emrenovacao", "renovacao", "renovar"].includes(normalized)) return "em_renovacao";
+  if (["vencido", "vencida"].includes(normalized)) return "vencido";
+  if (["encerrado", "encerrada", "finalizado", "finalizada"].includes(normalized)) return "encerrado";
+  if (["cancelado", "cancelada"].includes(normalized)) return "cancelado";
+  return "ativo";
+}
+
+function normalizeContratoImportRow(row: Record<string, unknown>) {
+  const mapped: Partial<Record<ContratoImportField, string>> = {};
+
+  Object.entries(row).forEach(([header, value]) => {
+    const key = CONTRATO_HEADER_ALIASES[normalizeImportHeader(header)];
+    if (key) mapped[key] = cellToString(value);
+  });
+
+  return {
+    titulo: mapped.titulo || mapped.servicos || "",
+    numero_contrato: mapped.numero_contrato || "",
+    status: normalizeContratoStatus(mapped.status || "ativo"),
+    data_assinatura: normalizeDateInput(mapped.data_assinatura),
+    data_inicio: normalizeDateInput(mapped.data_inicio),
+    data_fim: normalizeDateInput(mapped.data_fim),
+    data_renovacao: normalizeDateInput(mapped.data_renovacao),
+    indice_correcao: mapped.indice_correcao || "",
+    valor_mensal: parseMoneyInput(mapped.valor_mensal),
+    valor_total: parseMoneyInput(mapped.valor_total),
+    valor_pago: parseMoneyInput(mapped.valor_pago),
+    servicos: mapped.servicos || "",
+    responsavel: mapped.responsavel || "",
+    observacoes: mapped.observacoes || "",
+    ativo: true,
+  } satisfies Partial<FornecedorContrato>;
+}
+
+function fileToBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
 // ─── MaskedInput ─────────────────────────────────────────────────────────────
 // TOTALMENTE NÃO-CONTROLADO: nunca passa value= para o <input>.
 // Usa ref para ler/escrever o DOM diretamente — zero re-render durante a digitação.
@@ -427,7 +654,7 @@ export default function FornecedoresPage() {
     normalizeFornecedorForm(),
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [formTab, setFormTab] = useState<"dados" | "historico">("dados");
+  const [formTab, setFormTab] = useState<FormTab>("dados");
 
   // Lookups
   const [cnpjLoading, setCnpjLoading] = useState(false);
@@ -452,6 +679,20 @@ export default function FornecedoresPage() {
   const [importRows, setImportRows] = useState<Partial<Fornecedor>[]>([]);
   const [importErrors, setImportErrors] = useState<string[]>([]);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+
+  // Contratos do fornecedor
+  const contratoImportInputRef = useRef<HTMLInputElement>(null);
+  const contratoPdfInputRef = useRef<HTMLInputElement>(null);
+  const [contratos, setContratos] = useState<FornecedorContrato[]>([]);
+  const [contratosLoading, setContratosLoading] = useState(false);
+  const [contratoSaving, setContratoSaving] = useState(false);
+  const [contratoEditId, setContratoEditId] = useState<number | null>(null);
+  const [contratoForm, setContratoForm] = useState<Partial<FornecedorContrato>>({ ...EMPTY_CONTRATO });
+  const [contratoErrors, setContratoErrors] = useState<string[]>([]);
+  const [contratoImportRows, setContratoImportRows] = useState<Partial<FornecedorContrato>[]>([]);
+  const [contratoImportFileName, setContratoImportFileName] = useState("");
+  const [contratoImporting, setContratoImporting] = useState(false);
+  const [contratoImportResult, setContratoImportResult] = useState<ContratoImportResult | null>(null);
 
   // Prevent re-render on every keystroke: use uncontrolled input + ref pattern for masks
 
@@ -575,6 +816,10 @@ export default function FornecedoresPage() {
     setCnpjDupError("");
     setFormTab("dados");
     setHistorico(null);
+    setContratos([]);
+    setContratoEditId(null);
+    setContratoForm({ ...EMPTY_CONTRATO });
+    setContratoErrors([]);
     setShowForm(true);
   }
 
@@ -586,6 +831,10 @@ export default function FornecedoresPage() {
     setCnpjDupError("");
     setFormTab("dados");
     setHistorico(null);
+    setContratos([]);
+    setContratoEditId(null);
+    setContratoForm({ ...EMPTY_CONTRATO });
+    setContratoErrors([]);
     setShowForm(true);
   }
 
@@ -597,6 +846,10 @@ export default function FornecedoresPage() {
     setCnpjStatus("idle");
     setCnpjDupError("");
     setHistorico(null);
+    setContratos([]);
+    setContratoEditId(null);
+    setContratoForm({ ...EMPTY_CONTRATO });
+    setContratoErrors([]);
   }
 
   function set(key: keyof Fornecedor, val: string | boolean) {
@@ -754,6 +1007,254 @@ export default function FornecedoresPage() {
     }
   }
 
+  async function exportarFornecedores() {
+    try {
+      const response = await apiClient.get("/financeiro/fornecedores/exportar", {
+        params: {
+          format: "csv",
+          ativo: "all",
+          empresa: fEmpresa || undefined,
+        },
+        responseType: "blob",
+      });
+      const blob = response.data instanceof Blob
+        ? response.data
+        : new Blob([response.data], { type: "text/csv;charset=utf-8" });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "fornecedores.csv";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      setImportErrors(["Não foi possível exportar fornecedores. Verifique se o backend v0.3.8 está aplicado."]);
+      setShowImport(true);
+    }
+  }
+
+  async function loadContratos(id: number) {
+    setContratosLoading(true);
+    setContratoErrors([]);
+    try {
+      const r = await apiClient.get(`/financeiro/fornecedores/${id}/contratos`);
+      setContratos(r.data.data ?? []);
+    } catch {
+      setContratos([]);
+      setContratoErrors(["Não foi possível carregar contratos deste fornecedor."]);
+    } finally {
+      setContratosLoading(false);
+    }
+  }
+
+  function setContrato(key: keyof FornecedorContrato, value: string | number | boolean | null) {
+    setContratoForm((prev) => ({ ...prev, [key]: value }));
+    if (contratoErrors.length) setContratoErrors([]);
+  }
+
+  function resetContratoForm() {
+    setContratoEditId(null);
+    setContratoForm({ ...EMPTY_CONTRATO });
+    setContratoErrors([]);
+    if (contratoPdfInputRef.current) contratoPdfInputRef.current.value = "";
+  }
+
+  async function handleContratoPdf(file?: File) {
+    if (!file) return;
+    if (file.type !== "application/pdf") {
+      setContratoErrors(["Anexe apenas contrato em PDF."]);
+      return;
+    }
+    const base64 = await fileToBase64(file);
+    setContratoForm((prev) => ({
+      ...prev,
+      arquivo_nome: file.name,
+      arquivo_mime: file.type,
+      arquivo_base64: base64,
+    }));
+  }
+
+  function editContrato(c: FornecedorContrato) {
+    setContratoEditId(c.id);
+    setContratoForm({
+      ...EMPTY_CONTRATO,
+      ...c,
+      valor_mensal: Number(c.valor_mensal || 0),
+      valor_total: Number(c.valor_total || 0),
+      valor_pago: Number(c.valor_pago || 0),
+      arquivo_base64: "",
+    });
+    setContratoErrors([]);
+  }
+
+  async function salvarContrato() {
+    if (!editId) {
+      setContratoErrors(["Salve o fornecedor antes de cadastrar contratos."]);
+      return;
+    }
+    if (!String(contratoForm.titulo || "").trim()) {
+      setContratoErrors(["Título / serviço do contrato é obrigatório."]);
+      return;
+    }
+
+    setContratoSaving(true);
+    setContratoErrors([]);
+    const payload = {
+      ...contratoForm,
+      valor_mensal: parseMoneyInput(contratoForm.valor_mensal),
+      valor_total: parseMoneyInput(contratoForm.valor_total),
+      valor_pago: parseMoneyInput(contratoForm.valor_pago),
+    };
+
+    try {
+      if (contratoEditId) {
+        await apiClient.put(`/financeiro/fornecedores/${editId}/contratos/${contratoEditId}`, payload);
+      } else {
+        await apiClient.post(`/financeiro/fornecedores/${editId}/contratos`, payload);
+      }
+      resetContratoForm();
+      await loadContratos(editId);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message ||
+        (err instanceof Error ? err.message : "Erro ao salvar contrato");
+      setContratoErrors([msg]);
+    } finally {
+      setContratoSaving(false);
+    }
+  }
+
+  async function inativarContrato(c: FornecedorContrato) {
+    if (!editId) return;
+    if (!window.confirm("Inativar este contrato?")) return;
+    try {
+      await apiClient.delete(`/financeiro/fornecedores/${editId}/contratos/${c.id}`);
+      await loadContratos(editId);
+      if (contratoEditId === c.id) resetContratoForm();
+    } catch {
+      setContratoErrors(["Não foi possível inativar o contrato."]);
+    }
+  }
+
+  async function abrirContratoPdf(c: FornecedorContrato) {
+    if (!editId) return;
+    try {
+      const r = await apiClient.get(`/financeiro/fornecedores/${editId}/contratos/${c.id}/arquivo`);
+      const data = r.data?.data;
+      if (!data?.arquivo_base64) return;
+      const url = `data:${data.arquivo_mime || "application/pdf"};base64,${data.arquivo_base64}`;
+      const win = window.open();
+      win?.document.write(`<iframe src="${url}" style="width:100%;height:100%;border:0"></iframe>`);
+    } catch {
+      setContratoErrors(["Não foi possível abrir o PDF do contrato."]);
+    }
+  }
+
+  function downloadModeloContratos() {
+    const header = CONTRATO_IMPORT_COLUMNS.map((c) => c.label);
+    const example = CONTRATO_IMPORT_COLUMNS.map((c) => c.example);
+    const worksheet = XLSX.utils.aoa_to_sheet([header, example]);
+    worksheet["!cols"] = CONTRATO_IMPORT_COLUMNS.map((c) => ({ wch: Math.max(16, c.label.length + 4) }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Contratos");
+    XLSX.writeFile(workbook, "modelo_importacao_contratos_fornecedor.xlsx");
+  }
+
+  function exportarContratosExcel() {
+    const rows = contratos.map((c) => ({
+      "Título / Serviço": c.titulo,
+      "Número do contrato": c.numero_contrato || "",
+      Status: statusContratoLabel(c.status),
+      "Data assinatura": c.data_assinatura ? fmtData(c.data_assinatura) : "",
+      "Data início": c.data_inicio ? fmtData(c.data_inicio) : "",
+      "Data fim": c.data_fim ? fmtData(c.data_fim) : "",
+      "Data renovação": c.data_renovacao ? fmtData(c.data_renovacao) : "",
+      "Índice correção": c.indice_correcao || "",
+      "Valor mensal": Number(c.valor_mensal || 0),
+      "Valor total": Number(c.valor_total || 0),
+      "Valor pago": Number(c.valor_pago || 0),
+      Serviços: c.servicos || "",
+      Responsável: c.responsavel || "",
+      Observações: c.observacoes || "",
+      "Arquivo PDF": c.arquivo_nome || "",
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Contratos");
+    XLSX.writeFile(workbook, "contratos_fornecedor.xlsx");
+  }
+
+  async function handleContratoImportFile(file?: File) {
+    setContratoImportRows([]);
+    setContratoImportResult(null);
+    setContratoErrors([]);
+    if (!file) return;
+    setContratoImportFileName(file.name);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array", raw: false });
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: "" });
+      const mappedRows: Partial<FornecedorContrato>[] = [];
+      const rowErrors: string[] = [];
+
+      rawRows.forEach((row, idx) => {
+        const excelLine = idx + 2;
+        const normalized = normalizeContratoImportRow(row);
+        const hasAnyValue = Object.values(normalized).some((value) => String(value ?? "").trim() !== "");
+        if (!hasAnyValue) return;
+        if (!normalized.titulo?.trim()) {
+          rowErrors.push(`Linha ${excelLine}: Título / Serviço é obrigatório.`);
+          return;
+        }
+        mappedRows.push(normalized);
+      });
+
+      setContratoImportRows(mappedRows);
+      setContratoErrors(rowErrors);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Arquivo inválido";
+      setContratoErrors([`Não foi possível ler a planilha de contratos: ${msg}`]);
+    } finally {
+      if (contratoImportInputRef.current) contratoImportInputRef.current.value = "";
+    }
+  }
+
+  async function importarContratos() {
+    if (!editId) return;
+    if (!contratoImportRows.length) {
+      setContratoErrors(["Selecione uma planilha com contratos válidos antes de importar."]);
+      return;
+    }
+    setContratoImporting(true);
+    setContratoImportResult(null);
+    const result: ContratoImportResult = { created: 0, updated: 0, skipped: 0, errors: [] };
+
+    try {
+      for (let i = 0; i < contratoImportRows.length; i += 100) {
+        const chunk = contratoImportRows.slice(i, i + 100);
+        const response = await apiClient.post(`/financeiro/fornecedores/${editId}/contratos/importar`, {
+          contratos: chunk,
+        });
+        const data = response.data?.data || {};
+        result.created += Number(data.created || 0);
+        result.updated += Number(data.updated || 0);
+        result.skipped += Number(data.skipped || 0);
+        result.errors.push(...(Array.isArray(data.errors) ? data.errors : []));
+      }
+      setContratoImportResult(result);
+      setContratoImportRows([]);
+      setContratoImportFileName("");
+      await loadContratos(editId);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message ||
+        (err instanceof Error ? err.message : "Erro ao importar contratos");
+      setContratoErrors([msg]);
+    } finally {
+      setContratoImporting(false);
+    }
+  }
+
   // ── Helpers UI ─────────────────────────────────────────────────────────────
   // Field wrapper (defined at module level below to avoid re-render on focus loss)
 
@@ -771,6 +1272,12 @@ export default function FornecedoresPage() {
           <p className="text-sm text-slate-500 mt-0.5">{total} cadastros</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            onClick={exportarFornecedores}
+            className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-[#1e3a5f] border border-slate-200 text-sm font-semibold rounded-lg transition-colors"
+          >
+            <Download className="w-4 h-4" /> Exportar fornecedores
+          </button>
           <button
             onClick={() => setShowImport(true)}
             className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-[#1e3a5f] border border-slate-200 text-sm font-semibold rounded-lg transition-colors"
@@ -1099,11 +1606,19 @@ export default function FornecedoresPage() {
                     if (editId) loadHistorico(editId);
                   },
                 },
+                {
+                  id: "contratos",
+                  label: "Contratos",
+                  icon: FileSignature,
+                  onClick: () => {
+                    if (editId) loadContratos(editId);
+                  },
+                },
               ].map((t) => (
                 <button
                   key={t.id}
                   onClick={() => {
-                    setFormTab(t.id as "dados" | "historico");
+                    setFormTab(t.id as FormTab);
                     t.onClick?.();
                   }}
                   className={cn(
@@ -1115,7 +1630,7 @@ export default function FornecedoresPage() {
                 >
                   <t.icon className="w-3.5 h-3.5" />
                   {t.label}
-                  {t.id === "historico" && !editId && (
+                  {(t.id === "historico" || t.id === "contratos") && !editId && (
                     <span className="ml-1 text-[10px] text-slate-400">
                       (salve primeiro)
                     </span>
@@ -1575,6 +2090,324 @@ export default function FornecedoresPage() {
                   <p className="text-sm text-slate-400 text-center py-10">
                     Clique na aba Histórico para carregar.
                   </p>
+                )}
+              </div>
+            )}
+
+            {/* ── Tab: Contratos ── */}
+            {formTab === "contratos" && (
+              <div className="px-6 py-5 max-h-[65vh] overflow-y-auto space-y-4">
+                {!editId ? (
+                  <p className="text-sm text-slate-400 text-center py-10">
+                    Salve o fornecedor primeiro para cadastrar contratos.
+                  </p>
+                ) : (
+                  <>
+                    {contratoErrors.length > 0 && (
+                      <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-xs text-red-700 max-h-32 overflow-y-auto">
+                        {contratoErrors.slice(0, 8).map((error) => (
+                          <p key={error}>• {error}</p>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div>
+                          <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                            Gestão de contratos
+                          </p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Assinatura, renovação, índice de correção, valores, serviços e PDF assinado.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={downloadModeloContratos}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50"
+                          >
+                            <Download className="w-3.5 h-3.5" /> Modelo
+                          </button>
+                          <label className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50 cursor-pointer">
+                            <Upload className="w-3.5 h-3.5" /> Importar
+                            <input
+                              ref={contratoImportInputRef}
+                              type="file"
+                              accept=".xlsx,.xls,.csv"
+                              className="hidden"
+                              onChange={(e) => handleContratoImportFile(e.target.files?.[0])}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            onClick={exportarContratosExcel}
+                            disabled={contratos.length === 0}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                          >
+                            <Download className="w-3.5 h-3.5" /> Exportar
+                          </button>
+                        </div>
+                      </div>
+
+                      {contratoImportFileName && (
+                        <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800 flex items-center justify-between gap-2 flex-wrap">
+                          <span>
+                            Planilha: <strong>{contratoImportFileName}</strong> · {contratoImportRows.length} contratos válidos
+                          </span>
+                          <button
+                            type="button"
+                            onClick={importarContratos}
+                            disabled={contratoImporting || contratoImportRows.length === 0}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1e3a5f] text-white rounded-lg font-semibold disabled:opacity-60"
+                          >
+                            {contratoImporting ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Upload className="w-3.5 h-3.5" />
+                            )}
+                            Importar contratos
+                          </button>
+                        </div>
+                      )}
+
+                      {contratoImportResult && (
+                        <div className="rounded-lg border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700">
+                          Criados: <strong>{contratoImportResult.created}</strong> · Atualizados: <strong>{contratoImportResult.updated}</strong> · Ignorados: <strong>{contratoImportResult.skipped}</strong>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field label="Título / Serviço" name="contrato_titulo" required errors={{}}>
+                          <input
+                            className={inp}
+                            value={contratoForm.titulo || ""}
+                            onChange={(e) => setContrato("titulo", e.target.value)}
+                            placeholder="Ex: Contrato de manutenção"
+                          />
+                        </Field>
+                        <Field label="Número do contrato" name="numero_contrato" errors={{}}>
+                          <input
+                            className={inp}
+                            value={contratoForm.numero_contrato || ""}
+                            onChange={(e) => setContrato("numero_contrato", e.target.value)}
+                            placeholder="CTR-2026-001"
+                          />
+                        </Field>
+                        <Field label="Status" name="status" errors={{}}>
+                          <select
+                            className={sel}
+                            value={contratoForm.status || "ativo"}
+                            onChange={(e) => setContrato("status", e.target.value)}
+                          >
+                            {CONTRATO_STATUS.map((s) => (
+                              <option key={s.value} value={s.value}>{s.label}</option>
+                            ))}
+                          </select>
+                        </Field>
+                        <Field label="Índice de correção" name="indice_correcao" errors={{}}>
+                          <input
+                            className={inp}
+                            value={contratoForm.indice_correcao || ""}
+                            onChange={(e) => setContrato("indice_correcao", e.target.value)}
+                            placeholder="IPCA, IGPM, fixo..."
+                          />
+                        </Field>
+                        <Field label="Data assinatura" name="data_assinatura" errors={{}}>
+                          <input type="date" className={inp} value={contratoForm.data_assinatura || ""} onChange={(e) => setContrato("data_assinatura", e.target.value)} />
+                        </Field>
+                        <Field label="Data início" name="data_inicio" errors={{}}>
+                          <input type="date" className={inp} value={contratoForm.data_inicio || ""} onChange={(e) => setContrato("data_inicio", e.target.value)} />
+                        </Field>
+                        <Field label="Data fim" name="data_fim" errors={{}}>
+                          <input type="date" className={inp} value={contratoForm.data_fim || ""} onChange={(e) => setContrato("data_fim", e.target.value)} />
+                        </Field>
+                        <Field label="Renovação" name="data_renovacao" errors={{}}>
+                          <input type="date" className={inp} value={contratoForm.data_renovacao || ""} onChange={(e) => setContrato("data_renovacao", e.target.value)} />
+                        </Field>
+                        <Field label="Valor mensal" name="valor_mensal" errors={{}}>
+                          <input
+                            className={inp}
+                            inputMode="decimal"
+                            value={String(contratoForm.valor_mensal ?? "")}
+                            onChange={(e) => setContrato("valor_mensal", e.target.value)}
+                            placeholder="0,00"
+                          />
+                        </Field>
+                        <Field label="Valor total" name="valor_total" errors={{}}>
+                          <input
+                            className={inp}
+                            inputMode="decimal"
+                            value={String(contratoForm.valor_total ?? "")}
+                            onChange={(e) => setContrato("valor_total", e.target.value)}
+                            placeholder="0,00"
+                          />
+                        </Field>
+                        <Field label="Valor pago" name="valor_pago" errors={{}}>
+                          <input
+                            className={inp}
+                            inputMode="decimal"
+                            value={String(contratoForm.valor_pago ?? "")}
+                            onChange={(e) => setContrato("valor_pago", e.target.value)}
+                            placeholder="0,00"
+                          />
+                        </Field>
+                        <Field label="Responsável" name="responsavel" errors={{}}>
+                          <input
+                            className={inp}
+                            value={contratoForm.responsavel || ""}
+                            onChange={(e) => setContrato("responsavel", e.target.value)}
+                            placeholder="Responsável interno"
+                          />
+                        </Field>
+                        <Field label="Serviços contratados" name="servicos" col2 errors={{}}>
+                          <textarea
+                            className={cn(inp, "min-h-[62px] resize-none")}
+                            value={contratoForm.servicos || ""}
+                            onChange={(e) => setContrato("servicos", e.target.value)}
+                            placeholder="Descreva os serviços vinculados ao contrato"
+                          />
+                        </Field>
+                        <Field label="Observações" name="observacoes" col2 errors={{}}>
+                          <textarea
+                            className={cn(inp, "min-h-[56px] resize-none")}
+                            value={contratoForm.observacoes || ""}
+                            onChange={(e) => setContrato("observacoes", e.target.value)}
+                            placeholder="Renovação, reajuste, cláusulas importantes..."
+                          />
+                        </Field>
+                        <div className="col-span-2 flex items-center justify-between gap-3 flex-wrap rounded-lg border border-slate-200 bg-white px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-slate-600 flex items-center gap-1.5">
+                              <Paperclip className="w-3.5 h-3.5" /> PDF assinado
+                            </p>
+                            <p className="text-[11px] text-slate-400 truncate">
+                              {contratoForm.arquivo_nome || "Nenhum PDF anexado"}
+                            </p>
+                          </div>
+                          <label className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100 cursor-pointer">
+                            Anexar PDF
+                            <input
+                              ref={contratoPdfInputRef}
+                              type="file"
+                              accept="application/pdf"
+                              className="hidden"
+                              onChange={(e) => handleContratoPdf(e.target.files?.[0])}
+                            />
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={resetContratoForm}
+                          className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50"
+                        >
+                          Limpar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={salvarContrato}
+                          disabled={contratoSaving}
+                          className="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-[#1e3a5f] hover:bg-[#162d4a] text-white rounded-lg disabled:opacity-60"
+                        >
+                          {contratoSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                          {contratoEditId ? "Atualizar contrato" : "Salvar contrato"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-100 overflow-hidden">
+                      <div className="bg-slate-50 px-3 py-2 flex items-center justify-between">
+                        <p className="text-xs font-semibold text-slate-600">Contratos cadastrados</p>
+                        <span className="text-[10px] text-slate-400">{contratos.length} registros</span>
+                      </div>
+                      {contratosLoading ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-100 text-slate-500">
+                                <th className="text-left px-3 py-2 font-semibold">Contrato</th>
+                                <th className="text-left px-3 py-2 font-semibold">Status</th>
+                                <th className="text-left px-3 py-2 font-semibold">Renovação</th>
+                                <th className="text-right px-3 py-2 font-semibold">Valor pago</th>
+                                <th className="text-left px-3 py-2 font-semibold">PDF</th>
+                                <th className="text-left px-3 py-2 font-semibold">Ações</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {contratos.length === 0 && (
+                                <tr>
+                                  <td colSpan={6} className="text-center text-slate-400 py-8">
+                                    Nenhum contrato cadastrado
+                                  </td>
+                                </tr>
+                              )}
+                              {contratos.map((c) => (
+                                <tr key={c.id} className={cn("border-b border-slate-50 hover:bg-slate-50", !c.ativo && "opacity-50")}>
+                                  <td className="px-3 py-2.5 max-w-[220px]">
+                                    <p className="font-medium text-slate-700 truncate">{c.titulo}</p>
+                                    <p className="text-[10px] text-slate-400 truncate">
+                                      {c.numero_contrato || "Sem número"} · {c.servicos || "Sem descrição"}
+                                    </p>
+                                  </td>
+                                  <td className="px-3 py-2.5">
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600">
+                                      {statusContratoLabel(c.status)}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">
+                                    <span className="inline-flex items-center gap-1">
+                                      <CalendarClock className="w-3.5 h-3.5 text-slate-400" /> {fmtData(c.data_renovacao || c.data_fim)}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2.5 text-right font-medium text-slate-700 whitespace-nowrap">
+                                    {fmtMoeda(Number(c.valor_pago || 0))}
+                                  </td>
+                                  <td className="px-3 py-2.5">
+                                    {c.arquivo_nome || c.tem_arquivo ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => abrirContratoPdf(c)}
+                                        className="inline-flex items-center gap-1 text-[#1e3a5f] hover:underline"
+                                      >
+                                        <ExternalLink className="w-3.5 h-3.5" /> PDF
+                                      </button>
+                                    ) : (
+                                      <span className="text-slate-300">—</span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2.5 whitespace-nowrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => editContrato(c)}
+                                      className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700"
+                                      title="Editar contrato"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => inativarContrato(c)}
+                                      className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600"
+                                      title="Inativar contrato"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             )}

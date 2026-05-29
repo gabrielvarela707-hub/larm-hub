@@ -1,6 +1,6 @@
 /**
  * server/src/routes/crm.js
- * CRM/Funil — Fase 3: inteligência comercial, scoring, relatórios e previsão de fechamento.
+ * CRM/Funil — v0.1.5: listas inteligentes, ações em massa e fila de ações manuais.
  */
 
 const express = require('express')
@@ -1454,6 +1454,416 @@ router.patch('/leads/:id/consent', async (req, res) => {
   if (!rows.length) return res.status(404).json({ ok: false, message: 'Lead não encontrado' })
   await logAudit({ userId: req.user.id, tenantId: req.user.tenant_id, action: 'crm_lead_consent_update', module: 'crm', entityType: 'crm_leads', entityId: req.params.id, meta: { email_opt_out: emailOptOut, sms_opt_out: smsOptOut } }).catch(() => {})
   return res.json({ ok: true, data: mapLead(rows[0]) })
+})
+
+// ── END ORIGINAL ──
+// ─────────────────────────────────────────────────────────────────────────────
+// CRM v0.1.5 — LISTAS INTELIGENTES
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /crm/smart-lists
+router.get('/smart-lists', async (req, res) => {
+  const { rows } = await query(
+    `SELECT id, name, icon, filters, position, created_at
+       FROM crm_smart_lists
+      WHERE tenant_id = $1
+      ORDER BY position, created_at`,
+    [req.user.tenant_id]
+  )
+  return res.json({ ok: true, data: rows })
+})
+
+// POST /crm/smart-lists
+router.post('/smart-lists', async (req, res) => {
+  if (!(await requireCrmWrite(req, res))) return
+  const name    = String(req.body.name || '').trim()
+  const icon    = String(req.body.icon || 'filter').trim()
+  const filters = req.body.filters || {}
+  if (!name) return res.status(400).json({ ok: false, message: 'Nome obrigatório' })
+
+  const { rows } = await query(
+    `INSERT INTO crm_smart_lists (tenant_id, name, icon, filters, position, created_by)
+     VALUES ($1, $2, $3, $4::jsonb,
+             COALESCE((SELECT MAX(position)+1 FROM crm_smart_lists WHERE tenant_id=$1), 0),
+             $5)
+     ON CONFLICT (tenant_id, name) DO UPDATE
+       SET filters = EXCLUDED.filters, icon = EXCLUDED.icon, updated_at = NOW()
+     RETURNING *`,
+    [req.user.tenant_id, name, icon, JSON.stringify(filters), req.user.id]
+  )
+  await logAudit({ userId: req.user.id, tenantId: req.user.tenant_id, action: 'crm_smart_list_save', module: 'crm', entityType: 'crm_smart_lists', entityId: rows[0].id, meta: { name } }).catch(() => {})
+  return res.status(201).json({ ok: true, data: rows[0] })
+})
+
+// DELETE /crm/smart-lists/:id
+router.delete('/smart-lists/:id', async (req, res) => {
+  if (!(await requireCrmWrite(req, res))) return
+  await query(
+    `DELETE FROM crm_smart_lists WHERE id=$1 AND tenant_id=$2`,
+    [req.params.id, req.user.tenant_id]
+  )
+  await logAudit({ userId: req.user.id, tenantId: req.user.tenant_id, action: 'crm_smart_list_delete', module: 'crm', entityType: 'crm_smart_lists', entityId: req.params.id }).catch(() => {})
+  return res.json({ ok: true })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRM v0.1.5 — AÇÕES EM MASSA
+// ─────────────────────────────────────────────────────────────────────────────
+
+// POST /crm/leads/bulk-update   { ids: string[], updates: { stage_id?, responsible_id?, temperature? } }
+router.post('/leads/bulk-update', async (req, res) => {
+  if (!(await requireCrmWrite(req, res))) return
+  const ids     = (req.body.ids || []).filter(Boolean)
+  const updates = req.body.updates || {}
+  if (!ids.length) return res.status(400).json({ ok: false, message: 'Nenhum lead selecionado' })
+
+  const setClauses = []
+  const params     = [req.user.tenant_id]
+
+  if (updates.stage_id !== undefined) {
+    params.push(updates.stage_id || null)
+    setClauses.push(`stage_id = $${params.length}`)
+  }
+  if (updates.responsible_id !== undefined) {
+    params.push(updates.responsible_id || null)
+    setClauses.push(`responsible_id = $${params.length}`)
+  }
+  if (updates.temperature !== undefined) {
+    params.push(updates.temperature)
+    setClauses.push(`temperature = $${params.length}`)
+  }
+  if (!setClauses.length) return res.status(400).json({ ok: false, message: 'Nenhum campo para atualizar' })
+
+  setClauses.push('updated_at = NOW()')
+  params.push(ids)
+  const sql = `UPDATE crm_leads SET ${setClauses.join(', ')} WHERE tenant_id=$1 AND id = ANY($${params.length}) AND is_active=true`
+  const { rowCount } = await query(sql, params)
+
+  await logAudit({ userId: req.user.id, tenantId: req.user.tenant_id, action: 'crm_leads_bulk_update', module: 'crm', entityType: 'crm_leads', meta: { ids, updates, rowCount } }).catch(() => {})
+  return res.json({ ok: true, updated: rowCount })
+})
+
+// POST /crm/leads/bulk-delete   { ids: string[] }
+router.post('/leads/bulk-delete', async (req, res) => {
+  if (!(await requireCrmWrite(req, res))) return
+  const ids = (req.body.ids || []).filter(Boolean)
+  if (!ids.length) return res.status(400).json({ ok: false, message: 'Nenhum lead selecionado' })
+
+  const { rowCount } = await query(
+    `UPDATE crm_leads SET is_active=false, updated_at=NOW()
+      WHERE tenant_id=$1 AND id = ANY($2) AND is_active=true`,
+    [req.user.tenant_id, ids]
+  )
+  await logAudit({ userId: req.user.id, tenantId: req.user.tenant_id, action: 'crm_leads_bulk_delete', module: 'crm', entityType: 'crm_leads', meta: { ids, rowCount } }).catch(() => {})
+  return res.json({ ok: true, deleted: rowCount })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRM v0.1.5 — FILA DE AÇÕES MANUAIS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /crm/manual-actions?type=ligacao&responsible_id=&status=pendente
+router.get('/manual-actions', async (req, res) => {
+  const { type, responsible_id, status = 'pendente' } = req.query
+
+  const conditions = ['t.tenant_id = $1', `t.status = $2`]
+  const params     = [req.user.tenant_id, status]
+
+  if (type && type !== 'all') {
+    params.push(type)
+    conditions.push(`t.type = $${params.length}`)
+  }
+  if (responsible_id && responsible_id !== 'all') {
+    params.push(responsible_id)
+    conditions.push(`t.responsible_id = $${params.length}`)
+  }
+
+  const { rows } = await query(
+    `SELECT
+        t.id,
+        t.lead_id,
+        t.title,
+        t.description,
+        t.type,
+        t.due_at,
+        t.priority,
+        t.status,
+        t.created_at,
+        l.name      AS lead_name,
+        l.phone     AS lead_phone,
+        s.name      AS stage_name,
+        s.color     AS stage_color,
+        u.name      AS responsible_name
+      FROM crm_lead_tasks t
+      LEFT JOIN crm_leads         l ON l.id = t.lead_id
+      LEFT JOIN crm_funnel_stages s ON s.id = l.stage_id
+      LEFT JOIN hub_users         u ON u.id = t.responsible_id
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY
+       CASE t.priority WHEN 'urgente' THEN 1 WHEN 'alta' THEN 2 WHEN 'media' THEN 3 ELSE 4 END,
+       t.due_at ASC NULLS LAST,
+       t.created_at ASC
+     LIMIT 200`,
+    params
+  )
+  return res.json({ ok: true, data: rows })
+})
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRM v0.1.6 — CONVERSAS (inbox, eventos, SLA)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /crm/conversations?filter=all|unread|starred&responsible_id=
+router.get('/conversations', async (req, res) => {
+  const { filter = 'all', responsible_id } = req.query
+  const params  = [req.user.tenant_id]
+  const having  = []
+  const where   = ['l.tenant_id = $1', 'l.is_active = true']
+
+  if (responsible_id && responsible_id !== 'all') {
+    params.push(responsible_id)
+    where.push(`l.responsible_id = $${params.length}`)
+  }
+
+  const { rows } = await query(
+    `SELECT
+        l.id          AS lead_id,
+        l.name        AS lead_name,
+        l.phone       AS lead_phone,
+        l.email       AS lead_email,
+        s.name        AS stage_name,
+        s.color       AS stage_color,
+        u.name        AS responsible_name,
+        cv.is_starred,
+        cv.is_unread,
+        cv.last_event_at,
+        cv.last_event_preview,
+        cv.sla_first_response_met,
+        cv.sla_resolution_met,
+        (SELECT COUNT(*) FROM crm_communication_events e WHERE e.lead_id = l.id AND e.tenant_id = l.tenant_id) +
+        (SELECT COUNT(*) FROM crm_lead_history h       WHERE h.lead_id = l.id AND h.tenant_id = l.tenant_id)
+          AS event_count
+      FROM crm_leads l
+      LEFT JOIN crm_funnel_stages  s  ON s.id = l.stage_id
+      LEFT JOIN hub_users          u  ON u.id = l.responsible_id
+      LEFT JOIN crm_conversations  cv ON cv.lead_id = l.id AND cv.tenant_id = l.tenant_id
+     WHERE ${where.join(' AND ')}
+       AND (
+         cv.last_event_at IS NOT NULL
+         OR EXISTS (SELECT 1 FROM crm_communication_events e WHERE e.lead_id = l.id AND e.tenant_id = l.tenant_id)
+         OR EXISTS (SELECT 1 FROM crm_lead_history         h WHERE h.lead_id = l.id AND h.tenant_id = l.tenant_id)
+       )
+       ${filter === 'unread'  ? 'AND cv.is_unread  = true' : ''}
+       ${filter === 'starred' ? 'AND cv.is_starred = true' : ''}
+     ORDER BY COALESCE(cv.last_event_at, (
+       SELECT MAX(created_at) FROM crm_lead_history h WHERE h.lead_id = l.id AND h.tenant_id = l.tenant_id
+     )) DESC NULLS LAST
+     LIMIT 150`,
+    params
+  )
+  return res.json({ ok: true, data: rows })
+})
+
+// GET /crm/conversations/:leadId/events  — merged history + communication events
+router.get('/conversations/:leadId/events', async (req, res) => {
+  const leadId = req.params.leadId
+
+  const [historyRes, commRes] = await Promise.all([
+    query(
+      `SELECT
+          h.id,
+          'history'          AS source,
+          h.action,
+          NULL               AS channel,
+          NULL               AS direction,
+          h.note             AS body,
+          h.from_stage_name,
+          h.to_stage_name,
+          h.user_name,
+          h.created_at
+        FROM crm_lead_history h
+       WHERE h.lead_id = $1 AND h.tenant_id = $2
+       ORDER BY h.created_at ASC`,
+      [leadId, req.user.tenant_id]
+    ),
+    query(
+      `SELECT
+          e.id,
+          'communication'    AS source,
+          NULL               AS action,
+          e.channel,
+          e.direction,
+          e.body_preview     AS body,
+          NULL               AS from_stage_name,
+          NULL               AS to_stage_name,
+          u.name             AS user_name,
+          e.created_at
+        FROM crm_communication_events e
+        LEFT JOIN hub_users u ON u.id = e.sent_by
+       WHERE e.lead_id = $1 AND e.tenant_id = $2
+       ORDER BY e.created_at ASC`,
+      [leadId, req.user.tenant_id]
+    )
+  ])
+
+  // Merge and sort by date
+  const merged = [...historyRes.rows, ...commRes.rows].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  )
+
+  // Mark conversation as read
+  await query(
+    `INSERT INTO crm_conversations (tenant_id, lead_id, is_unread)
+     VALUES ($1, $2, false)
+     ON CONFLICT (tenant_id, lead_id) DO UPDATE SET is_unread = false, updated_at = NOW()`,
+    [req.user.tenant_id, leadId]
+  ).catch(() => {})
+
+  return res.json({ ok: true, data: merged })
+})
+
+// POST /crm/conversations/:leadId/events  — log a new event
+router.post('/conversations/:leadId/events', async (req, res) => {
+  if (!(await requireCrmWrite(req, res))) return
+  const leadId  = req.params.leadId
+  const channel = String(req.body.channel || 'nota').trim()
+  const body    = String(req.body.body || '').trim()
+  if (!body) return res.status(400).json({ ok: false, message: 'Mensagem obrigatória' })
+
+  const allowed = ['email', 'sms', 'whatsapp', 'ligacao', 'nota']
+  if (!allowed.includes(channel)) return res.status(400).json({ ok: false, message: 'Canal inválido' })
+
+  // Insert into communication_events
+  const { rows: [evt] } = await query(
+    `INSERT INTO crm_communication_events
+       (tenant_id, lead_id, channel, direction, body_preview, status, sent_by)
+     VALUES ($1, $2, $3, 'outbound', $4, 'sent', $5)
+     RETURNING id, created_at`,
+    [req.user.tenant_id, leadId, channel, body.slice(0, 300), req.user.id]
+  )
+
+  // Also log in lead history as a note
+  await query(
+    `INSERT INTO crm_lead_history (tenant_id, lead_id, action, note, user_id, user_name)
+     SELECT $1, $2, $3, $4, $5, name FROM hub_users WHERE id = $5`,
+    [req.user.tenant_id, leadId, `${channel}_manual`, body, req.user.id]
+  ).catch(() => {})
+
+  // Update conversation metadata
+  const preview = body.slice(0, 120)
+  await query(
+    `INSERT INTO crm_conversations (tenant_id, lead_id, is_unread, last_event_at, last_event_preview)
+     VALUES ($1, $2, false, NOW(), $3)
+     ON CONFLICT (tenant_id, lead_id) DO UPDATE
+       SET is_unread = false, last_event_at = NOW(), last_event_preview = $3, updated_at = NOW()`,
+    [req.user.tenant_id, leadId, preview]
+  ).catch(() => {})
+
+  await logAudit({ userId: req.user.id, tenantId: req.user.tenant_id, action: 'crm_conversation_event', module: 'crm', entityType: 'crm_communication_events', entityId: evt.id, meta: { channel, leadId } }).catch(() => {})
+  return res.status(201).json({ ok: true, data: evt })
+})
+
+// PATCH /crm/conversations/:leadId  — toggle starred/unread
+router.patch('/conversations/:leadId', async (req, res) => {
+  if (!(await requireCrmWrite(req, res))) return
+  const updates = []
+  const params  = [req.user.tenant_id, req.params.leadId]
+
+  if (typeof req.body.is_starred === 'boolean') {
+    updates.push(`is_starred = $${params.length + 1}`)
+    params.push(req.body.is_starred)
+  }
+  if (typeof req.body.is_unread === 'boolean') {
+    updates.push(`is_unread = $${params.length + 1}`)
+    params.push(req.body.is_unread)
+  }
+  if (!updates.length) return res.status(400).json({ ok: false, message: 'Nada para atualizar' })
+
+  updates.push('updated_at = NOW()')
+  await query(
+    `INSERT INTO crm_conversations (tenant_id, lead_id, ${req.body.is_starred !== undefined ? 'is_starred' : 'is_unread'})
+     VALUES ($1, $2, $3)
+     ON CONFLICT (tenant_id, lead_id) DO UPDATE SET ${updates.join(', ')}`,
+    params
+  )
+  return res.json({ ok: true })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRM v0.1.6 — SLA CONFIG + STATS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /crm/sla-config
+router.get('/sla-config', async (req, res) => {
+  const { rows } = await query(
+    `SELECT is_active, first_response_minutes, resolution_minutes
+       FROM crm_sla_configs WHERE tenant_id = $1`,
+    [req.user.tenant_id]
+  )
+  return res.json({ ok: true, data: rows[0] || { is_active: false, first_response_minutes: 60, resolution_minutes: 480 } })
+})
+
+// POST /crm/sla-config
+router.post('/sla-config', async (req, res) => {
+  if (!(await requireCrmWrite(req, res))) return
+  const isActive             = Boolean(req.body.is_active)
+  const firstResponseMinutes = Math.max(1, Number(req.body.first_response_minutes) || 60)
+  const resolutionMinutes    = Math.max(1, Number(req.body.resolution_minutes) || 480)
+
+  const { rows: [cfg] } = await query(
+    `INSERT INTO crm_sla_configs (tenant_id, is_active, first_response_minutes, resolution_minutes)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (tenant_id) DO UPDATE
+       SET is_active = $2, first_response_minutes = $3, resolution_minutes = $4, updated_at = NOW()
+     RETURNING *`,
+    [req.user.tenant_id, isActive, firstResponseMinutes, resolutionMinutes]
+  )
+  await logAudit({ userId: req.user.id, tenantId: req.user.tenant_id, action: 'crm_sla_config_save', module: 'crm', entityType: 'crm_sla_configs', entityId: cfg.id, meta: { isActive, firstResponseMinutes } }).catch(() => {})
+  return res.json({ ok: true, data: cfg })
+})
+
+// GET /crm/sla-stats
+router.get('/sla-stats', async (req, res) => {
+  const [cfgRes, statsRes] = await Promise.all([
+    query(`SELECT * FROM crm_sla_configs WHERE tenant_id=$1`, [req.user.tenant_id]),
+    query(
+      `SELECT
+          COUNT(*)                                               AS total_conversations,
+          COUNT(CASE WHEN cv.is_unread = true THEN 1 END)       AS unread_count,
+          COUNT(CASE WHEN cv.is_starred = true THEN 1 END)      AS starred_count,
+          COUNT(CASE WHEN cv.sla_first_response_met = true THEN 1 END)  AS sla_met,
+          COUNT(CASE WHEN cv.sla_first_response_met = false THEN 1 END) AS sla_breached,
+          ROUND(AVG(
+            EXTRACT(EPOCH FROM (cv.first_response_at - cv.created_at)) / 60
+          )::numeric, 1)                                        AS avg_first_response_min,
+          COUNT(CASE WHEN cv.last_event_at > NOW() - INTERVAL '7 days' THEN 1 END) AS active_7d
+        FROM crm_conversations cv
+       WHERE cv.tenant_id = $1`,
+      [req.user.tenant_id]
+    )
+  ])
+
+  const cfg   = cfgRes.rows[0] || { is_active: false }
+  const stats = statsRes.rows[0] || {}
+  const total = Number(stats.total_conversations || 0)
+  const met   = Number(stats.sla_met || 0)
+  const sla_met_pct = total > 0 ? Math.round((met / total) * 100) : 0
+
+  return res.json({
+    ok: true,
+    data: {
+      sla_active: cfg.is_active,
+      total_conversations:       total,
+      unread_count:              Number(stats.unread_count || 0),
+      starred_count:             Number(stats.starred_count || 0),
+      sla_met:                   met,
+      sla_breached:              Number(stats.sla_breached || 0),
+      sla_met_pct,
+      avg_first_response_min:    Number(stats.avg_first_response_min || 0),
+      active_7d:                 Number(stats.active_7d || 0),
+    }
+  })
 })
 
 module.exports = router

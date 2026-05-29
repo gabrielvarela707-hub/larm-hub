@@ -11,7 +11,7 @@ const SQL = `
 CREATE TABLE IF NOT EXISTS hub_tenant_configs (
   tenant_id              UUID PRIMARY KEY REFERENCES hub_tenants(id) ON DELETE CASCADE,
   logo_url               TEXT,
-  logo_text              VARCHAR(80)  DEFAULT 'LoteMobile',
+  logo_text              VARCHAR(80)  DEFAULT 'LarmHub',
   primary_color          VARCHAR(9)   DEFAULT '#2563EB',
   sidebar_color          VARCHAR(9)   DEFAULT '#0D1B2A',
   google_maps_key        TEXT,

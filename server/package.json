@@ -1,7 +1,7 @@
 {
-  "name": "lotemobile-api",
-  "version": "0.0.8",
-  "description": "API backend LoteMobile / Santa Clara HUB / LARM HUB",
+  "name": "larmhub-api",
+  "version": "0.3.8",
+  "description": "API backend LarmHub / Santa Clara HUB",
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",
@@ -9,7 +9,15 @@
     "db:migrate": "node scripts/migrate.js",
     "db:seed": "node scripts/seed.js",
     "db:migrate:plano-contas": "node scripts/migrate_plano_contas.js",
-    "db:seed:plano-contas": "node scripts/seed_plano_contas.js"
+    "db:seed:plano-contas": "node scripts/seed_plano_contas.js",
+    "db:migrate:movimento": "node scripts/migrate_movimento_bancario.js",
+    "db:seed:movimento:2021": "python3 scripts/import_financeiro.py movimento scripts/imports/movimento-bancario-2021.xlsx --ano=2021 --limpar",
+    "db:seed:movimento:2022": "python3 scripts/import_financeiro.py movimento scripts/imports/mov-bancario-2022.xlsx --ano=2022 --limpar",
+    "db:seed:movimento:2023": "python3 scripts/import_financeiro.py movimento scripts/imports/mov-bancario-2023.xlsx --ano=2023 --limpar",
+    "db:seed:movimento:2024": "python3 scripts/import_financeiro.py movimento scripts/imports/mov-bancario-2024.xlsx --ano=2024 --limpar",
+    "db:seed:movimento:2025": "python3 scripts/import_financeiro.py movimento scripts/imports/mov-bancario-2025.xlsx --ano=2025 --limpar",
+    "db:seed:movimento:2026": "python3 scripts/import_financeiro.py movimento scripts/imports/mov-bancario-2026.xlsx --ano=2026 --ate=2026-06-28 --limpar",
+    "db:seed:fornecedores:movimento": "node scripts/seed_fornecedores_movimento.js"
   },
   "dependencies": {
     "express": "^4.19.2",

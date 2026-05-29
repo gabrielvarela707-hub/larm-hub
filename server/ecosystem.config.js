@@ -2,7 +2,7 @@
 module.exports = {
   apps: [
     {
-      name:           'lotemobile-api',
+      name:           'larmhub-api',
       script:         'src/server.js',
       instances:      2,
       exec_mode:      'cluster',
@@ -20,8 +20,8 @@ module.exports = {
 
       // Logs
       log_date_format:   'YYYY-MM-DD HH:mm:ss',
-      error_file:        '/var/log/lotemobile-api/pm2-error.log',
-      out_file:          '/var/log/lotemobile-api/pm2-out.log',
+      error_file:        '/var/log/larmhub-api/pm2-error.log',
+      out_file:          '/var/log/larmhub-api/pm2-out.log',
       merge_logs:        true,
 
       // Restart policy

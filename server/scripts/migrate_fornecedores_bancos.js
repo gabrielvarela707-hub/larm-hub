@@ -3,9 +3,9 @@
  * Cria tabelas de fornecedores, bancos/contas, plano de contas e lançamentos CP
  * Rodar: node scripts/migrate_fornecedores_bancos.js
  */
-require('dotenv').config()
-const { pool, connectDB } = require('../src/config/database')
-const logger = require('../src/config/logger')
+require("dotenv").config();
+const { pool, connectDB } = require("../src/config/database");
+const logger = require("../src/config/logger");
 
 const SQL = `
 
@@ -24,9 +24,11 @@ CREATE TABLE IF NOT EXISTS fin_fornecedores (
   endereco      TEXT,
   cidade_uf     VARCHAR(80),
   -- dados bancários do fornecedor (para pagamento)
-  banco_nome    VARCHAR(80),
+  banco_nome    VARCHAR(120),
+  codigo_banco  VARCHAR(10),
   agencia       VARCHAR(10),
   conta         VARCHAR(20),
+  digito        VARCHAR(2),
   tipo_conta    VARCHAR(20) DEFAULT 'Corrente',
   chave_pix     VARCHAR(150),
   obs           TEXT,
@@ -39,11 +41,15 @@ CREATE INDEX IF NOT EXISTS idx_forn_empresa  ON fin_fornecedores(empresa);
 CREATE INDEX IF NOT EXISTS idx_forn_ativo    ON fin_fornecedores(ativo);
 CREATE INDEX IF NOT EXISTS idx_forn_cnpj     ON fin_fornecedores(cnpj_cpf);
 
+ALTER TABLE fin_fornecedores ADD COLUMN IF NOT EXISTS codigo_banco VARCHAR(10);
+ALTER TABLE fin_fornecedores ADD COLUMN IF NOT EXISTS digito VARCHAR(2);
+ALTER TABLE fin_fornecedores ALTER COLUMN banco_nome TYPE VARCHAR(120);
+
 -- ─── Bancos / Contas da empresa ───────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS fin_bancos_contas (
   id                 SERIAL PRIMARY KEY,
   empresa            VARCHAR(30) NOT NULL,  -- LARM | LUCKY | LM | HOLDING | RM
-  banco_nome         VARCHAR(80) NOT NULL,
+  banco_nome         VARCHAR(120) NOT NULL,
   codigo_banco       VARCHAR(10),
   agencia            VARCHAR(10),
   conta              VARCHAR(20),
@@ -57,6 +63,8 @@ CREATE TABLE IF NOT EXISTS fin_bancos_contas (
 );
 
 CREATE INDEX IF NOT EXISTS idx_bancos_empresa ON fin_bancos_contas(empresa);
+
+ALTER TABLE fin_bancos_contas ALTER COLUMN banco_nome TYPE VARCHAR(120);
 
 -- ─── Plano de Contas ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS fin_plano_contas (
@@ -148,6 +156,11 @@ CREATE TABLE IF NOT EXISTS fin_parcelas_cp (
   juros          NUMERIC(18,4) DEFAULT 0,
   multa          NUMERIC(18,4) DEFAULT 0,
   valor_final    NUMERIC(18,4),
+  baixa_acrescimo NUMERIC(18,4) DEFAULT 0,
+  baixa_desconto  NUMERIC(18,4) DEFAULT 0,
+  baixa_juros     NUMERIC(18,4) DEFAULT 0,
+  baixa_multa     NUMERIC(18,4) DEFAULT 0,
+  baixa_valor_final NUMERIC(18,4),
   forma_pagamento VARCHAR(80),
   movimento_id   BIGINT REFERENCES fin_movimento(id),
   created_at     TIMESTAMP DEFAULT NOW()
@@ -165,8 +178,22 @@ ALTER TABLE fin_parcelas_cp
   ADD COLUMN IF NOT EXISTS juros NUMERIC(18,4) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS multa NUMERIC(18,4) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS valor_final NUMERIC(18,4),
+  ADD COLUMN IF NOT EXISTS baixa_acrescimo NUMERIC(18,4) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS baixa_desconto NUMERIC(18,4) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS baixa_juros NUMERIC(18,4) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS baixa_multa NUMERIC(18,4) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS baixa_valor_final NUMERIC(18,4),
   ADD COLUMN IF NOT EXISTS forma_pagamento VARCHAR(80),
   ADD COLUMN IF NOT EXISTS movimento_id BIGINT REFERENCES fin_movimento(id);
+
+UPDATE fin_parcelas_cp
+SET baixa_acrescimo = CASE WHEN baixa_acrescimo IS NULL OR baixa_acrescimo = 0 THEN COALESCE(acrescimo, 0) ELSE baixa_acrescimo END,
+    baixa_desconto = CASE WHEN baixa_desconto IS NULL OR baixa_desconto = 0 THEN COALESCE(desconto, 0) ELSE baixa_desconto END,
+    baixa_juros = CASE WHEN baixa_juros IS NULL OR baixa_juros = 0 THEN COALESCE(juros, 0) ELSE baixa_juros END,
+    baixa_multa = CASE WHEN baixa_multa IS NULL OR baixa_multa = 0 THEN COALESCE(multa, 0) ELSE baixa_multa END,
+    baixa_valor_final = COALESCE(baixa_valor_final, valor_final)
+WHERE status = 'pago'
+  AND (baixa_valor_final IS NULL OR baixa_valor_final = 0);
 
 -- ─── Adiciona colunas novas ao fin_movimento (se não existirem) ───────────────
 ALTER TABLE fin_movimento
@@ -187,26 +214,26 @@ WHERE natureza_financeira IS NOT NULL AND natureza_financeira != '#N/A'
 
 CREATE INDEX IF NOT EXISTS idx_mov_tipo ON fin_movimento(tipo_lancamento);
 
-`
+`;
 
 async function migrate() {
-  await connectDB()
-  logger.info('Criando tabelas de fornecedores, bancos e lançamentos CP...')
+  await connectDB();
+  logger.info("Criando tabelas de fornecedores, bancos e lançamentos CP...");
   try {
-    await pool.query(SQL)
-    logger.info('✅  Tabelas criadas / atualizadas:')
-    logger.info('   - fin_fornecedores')
-    logger.info('   - fin_bancos_contas')
-    logger.info('   - fin_plano_contas')
-    logger.info('   - fin_lancamentos_cp')
-    logger.info('   - fin_parcelas_cp')
-    logger.info('   - fin_movimento (colunas adicionadas)')
+    await pool.query(SQL);
+    logger.info("✅  Tabelas criadas / atualizadas:");
+    logger.info("   - fin_fornecedores");
+    logger.info("   - fin_bancos_contas");
+    logger.info("   - fin_plano_contas");
+    logger.info("   - fin_lancamentos_cp");
+    logger.info("   - fin_parcelas_cp");
+    logger.info("   - fin_movimento (colunas adicionadas)");
   } catch (err) {
-    logger.error('❌  Erro:', err.message)
-    process.exit(1)
+    logger.error("❌  Erro:", err.message);
+    process.exit(1);
   } finally {
-    await pool.end()
+    await pool.end();
   }
 }
 
-migrate()
+migrate();

@@ -23,7 +23,7 @@ const router = express.Router()
 
 const PORTAL_OPTIONS = {
   santa_clara: 'Santa Clara HUB',
-  larm: 'LARM HUB',
+  larm: 'LarmHub',
 }
 
 function normalizeAllowedHubs(value) {
@@ -227,7 +227,7 @@ async function sendInviteEmail({ tenantId, toEmail, toName, inviterName, tenantN
       },
     })
 
-    const fromName  = cfg.ses_from_name || tenantName || 'LoteMobile HUB'
+    const fromName  = cfg.ses_from_name || tenantName || 'LarmHub'
     const roleLabel = ROLE_LABELS[role] || role
 
     await client.send(new SendEmailCommand({
@@ -259,7 +259,7 @@ async function sendInviteEmail({ tenantId, toEmail, toName, inviterName, tenantN
                 </p>
                 <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0"/>
                 <p style="color:#cbd5e1;font-size:11px">
-                  Este convite foi enviado por ${tenantName} via LoteMobile HUB.
+                  Este convite foi enviado por ${tenantName} via LarmHub.
                   Se você não esperava este e-mail, pode ignorá-lo.
                 </p>
               </div>`,
@@ -304,7 +304,7 @@ async function sendTemporaryPasswordEmail({ tenantId, toEmail, toName, tenantNam
       },
     })
 
-    const fromName = cfg.ses_from_name || tenantName || 'LoteMobile HUB'
+    const fromName = cfg.ses_from_name || tenantName || 'LarmHub'
 
     await client.send(new SendEmailCommand({
       Source: `${fromName} <${cfg.ses_from_email}>`,

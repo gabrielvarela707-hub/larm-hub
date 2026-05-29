@@ -16,6 +16,7 @@ router.use(authenticate)
 const STATUS_ABERTO_CP = ['pendente', 'vencido', 'aberto', 'aberta']
 const STATUS_PAGO_CR   = ['pago', 'paga', 'quitado', 'quitada', 'recebido', 'recebida', 'q']
 const STATUS_CANCELADO = ['cancelado', 'cancelada', 'c']
+const DEFAULT_MOVIMENTO_YEAR = 2026
 
 async function tableExists(tableName) {
   const { rows } = await query(
@@ -516,6 +517,8 @@ router.get('/movimento', async (req, res) => {
   const status          = req.query.status || ''
   const dataDe          = req.query.data_de || ''
   const dataAte         = req.query.data_ate || ''
+  const ano             = req.query.ano ? parseInt(req.query.ano, 10) : DEFAULT_MOVIMENTO_YEAR
+  const mes             = req.query.mes ? parseInt(req.query.mes, 10) : null
   const busca           = req.query.busca || ''
   const tipo            = req.query.tipo || '' // entrada | saida
   const ordenar         = req.query.ordenar || 'data_desc'
@@ -555,6 +558,14 @@ router.get('/movimento', async (req, res) => {
     params.push(dataAte)
     conditions.push(`fm.data <= $${params.length}`)
   }
+  if (Number.isFinite(ano)) {
+    params.push(ano)
+    conditions.push(`COALESCE(fm.ano, EXTRACT(YEAR FROM fm.data)::int) = $${params.length}`)
+  }
+  if (Number.isFinite(mes)) {
+    params.push(mes)
+    conditions.push(`COALESCE(fm.mes, EXTRACT(MONTH FROM fm.data)::int) = $${params.length}`)
+  }
   if (tipo === 'entrada') conditions.push(`COALESCE(fm.entradas, 0) > 0`)
   if (tipo === 'saida')   conditions.push(`COALESCE(fm.saidas, 0) > 0`)
   if (busca) {
@@ -563,6 +574,11 @@ router.get('/movimento', async (req, res) => {
       COALESCE(f.razao_social, fm.fornecedor, '') ILIKE $${params.length}
       OR COALESCE(fm.historico, '') ILIKE $${params.length}
       OR COALESCE(l.nf_doc, fm.nf_doc, '') ILIKE $${params.length}
+      OR COALESCE(fm.conta_contabil, '') ILIKE $${params.length}
+      OR COALESCE(fm.centro_custo, '') ILIKE $${params.length}
+      OR COALESCE(fm.obra, '') ILIKE $${params.length}
+      OR COALESCE(fm.natureza_financeira, '') ILIKE $${params.length}
+      OR COALESCE(fm.n_cheque, '') ILIKE $${params.length}
       OR COALESCE(td.nome, '') ILIKE $${params.length}
       OR COALESCE(b.banco_nome, fm.banco, '') ILIKE $${params.length}
     )`)
@@ -585,32 +601,30 @@ router.get('/movimento', async (req, res) => {
     data_desc: 'fm.data DESC NULLS LAST, fm.id DESC',
     empresa_asc: 'fm.empresa ASC NULLS LAST, fm.data DESC',
     empresa_desc: 'fm.empresa DESC NULLS LAST, fm.data DESC',
-    origem_asc: 'origem ASC NULLS LAST, fm.data DESC',
-    origem_desc: 'origem DESC NULLS LAST, fm.data DESC',
     banco_asc: 'banco ASC NULLS LAST, fm.data DESC',
     banco_desc: 'banco DESC NULLS LAST, fm.data DESC',
-    agencia_asc: 'agencia ASC NULLS LAST, fm.data DESC',
-    agencia_desc: 'agencia DESC NULLS LAST, fm.data DESC',
-    conta_asc: 'conta ASC NULLS LAST, fm.data DESC',
-    conta_desc: 'conta DESC NULLS LAST, fm.data DESC',
+    entradas_asc: 'fm.entradas ASC NULLS LAST, fm.data DESC',
+    entradas_desc: 'fm.entradas DESC NULLS LAST, fm.data DESC',
+    saidas_asc: 'fm.saidas ASC NULLS LAST, fm.data DESC',
+    saidas_desc: 'fm.saidas DESC NULLS LAST, fm.data DESC',
     fornecedor_asc: 'fornecedor ASC NULLS LAST, fm.data DESC',
     fornecedor_desc: 'fornecedor DESC NULLS LAST, fm.data DESC',
-    documento_asc: 'documento ASC NULLS LAST, fm.data DESC',
-    documento_desc: 'documento DESC NULLS LAST, fm.data DESC',
-    parcela_asc: 'p.numero ASC NULLS LAST, fm.data DESC',
-    parcela_desc: 'p.numero DESC NULLS LAST, fm.data DESC',
-    vencimento_asc: 'vencimento ASC NULLS LAST, fm.data DESC',
-    vencimento_desc: 'vencimento DESC NULLS LAST, fm.data DESC',
-    valor_principal_asc: 'valor_principal ASC NULLS LAST, fm.data DESC',
-    valor_principal_desc: 'valor_principal DESC NULLS LAST, fm.data DESC',
-    multa_asc: 'multa ASC NULLS LAST, fm.data DESC',
-    multa_desc: 'multa DESC NULLS LAST, fm.data DESC',
-    juros_asc: 'juros ASC NULLS LAST, fm.data DESC',
-    juros_desc: 'juros DESC NULLS LAST, fm.data DESC',
-    desconto_asc: 'desconto ASC NULLS LAST, fm.data DESC',
-    desconto_desc: 'desconto DESC NULLS LAST, fm.data DESC',
-    valor_final_asc: 'valor_final ASC NULLS LAST, fm.data DESC',
-    valor_final_desc: 'valor_final DESC NULLS LAST, fm.data DESC',
+    historico_asc: 'fm.historico ASC NULLS LAST, fm.data DESC',
+    historico_desc: 'fm.historico DESC NULLS LAST, fm.data DESC',
+    nf_doc_asc: 'documento ASC NULLS LAST, fm.data DESC',
+    nf_doc_desc: 'documento DESC NULLS LAST, fm.data DESC',
+    emissao_doc_asc: 'fm.emissao_doc ASC NULLS LAST, fm.data DESC',
+    emissao_doc_desc: 'fm.emissao_doc DESC NULLS LAST, fm.data DESC',
+    conta_contabil_asc: 'fm.conta_contabil ASC NULLS LAST, fm.data DESC',
+    conta_contabil_desc: 'fm.conta_contabil DESC NULLS LAST, fm.data DESC',
+    centro_custo_asc: 'fm.centro_custo ASC NULLS LAST, fm.data DESC',
+    centro_custo_desc: 'fm.centro_custo DESC NULLS LAST, fm.data DESC',
+    obra_asc: 'fm.obra ASC NULLS LAST, fm.data DESC',
+    obra_desc: 'fm.obra DESC NULLS LAST, fm.data DESC',
+    natureza_financeira_asc: 'fm.natureza_financeira ASC NULLS LAST, fm.data DESC',
+    natureza_financeira_desc: 'fm.natureza_financeira DESC NULLS LAST, fm.data DESC',
+    n_cheque_asc: 'fm.n_cheque ASC NULLS LAST, fm.data DESC',
+    n_cheque_desc: 'fm.n_cheque DESC NULLS LAST, fm.data DESC',
     saldo_asc: 'fm.saldo ASC NULLS LAST, fm.data DESC',
     saldo_desc: 'fm.saldo DESC NULLS LAST, fm.data DESC',
   }
@@ -621,7 +635,7 @@ router.get('/movimento', async (req, res) => {
     const { rows } = await query(`
       SELECT
         fm.id,
-        fm.data,
+        TO_CHAR(fm.data, 'YYYY-MM-DD') AS data,
         fm.empresa,
         CASE
           WHEN p.id IS NOT NULL THEN 'Contas a Pagar'
@@ -634,32 +648,23 @@ router.get('/movimento', async (req, res) => {
           ELSE 'Movimento'
         END AS origem,
         COALESCE(b.banco_nome, fm.banco) AS banco,
-        b.agencia AS agencia,
-        NULLIF(CONCAT_WS('-', b.conta, NULLIF(b.digito, '')), '') AS conta,
         COALESCE(f.razao_social, fm.fornecedor) AS fornecedor,
         td.nome AS tipo_documento,
         COALESCE(l.nf_doc, fm.nf_doc) AS documento,
-        CASE
-          WHEN p.id IS NOT NULL THEN CONCAT(p.numero, '/', COALESCE(NULLIF(l.qtd_parcelas, 0), p.numero))
-          ELSE NULL
-        END AS parcela,
-        COALESCE(p.vencimento, fm.vencimento) AS vencimento,
-        CASE
-          WHEN COALESCE(fm.saidas, 0) > 0 THEN -ABS(COALESCE(p.valor, fm.saidas, 0))
-          ELSE ABS(COALESCE(fm.entradas, 0))
-        END AS valor_principal,
-        COALESCE(p.multa, 0) AS multa,
-        COALESCE(p.juros, 0) AS juros,
-        COALESCE(p.desconto, 0) AS desconto,
-        CASE
-          WHEN COALESCE(fm.saidas, 0) > 0 THEN -ABS(COALESCE(p.valor_final, fm.saidas, 0))
-          ELSE ABS(COALESCE(p.valor_final, fm.entradas, 0))
-        END AS valor_final,
+        COALESCE(l.nf_doc, fm.nf_doc) AS nf_doc,
+        TO_CHAR(fm.emissao_doc, 'YYYY-MM-DD') AS emissao_doc,
+        fm.historico,
+        fm.conta_contabil,
+        fm.centro_custo,
+        fm.obra,
+        fm.natureza_financeira,
+        fm.n_cheque,
         fm.saldo,
         COALESCE(p.status, 'realizado') AS status,
         COALESCE(fm.entradas, 0) AS entradas,
         COALESCE(fm.saidas, 0) AS saidas,
-        fm.mes
+        COALESCE(fm.mes, EXTRACT(MONTH FROM fm.data)::int) AS mes,
+        COALESCE(fm.ano, EXTRACT(YEAR FROM fm.data)::int) AS ano
       ${baseSelect}
       ORDER BY ${orderClause}
       LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}
@@ -677,14 +682,11 @@ router.get('/movimento', async (req, res) => {
       ok: true,
       data: rows.map(r => ({
         ...r,
-        valor_principal: parseFloat(r.valor_principal || 0),
-        multa: parseFloat(r.multa || 0),
-        juros: parseFloat(r.juros || 0),
-        desconto: parseFloat(r.desconto || 0),
-        valor_final: parseFloat(r.valor_final || 0),
         saldo: r.saldo === null ? null : parseFloat(r.saldo || 0),
         entradas: parseFloat(r.entradas || 0),
         saidas: parseFloat(r.saidas || 0),
+        mes: parseInt(r.mes || 0, 10),
+        ano: parseInt(r.ano || 0, 10),
       })),
       summary: {
         total_entradas: parseFloat(ct[0].total_entradas),
@@ -730,7 +732,7 @@ router.get('/movimento/filtros', async (req, res) => {
       `),
       query(`SELECT id, COALESCE(nome_fantasia, razao_social) AS nome FROM fin_fornecedores WHERE ativo = true ORDER BY nome`),
       query(`SELECT id, nome FROM fin_tipos_documento WHERE ativo = true ORDER BY nome`),
-      query(`SELECT DISTINCT ano FROM fin_movimento WHERE ano IS NOT NULL ORDER BY ano DESC`),
+      query(`SELECT DISTINCT COALESCE(ano, EXTRACT(YEAR FROM data)::int) AS ano FROM fin_movimento WHERE COALESCE(ano, EXTRACT(YEAR FROM data)::int) IS NOT NULL ORDER BY ano`),
       query(`
         SELECT DISTINCT status FROM (
           SELECT COALESCE(status, 'realizado') AS status FROM fin_parcelas_cp
@@ -747,7 +749,10 @@ router.get('/movimento/filtros', async (req, res) => {
         contas: contas.rows,
         fornecedores: fornecedores.rows,
         tipos_documento: tiposDocumento.rows,
-        anos: anos.rows.map(r => r.ano),
+        anos: Array.from(new Set([
+          ...Array.from({ length: DEFAULT_MOVIMENTO_YEAR - 2021 + 1 }, (_, i) => 2021 + i),
+          ...anos.rows.map(r => Number(r.ano)).filter(Number.isFinite),
+        ])).sort((a, b) => a - b),
         status: status.rows.map(r => r.status),
       },
     })
@@ -759,10 +764,10 @@ router.get('/movimento/filtros', async (req, res) => {
 // ─── GET /financeiro/movimento/resumo ────────────────────────────────────────
 router.get('/movimento/resumo', async (req, res) => {
   const empresa = req.query.empresa ? req.query.empresa.toUpperCase() : null
-  const ano     = req.query.ano ? parseInt(req.query.ano) : new Date().getFullYear()
+  const ano     = req.query.ano ? parseInt(req.query.ano) : DEFAULT_MOVIMENTO_YEAR
   const mes     = req.query.mes ? parseInt(req.query.mes) : null
 
-  const conditions = ['ano = $1']
+  const conditions = ['COALESCE(ano, EXTRACT(YEAR FROM data)::int) = $1']
   const params     = [ano]
 
   if (empresa) { params.push(empresa); conditions.push(`empresa = $${params.length}`) }

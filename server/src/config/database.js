@@ -4,8 +4,8 @@ const logger   = require('./logger')
 const pool = new Pool({
   host:     process.env.DB_HOST     || 'localhost',
   port:     parseInt(process.env.DB_PORT || '5432'),
-  database: process.env.DB_NAME     || 'lotemobile_prod',
-  user:     process.env.DB_USER     || 'lotemobile',
+  database: process.env.DB_NAME     || 'larmhub_prod',
+  user:     process.env.DB_USER     || 'larmhub',
   password: process.env.DB_PASSWORD,
   // Pool config
   max:                20,
