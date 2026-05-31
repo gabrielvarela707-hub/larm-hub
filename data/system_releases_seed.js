@@ -1207,6 +1207,56 @@ const SYSTEM_RELEASES = [
     },
   },
 
+
+  {
+    version: "0.3.13",
+    title: "Financeiro — Orçamento mensal, exportações e baixa com conta bancária",
+    description:
+      "Cria o módulo inicial de Orçamento Mensal com visão Previsto x Realizado, adiciona exportação Excel no Movimento Bancário e em Contas a Pagar, padroniza status do Movimento e exige conta bancária na baixa de parcelas.",
+    frontend_version: "0.3.13",
+    backend_version: "0.3.13",
+    released_at: "2026-05-31T23:45:00.000Z",
+    changes: [
+      "Adicionado módulo Financeiro > Orçamento com estrutura mensal Previsto x Realizado por linha financeira, preparado para receber futura planilha de orçamento.",
+      "Adicionado botão Exportar Excel na tela de Movimento Bancário usando os filtros ativos da listagem.",
+      "Adicionado botão Exportar Excel na tela de Contas a Pagar usando os filtros ativos da listagem.",
+      "Padronizado o Movimento Bancário para exibir apenas status Realizado para movimentos diretos e Pago para movimentos gerados por baixa de Contas a Pagar.",
+      "A baixa de parcela em Contas a Pagar agora exige a seleção da conta bancária de pagamento, com banco, agência e conta, e grava esse vínculo no movimento bancário.",
+      "Adicionada barra de rolagem horizontal superior na listagem de Contas a Pagar para facilitar navegação lateral.",
+      "Atualizada versão técnica do front-end e backend para 0.3.13."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Orçamento Mensal v0.3.13"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Exportação Excel XML"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Contas a Pagar",
+        "Orçamento Mensal",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };

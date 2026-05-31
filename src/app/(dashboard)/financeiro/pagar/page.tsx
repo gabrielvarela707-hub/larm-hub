@@ -1,14 +1,14 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Plus, Search, X, Check, FileText, Loader2, Sparkles, Pencil, Trash2, ChevronsUpDown, RotateCcw } from 'lucide-react'
+import { Plus, Search, X, Check, FileText, Loader2, Sparkles, Pencil, Trash2, ChevronsUpDown, RotateCcw, Download } from 'lucide-react'
 import { apiClient } from '@/lib/auth-store'
 import { BANCOS_BR } from '@/lib/bancos-br'
 import { cn } from '@/lib/utils'
 import FornecedorFormModal from '@/components/financeiro/FornecedorFormModal'
 
 interface Fornecedor { id: number; razao_social: string; empresa: string; cnpj_cpf?: string | null; nome_fantasia?: string | null }
-interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null }
+interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null; digito?: string | null }
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
 interface TipoDocumento { id: number; nome: string }
 interface Parcela     { id?: number; numero: number; valor: number | string; vencimento: string; status: string; acrescimo?: number | string; multa?: number | string; juros?: number | string; desconto?: number | string; valor_final?: number | string }
@@ -48,6 +48,7 @@ interface AiContaPagarResult {
 
 interface Lancamento {
   id: number; empresa: string; historico: string; produto_servico: string | null
+  banco_conta_id?: number | null; banco_agencia?: string | null; banco_conta?: string | null
   tipo_documento_id?: number | null; tipo_documento_nome?: string | null
   nf_doc: string | null; documento_nome?: string | null; dt_emissao: string | null; valor_total: number
   qtd_parcelas: number; status: string; conta_contabil: string | null
@@ -71,6 +72,7 @@ interface BaixaForm {
   multa: string
   valor_final: string
   forma_pagamento: string
+  banco_conta_id: string
   dt_pagamento: string
 }
 
@@ -404,6 +406,7 @@ export default function PagarPage() {
     multa: '0',
     valor_final: '',
     forma_pagamento: '',
+    banco_conta_id: '',
     dt_pagamento: todayISO(),
   })
 
@@ -423,6 +426,14 @@ export default function PagarPage() {
   const [fBusca,   setFBusca]   = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('vencimento')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  const topTableScrollRef = useRef<HTMLDivElement | null>(null)
+  const tableScrollRef = useRef<HTMLDivElement | null>(null)
+  const tableMinWidth = 1280
+
+  const syncHorizontalScroll = (source: HTMLDivElement, target: HTMLDivElement | null) => {
+    if (!target || target.scrollLeft === source.scrollLeft) return
+    target.scrollLeft = source.scrollLeft
+  }
 
   // Form state
   const [fEmp,     setFEmp]     = useState('')
@@ -471,6 +482,28 @@ export default function PagarPage() {
     } catch { }
     finally { setLoading(false) }
   }, [fEmpresa, fFornecedorFiltro, fTipoDocFiltro, fPeriodoInicio, fPeriodoFim, fStatus, fBusca])
+
+
+  const exportarExcel = async () => {
+    const params: Record<string, string> = {}
+    if (fEmpresa) params.empresa = fEmpresa
+    if (fFornecedorFiltro) params.fornecedor_id = fFornecedorFiltro
+    if (fTipoDocFiltro) params.tipo_documento_id = fTipoDocFiltro
+    if (fPeriodoInicio) params.venc_inicio = fPeriodoInicio
+    if (fPeriodoFim) params.venc_fim = fPeriodoFim
+    if (fStatus) params.status = fStatus
+    if (fBusca) params.busca = fBusca
+
+    const r = await apiClient.get('/financeiro/lancamentos-cp/exportar', { params, responseType: 'blob' })
+    const url = window.URL.createObjectURL(new Blob([r.data]))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'contas-a-pagar.xls'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.URL.revokeObjectURL(url)
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -886,6 +919,7 @@ export default function PagarPage() {
       multa: String(getBaixaValor(l, 'multa')),
       valor_final: String((baixaValorFinal || valor).toFixed(2)),
       forma_pagamento: l.parcela_forma_pagamento || '',
+      banco_conta_id: l.banco_conta_id ? String(l.banco_conta_id) : '',
       dt_pagamento: dateOnly(l.parcela_dt_pagamento) || todayISO(),
     }
     if (!baixaValorFinal) form.valor_final = calculaValorFinalBaixa(form).toFixed(2)
@@ -916,6 +950,7 @@ export default function PagarPage() {
     if (!baixaParcela?.id || !baixaParcela.parcela_id) return
     const e: Record<string, string> = {}
     if (!baixaForm.dt_pagamento) e.dt_pagamento = 'Obrigatório'
+    if (!baixaForm.banco_conta_id) e.banco_conta_id = 'Obrigatório'
     if (!baixaForm.forma_pagamento.trim()) e.forma_pagamento = 'Obrigatório'
     setBaixaErrors(e)
     if (Object.keys(e).length) return
@@ -932,6 +967,7 @@ export default function PagarPage() {
         multa: moneyToNumber(baixaForm.multa),
         valor_final: moneyToNumber(baixaForm.valor_final),
         forma_pagamento: baixaForm.forma_pagamento.trim(),
+        banco_conta_id: baixaForm.banco_conta_id,
       })
       closeBaixaModal()
       load()
@@ -1026,6 +1062,11 @@ export default function PagarPage() {
     </th>
   )
 
+
+  const bancosBaixa = baixaParcela
+    ? bancos.filter(b => b.empresa === baixaParcela.empresa)
+    : bancos
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -1034,10 +1075,16 @@ export default function PagarPage() {
           <h1 className="text-xl font-bold text-slate-800">Contas a Pagar</h1>
           <p className="text-sm text-slate-500 mt-0.5">{total} parcelas · {R$(totalVlr)} em aberto</p>
         </div>
-        <button onClick={openNew}
-          className="flex items-center gap-2 px-4 py-2 bg-[#1e3a5f] hover:bg-[#162d4a] text-white text-xs font-semibold rounded-lg transition-colors">
-          <Plus className="w-3.5 h-3.5" /> Novo Lançamento
-        </button>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <button type="button" onClick={exportarExcel}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-600 text-xs font-semibold rounded-lg transition-colors">
+            <Download className="w-3.5 h-3.5" /> Exportar Excel
+          </button>
+          <button onClick={openNew}
+            className="flex items-center gap-2 px-4 py-2 bg-[#1e3a5f] hover:bg-[#162d4a] text-white text-xs font-semibold rounded-lg transition-colors">
+            <Plus className="w-3.5 h-3.5" /> Novo Lançamento
+          </button>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -1113,8 +1160,20 @@ export default function PagarPage() {
 
       {/* Tabela */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+        <div
+          ref={topTableScrollRef}
+          onScroll={(e) => syncHorizontalScroll(e.currentTarget, tableScrollRef.current)}
+          className="h-4 overflow-x-auto overflow-y-hidden border-b border-slate-100 bg-slate-50/70"
+          title="Barra de rolagem horizontal da tabela"
+        >
+          <div style={{ width: tableMinWidth }} className="h-1" />
+        </div>
+        <div
+          ref={tableScrollRef}
+          onScroll={(e) => syncHorizontalScroll(e.currentTarget, topTableScrollRef.current)}
+          className="overflow-x-auto"
+        >
+          <table className="w-full text-xs" style={{ minWidth: tableMinWidth }}>
             <thead>
               <tr className="bg-[#0d1b2a] text-white">
                 <TH label="Empresa" k="empresa" />
@@ -1497,6 +1556,19 @@ export default function PagarPage() {
                   <label className="text-xs font-medium text-slate-600">Valor final</label>
                   <input className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50 text-slate-700 focus:outline-none"
                     type="text" inputMode="decimal" value={baixaForm.valor_final} readOnly />
+                </div>
+                <div className="col-span-2">
+                  <label className="text-xs font-medium text-slate-600">Banco / agência / conta de pagamento <span className="text-red-500">*</span></label>
+                  <select className={cn(inp, baixaErrors.banco_conta_id && 'border-red-300')}
+                    value={baixaForm.banco_conta_id} onChange={e => updateBaixaForm('banco_conta_id', e.target.value)}>
+                    <option value="">Selecione a conta bancária</option>
+                    {(bancosBaixa.length ? bancosBaixa : bancos).map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.empresa} · {b.banco_nome} · Ag. {b.agencia || '—'} · Conta {b.conta || '—'}
+                      </option>
+                    ))}
+                  </select>
+                  {baixaErrors.banco_conta_id && <p className="text-[10px] text-red-500 mt-1">{baixaErrors.banco_conta_id}</p>}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600">Forma de pagamento <span className="text-red-500">*</span></label>

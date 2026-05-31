@@ -57,6 +57,7 @@ const NAV: NavItem[] = [
     label: 'Financeiro', icon: DollarSign,
     children: [
       { label: 'CashFlow', href: '/financeiro/cashflow', moduleIds: ['fin_cashflow'] },
+      { label: 'Orçamento', href: '/financeiro/orcamento', moduleIds: ['fin_orcamento'] },
       { label: 'Mov. Bancario', href: '/financeiro/movimento', moduleIds: ['fin_movimento'] },
       { label: 'Contas a Receber', href: '/financeiro/receber', badge: 3, moduleIds: ['fin_receber'] },
       { label: 'Contas a Pagar', href: '/financeiro/pagar', moduleIds: ['fin_pagar'] },

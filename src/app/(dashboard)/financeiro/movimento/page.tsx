@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
-import { Search, TrendingUp, TrendingDown, DollarSign, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Search, TrendingUp, TrendingDown, DollarSign, ChevronLeft, ChevronRight, Download } from 'lucide-react'
 import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 
@@ -266,6 +266,31 @@ export default function MovimentoPage() {
     setFMes(null)
   }
 
+
+  const exportarExcel = async () => {
+    const params: Record<string, unknown> = { ano: fAno }
+    if (fEmpresa) params.empresa = fEmpresa
+    if (fBanco) params.banco = fBanco
+    if (fConta) params.conta_id = fConta
+    if (fFornecedor) params.fornecedor_id = fFornecedor
+    if (fTipoDocumento) params.tipo_documento_id = fTipoDocumento
+    if (fStatus) params.status = fStatus
+    if (fDataDe) params.data_de = fDataDe
+    if (fDataAte) params.data_ate = fDataAte
+    if (fTipo) params.tipo = fTipo
+    if (busca) params.busca = busca
+
+    const r = await apiClient.get('/financeiro/movimento/exportar', { params, responseType: 'blob' })
+    const url = window.URL.createObjectURL(new Blob([r.data]))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `movimento-bancario-${fAno}.xls`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.URL.revokeObjectURL(url)
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -273,7 +298,13 @@ export default function MovimentoPage() {
           <h1 className="text-xl font-bold text-slate-800">Movimento Bancário</h1>
           <p className="text-sm text-slate-500 mt-0.5">Movimentações realizadas por empresa, banco e conta</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
+          {activeTab === 'lista' && (
+            <button type="button" onClick={exportarExcel}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-white border border-slate-200 text-slate-600 hover:bg-slate-50">
+              <Download className="w-3.5 h-3.5" /> Exportar Excel
+            </button>
+          )}
           {(['lista', 'resumo'] as const).map(t => (
             <button key={t} onClick={() => setActiveTab(t)}
               className={cn('px-4 py-2 rounded-lg text-xs font-medium transition-colors',
@@ -346,7 +377,7 @@ export default function MovimentoPage() {
           <FilterField label="Status">
             <select value={fStatus} onChange={e => setFStatus(e.target.value)} className={inp}>
               <option value="">Todos status</option>
-              {(filtros?.status ?? ['realizado', 'pago', 'pendente', 'vencido', 'cancelado']).map(s => (
+              {(filtros?.status ?? ['realizado', 'pago']).map(s => (
                 <option key={s} value={s}>{labelStatus(s)}</option>
               ))}
             </select>
