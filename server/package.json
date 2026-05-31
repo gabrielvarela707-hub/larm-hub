@@ -1,6 +1,6 @@
 {
   "name": "larmhub-api",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "API backend LarmHub / Santa Clara HUB",
   "main": "src/server.js",
   "scripts": {
@@ -17,7 +17,8 @@
     "db:seed:movimento:2024": "python3 scripts/import_financeiro.py movimento scripts/imports/mov-bancario-2024.xlsx --ano=2024 --limpar",
     "db:seed:movimento:2025": "python3 scripts/import_financeiro.py movimento scripts/imports/mov-bancario-2025.xlsx --ano=2025 --limpar",
     "db:seed:movimento:2026": "python3 scripts/import_financeiro.py movimento scripts/imports/mov-bancario-2026.xlsx --ano=2026 --ate=2026-06-28 --limpar",
-    "db:seed:fornecedores:movimento": "node scripts/seed_fornecedores_movimento.js"
+    "db:seed:fornecedores:movimento": "node scripts/seed_fornecedores_movimento.js",
+    "db:migrate:fornecedor-contratos": "node scripts/migrate_fornecedor_contratos.js"
   },
   "dependencies": {
     "express": "^4.19.2",

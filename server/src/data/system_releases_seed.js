@@ -1346,6 +1346,50 @@ const SYSTEM_RELEASES = [
     },
   },
 
+  {
+    version: "0.3.9",
+    title: "Fornecedores — gestão de contratos",
+    description:
+      "Adiciona estrutura backend para contratos vinculados aos fornecedores, incluindo assinatura, renovação, índice de correção, valores, serviços, importação/exportação e anexo de PDF assinado.",
+    frontend_version: "0.3.9",
+    backend_version: "0.3.9",
+    released_at: "2026-05-29T04:10:00.000Z",
+    changes: [
+      "Criada tabela fin_fornecedor_contratos para armazenar contratos vinculados aos fornecedores.",
+      "Criados endpoints REST para listar, criar, atualizar, inativar, importar e exportar contratos por fornecedor.",
+      "Adicionado endpoint para recuperar PDF assinado anexado ao contrato.",
+      "Adicionado script npm db:migrate:fornecedor-contratos para criar/atualizar a estrutura no PostgreSQL.",
+      "Preservadas as rotas atuais de reservas, comissões, recebíveis, movimento bancário, fornecedores e contas a pagar.",
+      "Atualizada versão técnica do backend para 0.3.9."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Aba Contratos no módulo Fornecedores"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Gestão de contratos de fornecedores"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_fornecedor_contratos",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Importação/exportação compatível com Excel",
+        "Anexo PDF em base64",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };
