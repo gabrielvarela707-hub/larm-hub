@@ -1109,6 +1109,54 @@ const SYSTEM_RELEASES = [
       ],
     },
   },
+
+  {
+    version: "0.3.11",
+    title: "Financeiro — ajuste de lançamentos do Cash Flow diário",
+    description:
+      "Corrige a abertura de lançamentos nas linhas sintéticas do Cash Flow diário, inclui lançamentos internos de banco sem movimento vinculado e melhora a navegação horizontal da tabela com colunas fixas.",
+    frontend_version: "0.3.11",
+    backend_version: "0.3.11",
+    released_at: "2026-05-31T22:10:00.000Z",
+    changes: [
+      "Corrigido o modal de lançamentos do Cash Flow diário para Receitas Realizadas, Despesas Realizadas e Saldo do Dia, sem filtrar indevidamente por natureza financeira 1/2/5.",
+      "Incluídos lançamentos internos de banco existentes em fin_bancos_lancamentos sem movimento_id vinculado na composição da visão diária e no modal de detalhes.",
+      "Mantido o filtro por natureza financeira nas linhas reais do Cash Flow mensal, preservando o comportamento existente.",
+      "Adicionada barra de rolagem horizontal superior na tabela do Cash Flow para facilitar navegação em meses/dias.",
+      "Travadas as colunas # e Descrição no Cash Flow para manter os nomes das linhas visíveis durante a rolagem horizontal.",
+      "Atualizada versão técnica do front-end e backend para 0.3.11."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Cash Flow Sticky Columns v0.3.11"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "PM2"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_bancos_lancamentos",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Lançamentos internos de banco",
+        "Cash Flow Detalhado",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };

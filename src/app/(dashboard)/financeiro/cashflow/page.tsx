@@ -3,7 +3,7 @@
  * src/app/(dashboard)/financeiro/cashflow/page.tsx
  * Relatório de Cash Flow — visão consolidada, por empresa, mensal e diária.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Download, Loader2, Printer, X } from 'lucide-react'
 import {
   getCashflow,
@@ -65,6 +65,13 @@ export default function CashFlowPage() {
   const [loading, setLoading] = useState(false)
   const [detalhe, setDetalhe] = useState<DetalheCashflow | null>(null)
   const [detalheLoading, setDetalheLoading] = useState(false)
+  const topScrollRef = useRef<HTMLDivElement | null>(null)
+  const tableScrollRef = useRef<HTMLDivElement | null>(null)
+
+  const syncHorizontalScroll = (source: HTMLDivElement, target: HTMLDivElement | null) => {
+    if (!target || target.scrollLeft === source.scrollLeft) return
+    target.scrollLeft = source.scrollLeft
+  }
 
   useEffect(() => {
     getCashflowEmpresas()
@@ -180,6 +187,17 @@ export default function CashFlowPage() {
     ? `Cash Flow Diário — ${empresa} ${MESES_LONGOS[mes - 1]} / ${ano}`
     : `Cash Flow — ${empresa} ${ano}`
 
+  const colunasCount = Number(data?.colunas?.length || 0)
+  const tableMinWidth = Math.max(760, 48 + 270 + (colunasCount * 86) + 96)
+
+  const stickyBase = 'sticky z-20 border-r border-zinc-100 dark:border-zinc-700'
+  const stickyHeader = 'sticky z-30 bg-zinc-50 dark:bg-zinc-800/95 border-r border-zinc-100 dark:border-zinc-700'
+  const stickyBg = (tipo: string) => {
+    if (tipo === 'header') return 'bg-amber-50 dark:bg-amber-900/30'
+    if (tipo === 'total') return 'bg-zinc-100 dark:bg-zinc-800'
+    return 'bg-white dark:bg-zinc-800'
+  }
+
   return (
     <div className="p-6 space-y-4">
       {/* Controles */}
@@ -255,7 +273,21 @@ export default function CashFlowPage() {
             {visao === 'diaria' ? 'Diário' : 'Orçado'}
           </span>
         </div>
-        <div className="overflow-x-auto">
+        {!loading && data?.linhas?.length ? (
+          <div
+            ref={topScrollRef}
+            onScroll={(e) => syncHorizontalScroll(e.currentTarget, tableScrollRef.current)}
+            className="h-4 overflow-x-auto overflow-y-hidden border-b border-zinc-100 dark:border-zinc-700 bg-zinc-50/60 dark:bg-zinc-900/30"
+            title="Barra de rolagem horizontal da tabela"
+          >
+            <div style={{ width: tableMinWidth }} className="h-1" />
+          </div>
+        ) : null}
+        <div
+          ref={tableScrollRef}
+          onScroll={(e) => syncHorizontalScroll(e.currentTarget, topScrollRef.current)}
+          className="overflow-x-auto"
+        >
           {loading ? (
             <div className="text-center py-10 text-zinc-400">Carregando...</div>
           ) : !data?.linhas?.length ? (
@@ -264,15 +296,15 @@ export default function CashFlowPage() {
               <p className="text-xs mt-1 text-zinc-400">Execute o script de importação para carregar os dados do Excel.</p>
             </div>
           ) : (
-            <table className="w-full text-xs">
+            <table className="w-full text-xs" style={{ minWidth: tableMinWidth }}>
               <thead>
                 <tr className="bg-zinc-50 dark:bg-zinc-800/80 text-zinc-400 uppercase" style={{fontSize:'10px'}}>
-                  <th className="px-3 py-2.5 text-left w-6">#</th>
-                  <th className="px-3 py-2.5 text-left min-w-[220px]">Descrição</th>
+                  <th className={`${stickyHeader} left-0 px-3 py-2.5 text-left w-12 min-w-[48px]`}>#</th>
+                  <th className={`${stickyHeader} left-[48px] px-3 py-2.5 text-left w-[270px] min-w-[270px] shadow-[6px_0_10px_-10px_rgba(15,23,42,0.7)]`}>Descrição</th>
                   {data.colunas.map((c: any) => (
-                    <th key={getColKey(c)} className="px-2 py-2.5 text-right min-w-[70px]">{c.label}</th>
+                    <th key={getColKey(c)} className="px-2 py-2.5 text-right min-w-[86px]">{c.label}</th>
                   ))}
-                  <th className="px-3 py-2.5 text-right font-semibold min-w-[80px]">Total</th>
+                  <th className="px-3 py-2.5 text-right font-semibold min-w-[96px]">Total</th>
                 </tr>
               </thead>
               <tbody>
@@ -281,8 +313,8 @@ export default function CashFlowPage() {
                   const isNeg = (v: number) => v < 0
                   return (
                     <tr key={linha.id} className={`border-t border-zinc-100 dark:border-zinc-800 ${rowCls}`}>
-                      <td className="px-3 py-1.5 text-zinc-400" style={{fontSize:'10px'}}>{linha.codigo}</td>
-                      <td className={`px-3 py-1.5 ${linha.nivel >= 2 ? 'pl-6' : ''} ${linha.nivel >= 3 ? 'pl-9 text-zinc-500' : ''}`}>
+                      <td className={`${stickyBase} left-0 px-3 py-1.5 text-zinc-400 ${stickyBg(linha.tipo)}`} style={{fontSize:'10px'}}>{linha.codigo}</td>
+                      <td className={`${stickyBase} left-[48px] px-3 py-1.5 shadow-[6px_0_10px_-10px_rgba(15,23,42,0.7)] ${stickyBg(linha.tipo)} ${linha.nivel >= 2 ? 'pl-6' : ''} ${linha.nivel >= 3 ? 'pl-9 text-zinc-500' : ''}`}>
                         {linha.descricao}
                       </td>
                       {data.colunas.map((c: any) => {
