@@ -195,6 +195,20 @@ const getSortValue = (l: Lancamento, key: SortKey): string | number => {
   }
 }
 
+const getFornecedorDisplay = (l: Lancamento) => {
+  const nome = String(l.fornecedor_nome || '').trim()
+  const semFornecedor = !nome || nome.toLocaleLowerCase('pt-BR').includes('não identificado')
+  if (semFornecedor) return l.historico?.trim() || nome || '—'
+  return nome
+}
+
+const getFornecedorSubtitle = (l: Lancamento) => {
+  const nome = String(l.fornecedor_nome || '').trim()
+  const semFornecedor = !nome || nome.toLocaleLowerCase('pt-BR').includes('não identificado')
+  if (semFornecedor && l.historico?.trim()) return nome || 'Fornecedor não identificado'
+  return l.banco_nome || ''
+}
+
 
 // ─── BancoSelect ─────────────────────────────────────────────────────────────
 function BancoSelect({ value, onChange, inp }: { value: string; onChange: (v: string) => void; inp: string }) {
@@ -1173,7 +1187,19 @@ export default function PagarPage() {
           onScroll={(e) => syncHorizontalScroll(e.currentTarget, topTableScrollRef.current)}
           className="overflow-x-auto"
         >
-          <table className="w-full text-xs" style={{ minWidth: tableMinWidth }}>
+          <table className="w-full table-fixed text-xs" style={{ minWidth: tableMinWidth }}>
+            <colgroup>
+              <col style={{ width: 86 }} />
+              <col style={{ width: 240 }} />
+              <col style={{ width: 150 }} />
+              <col style={{ width: 145 }} />
+              <col style={{ width: 78 }} />
+              <col style={{ width: 120 }} />
+              <col style={{ width: 112 }} />
+              <col style={{ width: 112 }} />
+              <col style={{ width: 120 }} />
+              <col style={{ width: 115 }} />
+            </colgroup>
             <thead>
               <tr className="bg-[#0d1b2a] text-white">
                 <TH label="Empresa" k="empresa" />
@@ -1211,14 +1237,16 @@ export default function PagarPage() {
                 const mostrarBaixa = statusParcela === 'pago'
                 const mostrarAjustesLancamento = hasAjustesLancamento(l)
                 const cancelKey = `${l.id}-${l.parcela_id}`
+                const fornecedorDisplay = getFornecedorDisplay(l)
+                const fornecedorSubtitulo = getFornecedorSubtitle(l)
                 return (
                   <tr key={`${l.id}-${l.parcela_id || l.parcela_numero || 'sem-parcela'}`} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                     <td className="px-3 py-2.5">
                       <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 font-medium">{l.empresa}</span>
                     </td>
-                    <td className="px-3 py-2 max-w-[180px]">
-                      <p className="font-medium text-slate-700 truncate">{l.fornecedor_nome || '—'}</p>
-                      {l.banco_nome && <p className="text-slate-400 text-[10px] truncate">{l.banco_nome}</p>}
+                    <td className="px-3 py-2">
+                      <p className="font-medium text-slate-700 truncate" title={fornecedorDisplay}>{fornecedorDisplay}</p>
+                      {fornecedorSubtitulo && <p className="text-slate-400 text-[10px] truncate" title={fornecedorSubtitulo}>{fornecedorSubtitulo}</p>}
                     </td>
                     <td className="px-3 py-2 max-w-[150px] text-slate-600 truncate">{l.tipo_documento_nome || '—'}</td>
                     <td className="px-3 py-2 max-w-[130px] text-slate-600 truncate">
@@ -1240,7 +1268,7 @@ export default function PagarPage() {
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.dt_emissao)}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.parcela_vencimento || l.proximo_venc)}</td>
-                    <td className="px-3 py-2 min-w-[210px] text-slate-500 align-top">
+                    <td className="px-3 py-2 text-slate-500 align-top">
                       <p className="whitespace-nowrap">{fmtDate(l.parcela_dt_pagamento)}</p>
                       {mostrarBaixa && (
                         <div className="mt-1 space-y-0.5 text-[10px] leading-4 text-slate-400">
@@ -1248,11 +1276,11 @@ export default function PagarPage() {
                           <p>Multa {R$(getBaixaValor(l, 'multa'))} · Juros {R$(getBaixaValor(l, 'juros'))}</p>
                           <p>Desc. {R$(getBaixaValor(l, 'desconto'))} · Acrésc. {R$(getBaixaValor(l, 'acrescimo'))}</p>
                           <p className="font-semibold text-slate-500">Valor final da baixa: {R$(valorFinalBaixa)}</p>
-                          {l.parcela_motivo_baixa && <p className="truncate max-w-[190px]">Motivo: {l.parcela_motivo_baixa}</p>}
+                          {l.parcela_motivo_baixa && <p className="truncate max-w-[110px]">Motivo: {l.parcela_motivo_baixa}</p>}
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 align-top">
                       <div className="flex flex-col items-start gap-1.5">
                         <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', STATUS_COLORS[statusParcela] || STATUS_COLORS.cancelado)}>
                           {statusParcela || '—'}

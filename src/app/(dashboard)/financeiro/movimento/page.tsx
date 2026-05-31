@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { Search, TrendingUp, TrendingDown, DollarSign, ChevronLeft, ChevronRight, Download } from 'lucide-react'
 import { apiClient } from '@/lib/auth-store'
@@ -91,19 +91,25 @@ const LIMIT = 50
 const labelStatus = (status: string | null | undefined) => {
   const s = String(status || '').toLowerCase()
   if (s === 'pago' || s === 'paga') return 'Pago'
+  if (s === 'recebido' || s === 'recebida') return 'Recebido'
   if (s === 'pendente' || s === 'aberto' || s === 'aberta') return 'Pendente'
   if (s === 'vencido' || s === 'vencida') return 'Vencido'
   if (s === 'cancelado' || s === 'cancelada') return 'Cancelado'
-  if (s === 'realizado') return 'Realizado'
+  if (s === 'realizado') return 'Pago'
   return status || '—'
 }
 
 const statusClass = (status: string | null | undefined) => {
   const s = String(status || '').toLowerCase()
-  if (s === 'pago' || s === 'paga' || s === 'realizado') return 'bg-emerald-50 text-emerald-700'
+  if (s === 'pago' || s === 'paga' || s === 'recebido' || s === 'recebida' || s === 'realizado') return 'bg-emerald-50 text-emerald-700'
   if (s === 'vencido' || s === 'vencida') return 'bg-red-50 text-red-700'
   if (s === 'cancelado' || s === 'cancelada') return 'bg-slate-100 text-slate-600'
   return 'bg-amber-50 text-amber-700'
+}
+
+function syncHorizontalScroll(source: HTMLDivElement, target: HTMLDivElement | null) {
+  if (!target || target.scrollLeft === source.scrollLeft) return
+  target.scrollLeft = source.scrollLeft
 }
 
 function Pager({ page, pages, total, limit, loading, onChange }: {
@@ -174,6 +180,9 @@ export default function MovimentoPage() {
   const [sortKey, setSortKey] = useState<SortKey>('data')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [busca, setBusca] = useState('')
+  const topTableScrollRef = useRef<HTMLDivElement | null>(null)
+  const tableScrollRef = useRef<HTMLDivElement | null>(null)
+  const tableMinWidth = 1900
 
   const inp = 'w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-400'
 
@@ -377,7 +386,7 @@ export default function MovimentoPage() {
           <FilterField label="Status">
             <select value={fStatus} onChange={e => setFStatus(e.target.value)} className={inp}>
               <option value="">Todos status</option>
-              {(filtros?.status ?? ['realizado', 'pago']).map(s => (
+              {(filtros?.status ?? ['pago', 'recebido']).map(s => (
                 <option key={s} value={s}>{labelStatus(s)}</option>
               ))}
             </select>
@@ -442,8 +451,20 @@ export default function MovimentoPage() {
           )}
 
           <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs min-w-[1900px]">
+            <div
+              ref={topTableScrollRef}
+              onScroll={(e) => syncHorizontalScroll(e.currentTarget, tableScrollRef.current)}
+              className="h-4 overflow-x-auto overflow-y-hidden border-b border-slate-100 bg-slate-50/70"
+              title="Barra de rolagem horizontal da tabela"
+            >
+              <div style={{ width: tableMinWidth }} className="h-1" />
+            </div>
+            <div
+              ref={tableScrollRef}
+              onScroll={(e) => syncHorizontalScroll(e.currentTarget, topTableScrollRef.current)}
+              className="overflow-x-auto"
+            >
+              <table className="w-full text-xs" style={{ minWidth: tableMinWidth }}>
                 <thead>
                   <tr className="bg-[#0d1b2a] text-white">
                     <SortTh k="data">Data</SortTh>

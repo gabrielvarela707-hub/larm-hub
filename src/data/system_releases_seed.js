@@ -1256,6 +1256,52 @@ const SYSTEM_RELEASES = [
       ],
     },
   },
+  {
+    version: "0.3.14",
+    title: "Financeiro — Status do movimento e ajustes de tabelas",
+    description:
+      "Padroniza o Movimento Bancário para status Pago/Recebido, ajusta filtros, melhora a rolagem horizontal das tabelas e usa o histórico quando não houver fornecedor identificado em Contas a Pagar.",
+    frontend_version: "0.3.14",
+    backend_version: "0.3.14",
+    released_at: "2026-05-31T23:58:00.000Z",
+    changes: [
+      "Movimento Bancário passa a exibir Pago para saídas e Recebido para entradas, removendo o status Realizado da listagem e dos filtros.",
+      "Filtro de status do Movimento Bancário passa a disponibilizar apenas Todos, Pago e Recebido.",
+      "Exportação do Movimento Bancário usa a mesma regra de status Pago/Recebido aplicada na tela.",
+      "Adicionada barra de rolagem horizontal superior na tela de Movimento Bancário para melhorar a navegação lateral da tabela.",
+      "A tabela de Contas a Pagar foi ajustada com largura fixa por coluna para reduzir o espaço excessivo entre Pagamento e Status.",
+      "Quando Contas a Pagar não tiver fornecedor identificado, a listagem passa a mostrar o histórico do lançamento como referência principal.",
+      "Atualizada versão técnica do front-end e backend para 0.3.14."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.14"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Exportação Excel XML"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Contas a Pagar",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
 
 ];
 
