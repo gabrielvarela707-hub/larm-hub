@@ -1157,6 +1157,56 @@ const SYSTEM_RELEASES = [
     },
   },
 
+
+  {
+    version: "0.3.12",
+    title: "Financeiro — Cash Flow por Movimento Bancário e seed futuro de Contas a Pagar",
+    description:
+      "Ajusta o detalhamento do Cash Flow diário para usar o Movimento Bancário como fonte realizada, reforça o fallback visual do modal e adiciona importação de lançamentos futuros de 2026 diretamente em Contas a Pagar, sem criar movimento bancário antes da baixa.",
+    frontend_version: "0.3.12",
+    backend_version: "0.3.12",
+    released_at: "2026-05-31T23:00:00.000Z",
+    changes: [
+      "Ajustado o backend do Cash Flow diário para buscar lançamentos realizados diretamente em fin_movimento, com filtro robusto por empresa, ano, mês e dia.",
+      "Corrigido o detalhamento de Receitas Realizadas e Despesas Realizadas para aceitar valores de saída/entrada diferentes de zero, evitando modal vazio quando a célula possui valor.",
+      "Mantido o uso de fin_bancos_lancamentos apenas para lançamentos internos sem movimento_id, evitando duplicidade quando já existe vínculo com o Movimento Bancário.",
+      "Adicionado fallback no frontend para consultar a mesma listagem de Movimento Bancário quando o endpoint de detalhes do Cash Flow diário não localizar itens.",
+      "Adicionado script de importação de contas a pagar futuras de 2026, gravando somente fin_lancamentos_cp e fin_parcelas_cp como pendente.",
+      "Garantido que o Excel futuro de Contas a Pagar não alimente fin_movimento; o Movimento Bancário só é criado pelo rito normal de pagamento/baixa.",
+      "Atualizada versão técnica do front-end e backend para 0.3.12."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Cash Flow Detalhes v0.3.12"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Importação Contas a Pagar Futuro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "fin_bancos_lancamentos",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Contas a Pagar Futuro",
+        "Excel 2026 futuro",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };

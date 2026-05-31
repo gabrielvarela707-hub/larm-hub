@@ -248,6 +248,7 @@ export interface MovimentoParams {
   page?: number; limit?: number; empresa?: Empresa
   banco?: string; natureza?: string; ano?: number; mes?: number
   tipo?: 'entrada' | 'saida'; busca?: string
+  data_de?: string; data_ate?: string
 }
 
 export const getMovimento = (params?: MovimentoParams) =>

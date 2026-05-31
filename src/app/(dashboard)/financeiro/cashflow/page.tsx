@@ -10,6 +10,7 @@ import {
   getCashflowResumo,
   getCashflowEmpresas,
   getCashflowLancamentos,
+  getMovimento,
   type CashflowLancamentoItem,
   type CashflowLancamentosParams,
   type Empresa,
@@ -51,6 +52,23 @@ function fmtData(value?: string | null) {
 
 function fmtBRLCompleto(v: number) {
   return Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
+function isoDate(ano: number, mes: number, dia: number) {
+  return `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`
+}
+
+function linhaDiariaRealizada(linha: any) {
+  const id = Number(linha?.id)
+  const desc = String(linha?.descricao || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  return id === -8001 || id === -8002 || desc.includes('receitas realizadas') || desc.includes('despesas realizadas')
+}
+
+function tipoMovimentoDaLinha(linha: any, valor: number): 'entrada' | 'saida' | undefined {
+  const desc = String(linha?.descricao || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  if (Number(valor) < 0 || desc.includes('despesas')) return 'saida'
+  if (Number(valor) > 0 || desc.includes('receitas')) return 'entrada'
+  return undefined
 }
 
 export default function CashFlowPage() {
@@ -166,7 +184,50 @@ export default function CashFlowPage() {
         params.mes = Number(coluna.mes)
       }
 
-      const resp = await getCashflowLancamentos(empresa, ano, params)
+      let resp = await getCashflowLancamentos(empresa, ano, params)
+
+      // Fallback seguro para a visão diária: se o detalhamento específico não
+      // encontrar nada, usa a mesma fonte da tela Movimento Bancário. Isso evita
+      // modal vazio em linhas sintéticas como Receitas/Despesas Realizadas.
+      if (
+        visao === 'diaria' &&
+        coluna &&
+        linhaDiariaRealizada(linha) &&
+        Number(resp.quantidade || 0) === 0
+      ) {
+        const diaSelecionado = Number(coluna.dia ?? coluna.key)
+        const dataSelecionada = isoDate(ano, mes, diaSelecionado)
+        const mov = await getMovimento({
+          page: 1,
+          limit: 200,
+          ...(empresa === 'CONSOLIDADO' ? {} : { empresa }),
+          ano,
+          mes,
+          data_de: dataSelecionada,
+          data_ate: dataSelecionada,
+          tipo: tipoMovimentoDaLinha(linha, valor),
+        })
+        const itensFallback = (mov.data || []).map((m: any) => ({
+          origem: 'movimento_bancario',
+          id: m.id,
+          data: m.data,
+          empresa: m.empresa,
+          banco: m.banco,
+          fornecedor: m.fornecedor,
+          historico: m.historico,
+          nf_doc: m.nf_doc || m.documento,
+          conta_contabil: m.conta_contabil,
+          natureza_financeira: m.natureza_financeira,
+          status: m.status || 'realizado',
+          valor: Number(m.entradas || 0) !== 0 ? Number(m.entradas || 0) : -Math.abs(Number(m.saidas || 0)),
+        }))
+        resp = {
+          itens: itensFallback,
+          total: itensFallback.reduce((sum: number, item: any) => sum + Number(item.valor || 0), 0),
+          quantidade: itensFallback.length,
+        }
+      }
+
       setDetalhe(prev => prev
         ? {
             ...prev,
