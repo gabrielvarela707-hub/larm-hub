@@ -1062,6 +1062,53 @@ const SYSTEM_RELEASES = [
     },
   },
 
+
+  {
+    version: "0.3.10",
+    title: "Financeiro — detalhes do Cash Flow e ajustes de fornecedores",
+    description:
+      "Adiciona abertura de lançamentos no Cash Flow mensal e diário, botão direto para inativar/reativar fornecedores na listagem e flexibiliza o número do documento em Contas a Pagar para mínimo de 1 caractere.",
+    frontend_version: "0.3.10",
+    backend_version: "0.3.10",
+    released_at: "2026-05-31T20:40:00.000Z",
+    changes: [
+      "Adicionado botão Inativar/Reativar na coluna Ações da listagem de Fornecedores, preservando o status atual e sem exclusão física.",
+      "Alterada a validação do campo NF / Nº Documento em Contas a Pagar de mínimo 9 dígitos numéricos para mínimo 1 caractere.",
+      "Adicionado modal de detalhamento no Cash Flow para abrir os lançamentos por célula na visão mensal ou diária.",
+      "Criado endpoint GET /financeiro/cashflow/lancamentos para retornar lançamentos do Movimento Bancário, Contas a Pagar Futuro e Contas a Receber Futuro conforme linha, mês e dia selecionados.",
+      "Mantidas as regras existentes de fornecedores, contratos, bancos, contas a pagar, movimento bancário, reservas, comissões e recebíveis sem alteração estrutural.",
+      "Atualizada versão técnica do front-end e backend para 0.3.10."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Cash Flow Detalhes v0.3.10"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "PM2"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Contas a Pagar Futuro",
+        "Contas a Receber Futuro",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
 ];
 
 module.exports = { SYSTEM_RELEASES };

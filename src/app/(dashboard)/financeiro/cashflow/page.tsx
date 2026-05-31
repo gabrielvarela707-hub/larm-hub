@@ -4,8 +4,16 @@
  * Relatório de Cash Flow — visão consolidada, por empresa, mensal e diária.
  */
 import { useEffect, useState } from 'react'
-import { Download, Printer } from 'lucide-react'
-import { getCashflow, getCashflowResumo, getCashflowEmpresas, type Empresa } from '@/lib/api/financeiro'
+import { Download, Loader2, Printer, X } from 'lucide-react'
+import {
+  getCashflow,
+  getCashflowResumo,
+  getCashflowEmpresas,
+  getCashflowLancamentos,
+  type CashflowLancamentoItem,
+  type CashflowLancamentosParams,
+  type Empresa,
+} from '@/lib/api/financeiro'
 
 const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
 const MESES_LONGOS = [
@@ -16,12 +24,33 @@ const EMPRESAS_PADRAO = ['CONSOLIDADO', 'LARM', 'LARM FILIAL', 'MANTIQUEIRA', 'R
 
 type VisaoCashflow = 'mensal' | 'diaria'
 
+type DetalheCashflow = {
+  titulo: string
+  subtitulo: string
+  valor: number
+  itens: CashflowLancamentoItem[]
+  total: number
+  quantidade: number
+}
+
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)))
 }
 
 function uniqueNumbers(values: number[]) {
   return Array.from(new Set(values.filter(v => Number.isFinite(v)))).sort((a, b) => b - a)
+}
+
+function fmtData(value?: string | null) {
+  if (!value) return '—'
+  const d = String(value).slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return d
+  const [ano, mes, dia] = d.split('-')
+  return `${dia}/${mes}/${ano}`
+}
+
+function fmtBRLCompleto(v: number) {
+  return Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
 export default function CashFlowPage() {
@@ -34,6 +63,8 @@ export default function CashFlowPage() {
   const [data, setData] = useState<any>(null)
   const [resumo, setResumo] = useState<any>(null)
   const [loading, setLoading] = useState(false)
+  const [detalhe, setDetalhe] = useState<DetalheCashflow | null>(null)
+  const [detalheLoading, setDetalheLoading] = useState(false)
 
   useEffect(() => {
     getCashflowEmpresas()
@@ -91,6 +122,58 @@ export default function CashFlowPage() {
   const getValorColuna = (linha: any, coluna: any) => {
     const key = getColKey(coluna)
     return linha?.valores?.[key] ?? linha?.valores?.[Number(key)] ?? 0
+  }
+
+  const abrirDetalhes = async (linha: any, coluna: any | null, valor: number) => {
+    if (!valor) return
+
+    const colunaLabel = coluna
+      ? visao === 'diaria'
+        ? `dia ${String(coluna.dia ?? coluna.key ?? '').padStart(2, '0')} de ${MESES_LONGOS[mes - 1]}`
+        : `${coluna.label}/${ano}`
+      : `Total ${ano}`
+
+    setDetalhe({
+      titulo: linha.descricao,
+      subtitulo: `${empresa} • ${visao === 'diaria' ? 'visão diária' : 'visão mensal'} • ${colunaLabel}`,
+      valor,
+      itens: [],
+      total: 0,
+      quantidade: 0,
+    })
+    setDetalheLoading(true)
+
+    try {
+      const params: CashflowLancamentosParams = {
+        visao,
+        linha_id: linha.id,
+        codigo: linha.codigo || '',
+        descricao: linha.descricao || '',
+        valor,
+      }
+
+      if (visao === 'diaria') {
+        params.mes = mes
+        if (coluna) params.dia = Number(coluna.dia ?? coluna.key)
+      } else if (coluna?.mes) {
+        params.mes = Number(coluna.mes)
+      }
+
+      const resp = await getCashflowLancamentos(empresa, ano, params)
+      setDetalhe(prev => prev
+        ? {
+            ...prev,
+            itens: resp.itens || [],
+            total: Number(resp.total || 0),
+            quantidade: Number(resp.quantidade || 0),
+          }
+        : prev,
+      )
+    } catch {
+      setDetalhe(prev => prev ? { ...prev, itens: [], total: 0, quantidade: 0 } : prev)
+    } finally {
+      setDetalheLoading(false)
+    }
   }
 
   const tituloTabela = visao === 'diaria'
@@ -204,14 +287,33 @@ export default function CashFlowPage() {
                       </td>
                       {data.colunas.map((c: any) => {
                         const v = Number(getValorColuna(linha, c) || 0)
+                        const colorCls = v === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(v) ? 'text-red-500' : 'text-green-600'
                         return (
-                          <td key={getColKey(c)} className={`px-2 py-1.5 text-right font-mono ${v === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(v) ? 'text-red-500' : 'text-green-600'}`}>
-                            {v === 0 ? '–' : fmtBRL(v)}
+                          <td key={getColKey(c)} className={`px-2 py-1.5 text-right font-mono ${colorCls}`}>
+                            {v === 0 ? '–' : (
+                              <button
+                                type="button"
+                                onClick={() => abrirDetalhes(linha, c, v)}
+                                title="Ver lançamentos que compõem este valor"
+                                className="w-full text-right hover:underline hover:decoration-dotted underline-offset-2"
+                              >
+                                {fmtBRL(v)}
+                              </button>
+                            )}
                           </td>
                         )
                       })}
                       <td className={`px-3 py-1.5 text-right font-mono font-semibold ${linha.total === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(linha.total) ? 'text-red-500' : 'text-green-600'}`}>
-                        {linha.total === 0 ? '–' : fmtBRL(linha.total)}
+                        {linha.total === 0 ? '–' : (
+                          <button
+                            type="button"
+                            onClick={() => abrirDetalhes(linha, null, Number(linha.total || 0))}
+                            title="Ver lançamentos do total"
+                            className="w-full text-right hover:underline hover:decoration-dotted underline-offset-2"
+                          >
+                            {fmtBRL(linha.total)}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   )
@@ -221,6 +323,85 @@ export default function CashFlowPage() {
           )}
         </div>
       </div>
+
+      {detalhe && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 pt-10 overflow-y-auto">
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl w-full max-w-5xl mb-8 border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+            <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-zinc-100 dark:border-zinc-800">
+              <div>
+                <h2 className="text-base font-semibold text-zinc-900 dark:text-white">Lançamentos do Cash Flow</h2>
+                <p className="text-xs text-zinc-500 mt-1">{detalhe.titulo}</p>
+                <p className="text-[11px] text-zinc-400 mt-0.5">{detalhe.subtitulo}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDetalhe(null)}
+                className="p-2 rounded-lg text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 px-5 py-4 bg-zinc-50/70 dark:bg-zinc-950/30 border-b border-zinc-100 dark:border-zinc-800">
+              <div>
+                <p className="text-[10px] uppercase text-zinc-400 font-semibold">Valor da célula</p>
+                <p className={`font-mono font-semibold ${detalhe.valor < 0 ? 'text-red-500' : 'text-green-600'}`}>{fmtBRLCompleto(detalhe.valor)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase text-zinc-400 font-semibold">Total localizado</p>
+                <p className={`font-mono font-semibold ${detalhe.total < 0 ? 'text-red-500' : 'text-green-600'}`}>{fmtBRLCompleto(detalhe.total)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase text-zinc-400 font-semibold">Lançamentos</p>
+                <p className="font-mono font-semibold text-zinc-800 dark:text-zinc-100">{detalhe.quantidade}</p>
+              </div>
+            </div>
+
+            <div className="max-h-[60vh] overflow-auto">
+              {detalheLoading ? (
+                <div className="py-12 flex items-center justify-center gap-2 text-zinc-400 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Carregando lançamentos...
+                </div>
+              ) : detalhe.itens.length === 0 ? (
+                <div className="py-12 text-center text-zinc-400 text-sm">
+                  Nenhum lançamento localizado para este valor/período.
+                </div>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-white dark:bg-zinc-900 border-b border-zinc-100 dark:border-zinc-800 text-zinc-400 uppercase" style={{fontSize:'10px'}}>
+                    <tr>
+                      <th className="px-3 py-2 text-left">Data</th>
+                      <th className="px-3 py-2 text-left">Empresa</th>
+                      <th className="px-3 py-2 text-left">Fornecedor</th>
+                      <th className="px-3 py-2 text-left min-w-[260px]">Histórico</th>
+                      <th className="px-3 py-2 text-left">Banco</th>
+                      <th className="px-3 py-2 text-left">Doc.</th>
+                      <th className="px-3 py-2 text-left">Natureza</th>
+                      <th className="px-3 py-2 text-right">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detalhe.itens.map((item, idx) => (
+                      <tr key={`${item.origem}-${item.id}-${idx}`} className="border-b border-zinc-50 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60">
+                        <td className="px-3 py-2 whitespace-nowrap text-zinc-500">{fmtData(item.data)}</td>
+                        <td className="px-3 py-2 whitespace-nowrap text-zinc-500">{item.empresa || '—'}</td>
+                        <td className="px-3 py-2 text-zinc-600 dark:text-zinc-300">{item.fornecedor || '—'}</td>
+                        <td className="px-3 py-2 text-zinc-700 dark:text-zinc-200">{item.historico || '—'}</td>
+                        <td className="px-3 py-2 text-zinc-500">{item.banco || '—'}</td>
+                        <td className="px-3 py-2 text-zinc-500">{item.nf_doc || '—'}</td>
+                        <td className="px-3 py-2 text-zinc-500">{item.natureza_financeira || item.conta_contabil || item.status || '—'}</td>
+                        <td className={`px-3 py-2 text-right font-mono font-semibold ${Number(item.valor) < 0 ? 'text-red-500' : 'text-green-600'}`}>
+                          {fmtBRLCompleto(Number(item.valor || 0))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

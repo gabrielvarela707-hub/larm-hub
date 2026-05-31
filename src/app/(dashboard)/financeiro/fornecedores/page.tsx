@@ -1424,12 +1424,30 @@ export default function FornecedoresPage() {
                       </button>
                     </td>
                     <td className="px-3 py-2">
-                      <button
-                        onClick={() => openEdit(f)}
-                        className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => openEdit(f)}
+                          title="Editar fornecedor"
+                          className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-slate-700 transition-colors"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleAtivo(f)}
+                          title={f.ativo ? "Inativar fornecedor" : "Reativar fornecedor"}
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium transition-colors",
+                            f.ativo
+                              ? "text-red-600 hover:bg-red-50"
+                              : "text-green-700 hover:bg-green-50",
+                          )}
+                        >
+                          {f.ativo ? <X className="w-3.5 h-3.5" /> : <Check className="w-3.5 h-3.5" />}
+                          <span>{f.ativo ? "Inativar" : "Reativar"}</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

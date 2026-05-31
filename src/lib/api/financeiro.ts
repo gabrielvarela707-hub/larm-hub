@@ -280,6 +280,35 @@ export const getCashflow = (empresa: Empresa = 'CONSOLIDADO', ano?: number, para
     '/financeiro/cashflow', { params: { empresa, ano, ...params } }
   ).then(data)
 
+
+export interface CashflowLancamentosParams extends CashflowParams {
+  dia?: number
+  linha_id?: number | string
+  codigo?: string
+  descricao?: string
+  valor?: number
+}
+
+export interface CashflowLancamentoItem {
+  origem: string
+  id: number | string
+  data: string | null
+  empresa: string | null
+  banco?: string | null
+  fornecedor?: string | null
+  historico?: string | null
+  nf_doc?: string | null
+  conta_contabil?: string | null
+  natureza_financeira?: string | null
+  status?: string | null
+  valor: number
+}
+
+export const getCashflowLancamentos = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: CashflowLancamentosParams) =>
+  apiClient.get<{ ok: boolean; data: { itens: CashflowLancamentoItem[]; total: number; quantidade: number } }>(
+    '/financeiro/cashflow/lancamentos', { params: { empresa, ano, ...params } }
+  ).then(data)
+
 export const getCashflowResumo = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: Pick<CashflowParams, 'mes'>) =>
   apiClient.get<{ ok: boolean; data: Record<string, unknown> }>(
     '/financeiro/cashflow/resumo', { params: { empresa, ano, ...params } }

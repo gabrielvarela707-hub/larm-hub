@@ -638,8 +638,8 @@ export default function PagarPage() {
     if (!fEmp)       e.empresa   = 'Obrigatório'
     if (!fHistorico) e.historico = 'Obrigatório'
     if (!fValor || moneyToNumber(fValor) <= 0) e.valor = 'Informe um valor válido'
-    if (fNF && fNF.replace(/\D/g, '').length > 0 && fNF.replace(/\D/g, '').length < 9)
-      e.nf_doc = 'Mínimo 9 dígitos numéricos'
+    if (fNF && fNF.trim().length < 1)
+      e.nf_doc = 'Mínimo 1 caractere'
     if (Object.keys(e).length) {
       e._geral = 'Revise os campos: algum deles está impedindo o envio das informações.'
     }
@@ -1294,7 +1294,7 @@ export default function PagarPage() {
                     </select>
                   </F>
                   <F label="Número do Documento" name="nf_doc">
-                    <input className={cn(inp, errors.nf_doc && 'border-red-300')} value={fNF} onChange={e => setFNF(e.target.value)} placeholder="Mín. 9 dígitos numéricos" />
+                    <input className={cn(inp, errors.nf_doc && 'border-red-300')} value={fNF} onChange={e => setFNF(e.target.value)} placeholder="Mín. 1 caractere" />
                   </F>
                   <F label="Documento em PDF ou imagem" name="documento_arquivo" full>
                     <label className="flex items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-600 cursor-pointer hover:bg-slate-100">

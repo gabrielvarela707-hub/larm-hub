@@ -4,7 +4,7 @@
  * /financeiro/contas-pagar/page.tsx
  *
  * ALTERAÇÕES v2:
- * 1. nf_doc campo número do documento — mínimo 9 dígitos
+ * 1. nf_doc campo número do documento — mínimo 1 caractere
  * 2. Código do fornecedor — mínimo 6 dígitos
  * 3. Banco de pagamento — dropdown com todos os bancos brasileiros (código + nome)
  * 4. Campos multa, juros e descontos — inputs em cada parcela
@@ -44,7 +44,7 @@ const lancSchema = z.object({
   historico:        z.string().min(3, 'Obrigatório'),
   nf_doc:           z.string()
     .optional()
-    .refine(v => !v || v.replace(/\D/g, '').length >= 9, { message: 'Mínimo 9 dígitos numéricos' }),
+    .refine(v => !v || v.trim().length >= 1, { message: 'Mínimo 1 caractere' }),
   data_emissao:     z.string().min(1, 'Obrigatório'),
   valor_total:      z.coerce.number().min(0.01, 'Obrigatório'),
   num_parcelas:     z.coerce.number().min(1).max(120),
@@ -757,12 +757,12 @@ export default function ContasPagarPage() {
                 <input {...register('historico')} className={inputCls} placeholder="Descrição do pagamento" />
               </Field>
 
-              {/* ▶ NF/Doc — mínimo 9 dígitos numéricos */}
+              {/* ▶ NF/Doc — mínimo 1 caractere */}
               <Field label="NF / Nº Documento" error={errors.nf_doc?.message}>
                 <input
                   {...register('nf_doc')}
                   className={inputCls}
-                  placeholder="Mín. 9 dígitos numéricos"
+                  placeholder="Mín. 1 caractere"
                 />
               </Field>
 
