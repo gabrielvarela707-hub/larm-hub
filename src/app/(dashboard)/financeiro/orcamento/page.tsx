@@ -123,7 +123,7 @@ export default function OrcamentoPage() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-zinc-900">Orçamento Mensal</h1>
-          <p className="text-sm text-zinc-500 mt-0.5">Previsto importado do Movimento Orçado x Realizado do CashFlow.</p>
+          <p className="text-sm text-zinc-500 mt-0.5">Previsto importado do Movimento Orçado x Realizado do Movimento Bancário.</p>
         </div>
         <span className="bg-amber-50 text-amber-700 text-xs px-3 py-1 rounded-full font-semibold border border-amber-100">
           Orçado 2026
@@ -172,7 +172,7 @@ export default function OrcamentoPage() {
         <div className="px-5 py-4 border-b border-zinc-100 flex items-center justify-between gap-3">
           <div>
             <h2 className="font-semibold text-zinc-900">Orçamento — {empresa} {ano}</h2>
-            <p className="text-xs text-zinc-400 mt-0.5">Previsto vem do Movimento Bancário Orçado; Realizado vem do CashFlow.</p>
+            <p className="text-xs text-zinc-400 mt-0.5">Previsto vem do Movimento Bancário Orçado; Realizado vem do Movimento Bancário pago/recebido.</p>
           </div>
           <span className="bg-zinc-100 text-zinc-600 text-xs px-2 py-0.5 rounded font-medium">Mensal</span>
         </div>

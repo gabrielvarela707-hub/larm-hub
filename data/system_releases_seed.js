@@ -1634,7 +1634,7 @@ const SYSTEM_RELEASES = [
       "O importador passa a agregar o previsto por Natureza Financeira, empresa e mês em fin_orcamento_valores.",
       "Mantida a gravação do movimento orçado em fin_orcamento_movimento, sem misturar com fin_movimento realizado.",
       "Criada a tela Financeiro > Mov. Orçado para consultar os lançamentos previstos de 2026.",
-      "Tela Orçamento passa a comparar Previsto do Movimento Orçado x Realizado do CashFlow.",
+      "Tela Orçamento passa a comparar Previsto do Movimento Orçado x Realizado do Movimento Bancário efetivo.",
       "Atualizado comando npm run db:seed:orcamento:2026 para usar somente scripts/imports/orcamento-movimento-2026.xlsx.",
       "Atualizada versão técnica do front-end e backend para 0.3.22."
     ],
@@ -1660,6 +1660,53 @@ const SYSTEM_RELEASES = [
         "hub_system_releases"
       ],
       integrations: [
+        "Movimento Bancário Orçado",
+        "Orçamento Financeiro",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.23",
+    title: "Financeiro — correção do realizado e limpeza de movimento futuro",
+    description:
+      "Ajusta o Orçamento para usar o Movimento Bancário realmente pago/recebido como realizado, adiciona limpeza segura dos movimentos futuros de 2026 importados por engano e corrige a navegação do Mov. Orçado.",
+    frontend_version: "0.3.23",
+    backend_version: "0.3.23",
+    released_at: "2026-06-01T03:20:00.000Z",
+    changes: [
+      "Orçamento passa a preencher Realizado a partir do Movimento Bancário efetivo, e não mais dos valores estáticos do CashFlow.",
+      "Criada trava para ignorar movimentos futuros de 2026 sem vínculo com baixa de Contas a Pagar ou recebimento em Contas a Receber.",
+      "Adicionado script seguro para prévia e limpeza dos movimentos futuros indevidos após 28/06/2026.",
+      "Mov. Orçado recebeu barra horizontal superior para facilitar navegação lateral da tabela.",
+      "Corrigido destaque duplicado no menu lateral entre Mov. Orçado e Mov. Bancário.",
+      "Atualizada versão técnica do front-end e backend para 0.3.23."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.23"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_orcamento_movimento",
+        "fin_orcamento_valores",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário Realizado",
         "Movimento Bancário Orçado",
         "Orçamento Financeiro",
         "Changelog versionado no banco"

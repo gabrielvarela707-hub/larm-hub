@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Loader2, Search, TrendingDown, TrendingUp, WalletCards } from 'lucide-react'
 import {
   getOrcamentoMovimento,
@@ -47,6 +47,14 @@ export default function MovimentoOrcadoPage() {
   const [rows, setRows] = useState<OrcamentoMovimentoItem[]>([])
   const [summary, setSummary] = useState({ total_entradas: 0, total_saidas: 0, saldo_periodo: 0, total_lancamentos: 0 })
   const [loading, setLoading] = useState(false)
+  const topScrollRef = useRef<HTMLDivElement | null>(null)
+  const tableScrollRef = useRef<HTMLDivElement | null>(null)
+  const tableMinWidth = 1280
+
+  const syncHorizontalScroll = (source: HTMLDivElement, target: HTMLDivElement | null) => {
+    if (!target || target.scrollLeft === source.scrollLeft) return
+    target.scrollLeft = source.scrollLeft
+  }
 
   function load() {
     setLoading(true)
@@ -146,8 +154,20 @@ export default function MovimentoOrcadoPage() {
       </div>
 
       <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[1280px]">
+        <div
+          ref={topScrollRef}
+          onScroll={(e) => syncHorizontalScroll(e.currentTarget, tableScrollRef.current)}
+          className="h-4 overflow-x-auto overflow-y-hidden border-b border-zinc-100 bg-zinc-50/60"
+          title="Barra de rolagem horizontal da tabela"
+        >
+          <div style={{ width: tableMinWidth }} className="h-1" />
+        </div>
+        <div
+          ref={tableScrollRef}
+          onScroll={(e) => syncHorizontalScroll(e.currentTarget, topScrollRef.current)}
+          className="overflow-x-auto"
+        >
+          <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
             <thead className="bg-slate-950 text-white">
               <tr>
                 <th className="px-4 py-3 text-left">Data</th>

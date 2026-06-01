@@ -121,7 +121,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
   function isActive(href: string) {
     if (href === '/') return pathname === '/'
-    return pathname.startsWith(href)
+    return pathname === href || pathname.startsWith(`${href}/`)
   }
 
   function visibleChildren(item: NavItem) {
