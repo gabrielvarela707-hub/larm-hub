@@ -319,3 +319,35 @@ export const getCashflowEmpresas = () =>
   apiClient.get<{ ok: boolean; data: { empresa: string; ano: number }[] }>(
     '/financeiro/cashflow/empresas'
   ).then(data)
+
+
+// ─── Orçamento Financeiro ────────────────────────────────────────────────────
+
+export interface OrcamentoParams {
+  mes?: number
+}
+
+export interface OrcamentoLinha {
+  id: number
+  row_idx: number
+  codigo?: string | null
+  descricao: string
+  nivel: number
+  tipo: string
+  previstos: Record<string | number, number>
+  realizados: Record<string | number, number>
+  total_previsto: number
+  total_realizado: number
+  diferenca: number
+}
+
+export const getOrcamento = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: OrcamentoParams) =>
+  apiClient.get<{ ok: boolean; data: { linhas: OrcamentoLinha[]; colunas: { mes: number; label: string }[]; resumo?: Record<string, unknown>; empresa: string; ano: number } }>(
+    '/financeiro/orcamento', { params: { empresa, ano, ...params } }
+  ).then(data)
+
+export const getOrcamentoEmpresas = () =>
+  apiClient.get<{ ok: boolean; data: { empresa: string; ano: number }[] }>(
+    '/financeiro/orcamento/empresas'
+  ).then(data)
+

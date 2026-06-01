@@ -1572,6 +1572,54 @@ const SYSTEM_RELEASES = [
     },
   },
 
+
+  {
+    version: "0.3.21",
+    title: "Financeiro — Orçamento 2026 com Previsto x Realizado",
+    description:
+      "Conclui a primeira versão operacional do módulo Orçamento, importando o CashFlow orçado e o Movimento Bancário orçado de 2026 para comparar previsto e realizado.",
+    frontend_version: "0.3.21",
+    backend_version: "0.3.21",
+    released_at: "2026-06-01T02:15:00.000Z",
+    changes: [
+      "Criadas tabelas fin_orcamento_linhas, fin_orcamento_valores e fin_orcamento_movimento para separar orçamento do movimento bancário realizado.",
+      "Criado importador scripts/import_orcamento_2026.py para carregar CashFlow Consolidado 2026-Orçado e Movimento Bancário 2026-Orçado.",
+      "Adicionados comandos npm run db:migrate:orcamento e npm run db:seed:orcamento:2026 no backend.",
+      "Criados endpoints GET /financeiro/orcamento, GET /financeiro/orcamento/empresas e GET /financeiro/orcamento/movimento.",
+      "Tela Financeiro > Orçamento passa a exibir valores Previsto x Realizado por mês e por linha financeira.",
+      "Movimento orçado fica armazenado separado em fin_orcamento_movimento, sem gravar nada em fin_movimento realizado.",
+      "Atualizada versão técnica do front-end e backend para 0.3.21."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.21"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_orcamento_linhas",
+        "fin_orcamento_valores",
+        "fin_orcamento_movimento",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Orçamento Financeiro",
+        "CashFlow Orçado",
+        "Movimento Bancário Orçado",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };
