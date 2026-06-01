@@ -8,9 +8,10 @@ import { cn } from '@/lib/utils'
 
 const DEFAULT_YEAR = 2026
 
-const R$ = (v: number | string | null | undefined) => {
+const R$ = (v: number | string | null | undefined, showZero = false) => {
   const n = typeof v === 'string' ? Number(v) : (v ?? 0)
-  if (!Number.isFinite(n) || n === 0) return '—'
+  if (!Number.isFinite(n)) return '—'
+  if (n === 0 && !showZero) return '—'
   return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
@@ -60,7 +61,7 @@ interface Filtros {
   status: string[]
 }
 interface Pagination { page: number; pages: number; total: number; limit: number }
-interface Summary { total_entradas: number; total_saidas: number; saldo_inicial_bancos?: number; saldo_movimento?: number; saldo_periodo?: number; saldo_final?: number }
+interface Summary { total_entradas: number; total_saidas: number; saldo_inicial_bancos?: number; saldo_inicial?: number; saldo_inicial_ano?: number; saldo_movimento?: number; saldo_periodo?: number; saldo_final?: number }
 interface ResumoMensal {
   mensal: Array<{ mes: number; entradas: number; saidas: number; saldo: number }>
   por_empresa: Array<{ empresa: string; entradas: number; saidas: number }>
@@ -428,7 +429,7 @@ export default function MovimentoPage() {
       {activeTab === 'lista' && (
         <>
           {summary && (() => {
-            const saldoInicial = Number(summary.saldo_inicial_bancos ?? 0)
+            const saldoInicial = Number(summary.saldo_inicial_bancos ?? summary.saldo_inicial_ano ?? summary.saldo_inicial ?? 0)
             const saldoMovimento = Number(summary.saldo_movimento ?? (Number(summary.total_entradas || 0) - Number(summary.total_saidas || 0)))
             const saldoFinal = Number(summary.saldo_periodo ?? summary.saldo_final ?? (saldoInicial + saldoMovimento))
             const cards = [
@@ -445,7 +446,7 @@ export default function MovimentoPage() {
                     <s.icon className={cn('w-4 h-4', s.color)} />
                     <div>
                       <p className="text-[10px] text-slate-400">{s.label}</p>
-                      <p className={cn('text-sm font-bold', s.color)}>{R$(s.value)}</p>
+                      <p className={cn('text-sm font-bold', s.color)}>{R$(s.value, s.label.startsWith('Saldo Inicial'))}</p>
                     </div>
                   </div>
                 ))}

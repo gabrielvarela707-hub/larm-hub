@@ -1483,6 +1483,50 @@ const SYSTEM_RELEASES = [
     },
   },
 
+
+  {
+    version: "0.3.19",
+    title: "Financeiro — correção do Saldo Inicial no Movimento Bancário",
+    description:
+      "Corrige o cálculo e a exibição do Saldo Inicial no Movimento Bancário, usando a mesma base de saldos cadastrados em Bancos e Contas quando necessário.",
+    frontend_version: "0.3.19",
+    backend_version: "0.3.19",
+    released_at: "2026-06-01T01:25:00.000Z",
+    changes: [
+      "Backend passa a somar os saldos iniciais das contas bancárias do ano selecionado e aplica fallback para a soma das contas ativas quando a data do saldo inicial não estiver preenchida na base.",
+      "Resumo do Movimento Bancário passa a retornar aliases saldo_inicial, saldo_inicial_ano e saldo_inicial_bancos para evitar incompatibilidade entre versões de frontend e backend.",
+      "Frontend passa a aceitar os aliases de saldo inicial e exibir R$ 0,00 no card quando o valor for zero, evitando mostrar apenas traço no card de conferência.",
+      "Mantida a fórmula do Saldo Final: Saldo Inicial + Entradas - Saídas.",
+      "Atualizada versão técnica do front-end e backend para 0.3.19."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.19"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Bancos e Contas",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };
