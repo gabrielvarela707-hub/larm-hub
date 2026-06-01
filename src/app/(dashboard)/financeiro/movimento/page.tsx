@@ -91,14 +91,14 @@ const LIMIT = 50
 const labelStatus = (status: string | null | undefined) => {
   const s = String(status || '').toLowerCase()
   if (s === 'pago' || s === 'paga') return 'Pago'
-  if (s === 'realizado' || s === 'realizada') return 'Realizado'
+  if (s === 'recebido' || s === 'recebida') return 'Recebido'
   return status || '—'
 }
 
 const statusClass = (status: string | null | undefined) => {
   const s = String(status || '').toLowerCase()
-  if (s === 'pago' || s === 'paga') return 'bg-emerald-50 text-emerald-700'
-  if (s === 'realizado' || s === 'realizada') return 'bg-blue-50 text-blue-700'
+  if (s === 'pago' || s === 'paga') return 'bg-red-50 text-red-700'
+  if (s === 'recebido' || s === 'recebida') return 'bg-emerald-50 text-emerald-700'
   return 'bg-slate-100 text-slate-600'
 }
 
@@ -381,7 +381,7 @@ export default function MovimentoPage() {
           <FilterField label="Status">
             <select value={fStatus} onChange={e => setFStatus(e.target.value)} className={inp}>
               <option value="">Todos status</option>
-              {['pago', 'realizado'].map(s => (
+              {['pago', 'recebido'].map(s => (
                 <option key={s} value={s}>{labelStatus(s)}</option>
               ))}
             </select>

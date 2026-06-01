@@ -1349,6 +1349,51 @@ const SYSTEM_RELEASES = [
     },
   },
 
+
+  {
+    version: "0.3.16",
+    title: "Financeiro — Status correto do Movimento Bancário",
+    description:
+      "Ajusta definitivamente o Movimento Bancário para trabalhar com os status Pago e Recebido, derivados do tipo do movimento: saídas como Pago e entradas como Recebido.",
+    frontend_version: "0.3.16",
+    backend_version: "0.3.16",
+    released_at: "2026-06-01T00:25:00.000Z",
+    changes: [
+      "Movimento Bancário passa a exibir somente Pago e Recebido como status operacionais.",
+      "Saídas/débitos do Movimento Bancário, inclusive registros antigos importados como realizado, passam a ser tratados e filtrados como Pago.",
+      "Entradas/créditos do Movimento Bancário passam a ser tratadas e filtradas como Recebido.",
+      "Filtro de status do Movimento Bancário passa a disponibilizar apenas Todos status, Pago e Recebido.",
+      "Exportação Excel do Movimento Bancário passa a usar a mesma regra visual: saídas como Pago e entradas como Recebido.",
+      "Mantida compatibilidade para status antigo realizado no backend, direcionando-o para o filtro de saídas/Pago quando recebido por cache ou versão anterior do front-end.",
+      "Atualizada versão técnica do front-end e backend para 0.3.16."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.16"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Exportação Excel XML"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };
