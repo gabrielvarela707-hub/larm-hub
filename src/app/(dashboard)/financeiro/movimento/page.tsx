@@ -60,7 +60,7 @@ interface Filtros {
   status: string[]
 }
 interface Pagination { page: number; pages: number; total: number; limit: number }
-interface Summary { total_entradas: number; total_saidas: number; saldo_inicial_bancos?: number; saldo_movimento?: number; saldo_periodo: number }
+interface Summary { total_entradas: number; total_saidas: number; saldo_inicial_bancos?: number; saldo_movimento?: number; saldo_periodo?: number; saldo_final?: number }
 interface ResumoMensal {
   mensal: Array<{ mes: number; entradas: number; saidas: number; saldo: number }>
   por_empresa: Array<{ empresa: string; entradas: number; saidas: number }>
@@ -427,23 +427,31 @@ export default function MovimentoPage() {
 
       {activeTab === 'lista' && (
         <>
-          {summary && (
-            <div className="flex gap-3 flex-wrap justify-end">
-              {[
-                { label: 'Entradas', value: summary.total_entradas, color: 'text-green-600', icon: TrendingUp },
-                { label: 'Saídas', value: summary.total_saidas, color: 'text-red-600', icon: TrendingDown },
-                { label: 'Saldo Final', value: summary.saldo_periodo, color: summary.saldo_periodo >= 0 ? 'text-blue-600' : 'text-orange-600', icon: DollarSign },
-              ].map(s => (
-                <div key={s.label} className="bg-white rounded-lg border border-slate-100 px-3 py-2 flex items-center gap-2">
-                  <s.icon className={cn('w-4 h-4', s.color)} />
-                  <div>
-                    <p className="text-[10px] text-slate-400">{s.label}</p>
-                    <p className={cn('text-sm font-bold', s.color)}>{R$(s.value)}</p>
+          {summary && (() => {
+            const saldoInicial = Number(summary.saldo_inicial_bancos ?? 0)
+            const saldoMovimento = Number(summary.saldo_movimento ?? (Number(summary.total_entradas || 0) - Number(summary.total_saidas || 0)))
+            const saldoFinal = Number(summary.saldo_periodo ?? summary.saldo_final ?? (saldoInicial + saldoMovimento))
+            const cards = [
+              { label: `Saldo Inicial ${fAno}`, value: saldoInicial, color: saldoInicial >= 0 ? 'text-blue-600' : 'text-orange-600', icon: DollarSign },
+              { label: 'Entradas', value: summary.total_entradas, color: 'text-green-600', icon: TrendingUp },
+              { label: 'Saídas', value: summary.total_saidas, color: 'text-red-600', icon: TrendingDown },
+              { label: 'Saldo Final', value: saldoFinal, color: saldoFinal >= 0 ? 'text-blue-600' : 'text-orange-600', icon: DollarSign },
+            ]
+
+            return (
+              <div className="flex gap-3 flex-wrap justify-end">
+                {cards.map(s => (
+                  <div key={s.label} className="bg-white rounded-lg border border-slate-100 px-3 py-2 flex items-center gap-2">
+                    <s.icon className={cn('w-4 h-4', s.color)} />
+                    <div>
+                      <p className="text-[10px] text-slate-400">{s.label}</p>
+                      <p className={cn('text-sm font-bold', s.color)}>{R$(s.value)}</p>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )
+          })()}
 
           <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
             <div

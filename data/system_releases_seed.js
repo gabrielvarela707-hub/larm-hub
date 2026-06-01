@@ -1439,6 +1439,50 @@ const SYSTEM_RELEASES = [
     },
   },
 
+
+  {
+    version: "0.3.18",
+    title: "Financeiro — card de Saldo Inicial no Movimento Bancário",
+    description:
+      "Adiciona o card de Saldo Inicial no resumo do Movimento Bancário para deixar visível a composição do Saldo Final do ano selecionado.",
+    frontend_version: "0.3.18",
+    backend_version: "0.3.18",
+    released_at: "2026-06-01T01:05:00.000Z",
+    changes: [
+      "Resumo do Movimento Bancário passa a exibir o card Saldo Inicial do ano selecionado, antes de Entradas, Saídas e Saldo Final.",
+      "Para 2026, o card mostra a soma dos saldos iniciais das contas bancárias cadastradas em 01/01/2026.",
+      "Frontend passa a calcular o Saldo Final com fallback explícito: Saldo Inicial + Entradas - Saídas, evitando exibir apenas o saldo do movimento quando o backend ainda estiver em cache.",
+      "Backend passa a retornar também saldo_final e formula_saldo_final na resposta do Movimento Bancário para facilitar conferência da composição.",
+      "Atualizada versão técnica do front-end e backend para 0.3.18."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.18"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Bancos e Contas",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };
