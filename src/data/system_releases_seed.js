@@ -1527,6 +1527,51 @@ const SYSTEM_RELEASES = [
     },
   },
 
+
+  {
+    version: "0.3.20",
+    title: "Financeiro — Saldo Inicial do Movimento pela base de Bancos e Contas",
+    description:
+      "Corrige definitivamente o Saldo Inicial do Movimento Bancário usando a mesma origem do módulo Bancos e Contas, incluindo fallback no front-end quando o backend estiver em cache.",
+    frontend_version: "0.3.20",
+    backend_version: "0.3.20",
+    released_at: "2026-06-01T01:45:00.000Z",
+    changes: [
+      "Movimento Bancário passa a consultar o saldo inicial diretamente em fin_bancos_contas, a mesma tabela usada por Financeiro > Bancos e Contas.",
+      "Criado endpoint GET /financeiro/movimento/saldo-inicial-bancos para conferência isolada do saldo inicial por ano, empresa, banco e conta.",
+      "Filtro por empresa no saldo inicial passa a comparar UPPER/TRIM, evitando retorno zerado por diferença de caixa ou espaços.",
+      "Frontend passa a buscar fallback em /financeiro/bancos quando o resumo do movimento não trouxer saldo inicial, garantindo que LARM mostre R$ 88.195,56 e Consolidado mostre a soma das contas ativas.",
+      "Saldo Final do Movimento continua sendo calculado como Saldo Inicial + Entradas - Saídas.",
+      "Atualizada versão técnica do front-end e backend para 0.3.20."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.20"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Bancos e Contas",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };

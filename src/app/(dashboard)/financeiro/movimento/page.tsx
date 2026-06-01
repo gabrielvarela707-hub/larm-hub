@@ -8,9 +8,25 @@ import { cn } from '@/lib/utils'
 
 const DEFAULT_YEAR = 2026
 
+const moneyNumber = (value: unknown, fallback = 0) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback
+  if (typeof value === 'string') {
+    const raw = value.trim()
+    if (!raw || raw === '—' || raw === '-') return fallback
+    const cleaned = raw.replace(/R\$/gi, '').replace(/\s/g, '')
+    const normalized = cleaned.includes(',')
+      ? cleaned.replace(/\./g, '').replace(',', '.')
+      : cleaned
+    const n = Number(normalized.replace(/[^0-9.-]/g, ''))
+    return Number.isFinite(n) ? n : fallback
+  }
+  if (value === null || value === undefined) return fallback
+  const n = Number(value)
+  return Number.isFinite(n) ? n : fallback
+}
+
 const R$ = (v: number | string | null | undefined, showZero = false) => {
-  const n = typeof v === 'string' ? Number(v) : (v ?? 0)
-  if (!Number.isFinite(n)) return '—'
+  const n = moneyNumber(v, 0)
   if (n === 0 && !showZero) return '—'
   return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
@@ -51,6 +67,7 @@ interface Mov {
 
 interface SelectOption { id: number | string; nome: string }
 interface ContaOption { id: number | string; label: string }
+interface BancoConta { id: number | string; empresa?: string | null; banco_nome?: string | null; saldo_inicial?: number | string | null; data_saldo_inicial?: string | null }
 interface Filtros {
   empresas: string[]
   bancos: string[]
@@ -158,6 +175,7 @@ export default function MovimentoPage() {
   const [movs, setMovs] = useState<Mov[]>([])
   const [pag, setPag] = useState<Pagination>({ page: 1, pages: 1, total: 0, limit: LIMIT })
   const [summary, setSummary] = useState<Summary | null>(null)
+  const [saldoInicialBancosFallback, setSaldoInicialBancosFallback] = useState(0)
   const [resumo, setResumo] = useState<ResumoMensal | null>(null)
   const [loading, setLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<'lista' | 'resumo'>('lista')
@@ -229,6 +247,46 @@ export default function MovimentoPage() {
       setResumo(r.data.data)
     } catch { }
   }, [fAno, fEmpresa, fMes])
+
+  const loadSaldoInicialBancos = useCallback(async () => {
+    try {
+      const params: Record<string, unknown> = { ano: fAno }
+      if (fEmpresa) params.empresa = fEmpresa
+      if (fBanco) params.banco = fBanco
+      if (fConta) params.conta_id = fConta
+
+      const r = await apiClient.get('/financeiro/movimento/saldo-inicial-bancos', { params })
+      const value = r.data?.data?.saldo_inicial ?? r.data?.saldo_inicial ?? r.data?.summary?.saldo_inicial_bancos
+      setSaldoInicialBancosFallback(moneyNumber(value, 0))
+      return
+    } catch {
+      // Fallback proposital: usa a mesma origem que já alimenta Financeiro > Bancos e Contas.
+    }
+
+    try {
+      const params: Record<string, unknown> = {}
+      if (fEmpresa) params.empresa = fEmpresa
+
+      const r = await apiClient.get('/financeiro/bancos', { params })
+      const contas = (r.data?.data ?? []) as BancoConta[]
+      const total = contas
+        .filter(c => !fConta || String(c.id) === String(fConta))
+        .filter(c => !fBanco || String(c.banco_nome || '').toLowerCase().includes(String(fBanco).toLowerCase()))
+        .filter(c => {
+          const data = String(c.data_saldo_inicial || '')
+          return !data || data.slice(0, 4) === String(fAno)
+        })
+        .reduce((acc, c) => acc + moneyNumber(c.saldo_inicial, 0), 0)
+
+      setSaldoInicialBancosFallback(total)
+    } catch {
+      setSaldoInicialBancosFallback(0)
+    }
+  }, [fAno, fEmpresa, fBanco, fConta])
+
+  useEffect(() => {
+    loadSaldoInicialBancos()
+  }, [loadSaldoInicialBancos])
 
   useEffect(() => {
     if (activeTab === 'lista') loadMovs(1)
@@ -429,13 +487,16 @@ export default function MovimentoPage() {
       {activeTab === 'lista' && (
         <>
           {summary && (() => {
-            const saldoInicial = Number(summary.saldo_inicial_bancos ?? summary.saldo_inicial_ano ?? summary.saldo_inicial ?? 0)
-            const saldoMovimento = Number(summary.saldo_movimento ?? (Number(summary.total_entradas || 0) - Number(summary.total_saidas || 0)))
-            const saldoFinal = Number(summary.saldo_periodo ?? summary.saldo_final ?? (saldoInicial + saldoMovimento))
+            const saldoInicialApi = moneyNumber(summary.saldo_inicial_bancos ?? summary.saldo_inicial_ano ?? summary.saldo_inicial, 0)
+            const saldoInicial = saldoInicialApi !== 0 ? saldoInicialApi : saldoInicialBancosFallback
+            const totalEntradas = moneyNumber(summary.total_entradas, 0)
+            const totalSaidas = moneyNumber(summary.total_saidas, 0)
+            const saldoMovimento = moneyNumber(summary.saldo_movimento, totalEntradas - totalSaidas)
+            const saldoFinal = saldoInicial + saldoMovimento
             const cards = [
               { label: `Saldo Inicial ${fAno}`, value: saldoInicial, color: saldoInicial >= 0 ? 'text-blue-600' : 'text-orange-600', icon: DollarSign },
-              { label: 'Entradas', value: summary.total_entradas, color: 'text-green-600', icon: TrendingUp },
-              { label: 'Saídas', value: summary.total_saidas, color: 'text-red-600', icon: TrendingDown },
+              { label: 'Entradas', value: totalEntradas, color: 'text-green-600', icon: TrendingUp },
+              { label: 'Saídas', value: totalSaidas, color: 'text-red-600', icon: TrendingDown },
               { label: 'Saldo Final', value: saldoFinal, color: saldoFinal >= 0 ? 'text-blue-600' : 'text-orange-600', icon: DollarSign },
             ]
 
