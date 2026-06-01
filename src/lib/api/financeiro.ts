@@ -351,3 +351,40 @@ export const getOrcamentoEmpresas = () =>
     '/financeiro/orcamento/empresas'
   ).then(data)
 
+
+export interface OrcamentoMovimentoParams {
+  empresa?: Empresa
+  ano?: number
+  mes?: number
+  tipo?: 'entrada' | 'saida' | ''
+  busca?: string
+  limit?: number
+}
+
+export interface OrcamentoMovimentoItem {
+  id: number
+  data: string
+  empresa: Empresa | string
+  banco?: string | null
+  entradas: number
+  saidas: number
+  fornecedor?: string | null
+  historico?: string | null
+  nf_doc?: string | null
+  conta_contabil?: string | null
+  centro_custo?: string | null
+  obra?: string | null
+  natureza_financeira?: string | null
+  dia?: number
+  mes?: number
+  ano?: number
+  saldo?: number
+}
+
+export const getOrcamentoMovimento = (params?: OrcamentoMovimentoParams) =>
+  apiClient.get<{
+    ok: boolean
+    data: OrcamentoMovimentoItem[]
+    summary: { total_entradas: number; total_saidas: number; saldo_periodo: number; total_lancamentos: number }
+  }>('/financeiro/orcamento/movimento', { params: { ano: 2026, limit: 1000, ...params } })
+    .then(r => r.data)

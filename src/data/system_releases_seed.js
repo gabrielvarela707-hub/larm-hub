@@ -1620,6 +1620,53 @@ const SYSTEM_RELEASES = [
     },
   },
 
+
+  {
+    version: "0.3.22",
+    title: "Financeiro — Orçamento baseado no Movimento Orçado",
+    description:
+      "Corrige a origem do previsto no módulo Orçamento 2026 para usar a planilha de Movimento Bancário Orçado e adiciona a tela Movimento Orçado.",
+    frontend_version: "0.3.22",
+    backend_version: "0.3.22",
+    released_at: "2026-06-01T02:45:00.000Z",
+    changes: [
+      "Alterado o seed do orçamento para usar a planilha Movimento Bancário-2026-orçado como fonte dos valores previstos.",
+      "O importador passa a agregar o previsto por Natureza Financeira, empresa e mês em fin_orcamento_valores.",
+      "Mantida a gravação do movimento orçado em fin_orcamento_movimento, sem misturar com fin_movimento realizado.",
+      "Criada a tela Financeiro > Mov. Orçado para consultar os lançamentos previstos de 2026.",
+      "Tela Orçamento passa a comparar Previsto do Movimento Orçado x Realizado do CashFlow.",
+      "Atualizado comando npm run db:seed:orcamento:2026 para usar somente scripts/imports/orcamento-movimento-2026.xlsx.",
+      "Atualizada versão técnica do front-end e backend para 0.3.22."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.22"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_orcamento_linhas",
+        "fin_orcamento_valores",
+        "fin_orcamento_movimento",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário Orçado",
+        "Orçamento Financeiro",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };
