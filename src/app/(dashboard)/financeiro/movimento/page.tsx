@@ -60,7 +60,7 @@ interface Filtros {
   status: string[]
 }
 interface Pagination { page: number; pages: number; total: number; limit: number }
-interface Summary { total_entradas: number; total_saidas: number; saldo_periodo: number }
+interface Summary { total_entradas: number; total_saidas: number; saldo_inicial_bancos?: number; saldo_movimento?: number; saldo_periodo: number }
 interface ResumoMensal {
   mensal: Array<{ mes: number; entradas: number; saidas: number; saldo: number }>
   por_empresa: Array<{ empresa: string; entradas: number; saidas: number }>
@@ -432,7 +432,7 @@ export default function MovimentoPage() {
               {[
                 { label: 'Entradas', value: summary.total_entradas, color: 'text-green-600', icon: TrendingUp },
                 { label: 'Saídas', value: summary.total_saidas, color: 'text-red-600', icon: TrendingDown },
-                { label: 'Saldo', value: summary.saldo_periodo, color: summary.saldo_periodo >= 0 ? 'text-blue-600' : 'text-orange-600', icon: DollarSign },
+                { label: 'Saldo Final', value: summary.saldo_periodo, color: summary.saldo_periodo >= 0 ? 'text-blue-600' : 'text-orange-600', icon: DollarSign },
               ].map(s => (
                 <div key={s.label} className="bg-white rounded-lg border border-slate-100 px-3 py-2 flex items-center gap-2">
                   <s.icon className={cn('w-4 h-4', s.color)} />

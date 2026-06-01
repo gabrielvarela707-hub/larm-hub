@@ -1394,6 +1394,51 @@ const SYSTEM_RELEASES = [
     },
   },
 
+
+  {
+    version: "0.3.17",
+    title: "Financeiro — Saldo final do Movimento com saldos bancários",
+    description:
+      "Atualiza o resumo do Movimento Bancário para calcular o Saldo Final a partir dos saldos iniciais das contas bancárias de 01/01 do ano selecionado, somando entradas e subtraindo saídas.",
+    frontend_version: "0.3.17",
+    backend_version: "0.3.17",
+    released_at: "2026-06-01T00:45:00.000Z",
+    changes: [
+      "O card de Saldo do Movimento Bancário passa a representar o Saldo Final do ano selecionado.",
+      "O cálculo considera a soma dos saldos iniciais das contas bancárias ativas cadastradas para 01/01 do ano filtrado.",
+      "Para 2026, o cálculo usa os saldos iniciais cadastrados em fin_bancos_contas com data_saldo_inicial em 2026.",
+      "Saldo Final = saldos iniciais dos bancos + entradas do Movimento Bancário - saídas do Movimento Bancário.",
+      "Quando houver filtro por empresa, banco ou conta bancária, o saldo inicial considerado respeita o mesmo recorte financeiro.",
+      "Atualizada versão técnica do front-end e backend para 0.3.17."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.17"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Bancos e Contas",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };
