@@ -1303,6 +1303,52 @@ const SYSTEM_RELEASES = [
     },
   },
 
+  {
+    version: "0.3.15",
+    title: "Financeiro — Correção dos status do Movimento Bancário",
+    description:
+      "Corrige a lista de status do Movimento Bancário para usar somente Pago e Realizado, removendo Pendente e o Pago duplicado no filtro.",
+    frontend_version: "0.3.15",
+    backend_version: "0.3.15",
+    released_at: "2026-06-01T00:15:00.000Z",
+    changes: [
+      "Filtro de status do Movimento Bancário agora exibe somente Todos status, Pago e Realizado.",
+      "Removidas as opções Pendente e Recebido do filtro do Movimento Bancário.",
+      "Corrigido o rótulo do status Realizado, que estava aparecendo como Pago e gerando duplicidade visual.",
+      "Backend do Movimento Bancário passa a retornar Pago para movimentos vinculados à baixa de Contas a Pagar e Realizado para movimentos bancários diretos/importados.",
+      "Exportação Excel do Movimento Bancário passa a seguir a mesma regra de status Pago/Realizado.",
+      "Atualizada versão técnica do front-end e backend para 0.3.15."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.15"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Exportação Excel XML"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Contas a Pagar",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };
