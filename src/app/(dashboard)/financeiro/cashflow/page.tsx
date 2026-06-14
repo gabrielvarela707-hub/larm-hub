@@ -129,11 +129,9 @@ export default function CashFlowPage() {
   const fmtBRL = (v: number) => {
     if (!v) return '–'
     const abs = Math.abs(Number(v))
-    const s = abs >= 1_000_000
-      ? (abs / 1_000_000).toFixed(2) + 'M'
-      : abs >= 1_000
-      ? (abs / 1_000).toFixed(0) + 'K'
-      : abs.toFixed(0)
+    const s = abs >= 1_000
+      ? `${(abs / 1_000).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}K`
+      : abs.toLocaleString('pt-BR', { maximumFractionDigits: 0 })
     return (Number(v) < 0 ? '-' : '') + 'R$ ' + s
   }
 
