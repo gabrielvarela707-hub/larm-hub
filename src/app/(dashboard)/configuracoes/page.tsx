@@ -8,7 +8,7 @@ import {
   AlertCircle, X, Link2, Zap, ExternalLink, CheckCircle,
   UserPlus, Copy, RefreshCw, Send, ChevronDown, Loader2,
   Layers, Plus, Pencil, Trash2, Tags, Activity, SlidersHorizontal,
-  Info, Server, Database, Code2, GitBranch, CalendarDays,
+  Info, Server, Database, Code2, GitBranch, CalendarDays, TrendingUp,
 } from 'lucide-react'
 import { apiClient, useAuthStore } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
@@ -38,6 +38,16 @@ interface AppUser {
   profiles?: { id: string; name: string; color?: string }[]
   profile_ids?: string[]
   allowed_hubs?: PortalId[]
+}
+
+type EconomicIndexRecord = {
+  id: number
+  referencia: string
+  igpm: number
+  ipca: number
+  atualizado_por?: string | null
+  created_at: string
+  updated_at: string
 }
 
 type Profile = {
@@ -199,6 +209,7 @@ const TABS = [
   { id: 'identidade',   label: 'Identidade visual', icon: Palette },
   { id: 'dominio',      label: 'Dominio',            icon: Globe },
   { id: 'credenciais',  label: 'Credenciais',        icon: Key },
+  { id: 'indices',      label: 'Atualização IGPM/IPCA', icon: TrendingUp },
   { id: 'usuarios',     label: 'Usuarios',           icon: Users },
   { id: 'perfis',       label: 'Perfis',             icon: Layers },
   { id: 'permissoes',   label: 'Permissoes',         icon: Shield },
@@ -250,6 +261,26 @@ function localCanInviteHierarchy(inviterRole?: string, targetRole?: string) {
 
 function formatDateTimeBR(value: string) {
   try { return new Date(value).toLocaleString('pt-BR') } catch { return value }
+}
+
+function formatReferenceMonth(value: string) {
+  const [year, month] = String(value || '').split('-').map(Number)
+  if (!year || !month) return value
+  const formatted = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' })
+    .format(new Date(year, month - 1, 1))
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1)
+}
+
+function formatIndexPercent(value: number) {
+  return `${Number(value || 0).toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  })}%`
+}
+
+function currentReferenceMonth() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 }
 
 function Section({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
@@ -475,6 +506,16 @@ export default function ConfiguracoesPage() {
 
   const [systemAbout, setSystemAbout] = useState<SystemAbout | null>(null)
   const [systemLoading, setSystemLoading] = useState(false)
+
+  // Índices econômicos mensais
+  const [economicIndices, setEconomicIndices] = useState<EconomicIndexRecord[]>([])
+  const [indicesLoading, setIndicesLoading] = useState(false)
+  const [indicesSaving, setIndicesSaving] = useState(false)
+  const [indexReference, setIndexReference] = useState(currentReferenceMonth())
+  const [igpmValue, setIgpmValue] = useState('')
+  const [ipcaValue, setIpcaValue] = useState('')
+  const [editingIndexId, setEditingIndexId] = useState<number | null>(null)
+  const [indicesStatus, setIndicesStatus] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
 
 
   type UserActionMode = 'menu' | 'perfil' | 'senha' | 'convite' | 'excluir'
@@ -829,6 +870,63 @@ export default function ConfiguracoesPage() {
     }
   }
 
+
+  async function loadEconomicIndices() {
+    setIndicesLoading(true)
+    setIndicesStatus(null)
+    try {
+      const r = await apiClient.get<{ ok: boolean; data: EconomicIndexRecord[] }>('/financeiro/indices-economicos')
+      if (r.data.ok) setEconomicIndices(r.data.data || [])
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } }).response?.data?.message
+        || 'Erro ao carregar o histórico de IGP-M e IPCA'
+      setIndicesStatus({ type: 'error', text: message })
+    } finally {
+      setIndicesLoading(false)
+    }
+  }
+
+  function resetEconomicIndexForm() {
+    setEditingIndexId(null)
+    setIndexReference(currentReferenceMonth())
+    setIgpmValue('')
+    setIpcaValue('')
+  }
+
+  function editEconomicIndex(item: EconomicIndexRecord) {
+    setEditingIndexId(item.id)
+    setIndexReference(item.referencia)
+    setIgpmValue(String(item.igpm).replace('.', ','))
+    setIpcaValue(String(item.ipca).replace('.', ','))
+    setIndicesStatus(null)
+  }
+
+  async function saveEconomicIndices() {
+    if (!indexReference || !igpmValue.trim() || !ipcaValue.trim()) {
+      setIndicesStatus({ type: 'error', text: 'Informe o mês de referência, o IGP-M e o IPCA.' })
+      return
+    }
+
+    setIndicesSaving(true)
+    setIndicesStatus(null)
+    try {
+      const r = await apiClient.post<{ ok: boolean; message?: string }>('/financeiro/indices-economicos', {
+        referencia: indexReference,
+        igpm: igpmValue,
+        ipca: ipcaValue,
+      })
+      await loadEconomicIndices()
+      resetEconomicIndexForm()
+      setIndicesStatus({ type: 'ok', text: r.data.message || 'Índices atualizados com sucesso.' })
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } }).response?.data?.message
+        || 'Erro ao salvar os índices econômicos'
+      setIndicesStatus({ type: 'error', text: message })
+    } finally {
+      setIndicesSaving(false)
+    }
+  }
+
   async function resendInvite(invite: Invite) {
     setResendingId(invite.id)
     try {
@@ -986,6 +1084,7 @@ export default function ConfiguracoesPage() {
   useEffect(() => { loadUsers(); loadProfiles(); loadInvitePermissions() }, [])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'logs') { loadAuditSettings(); loadAuditLogs() } }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'sobre') loadSystemAbout() }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === 'indices') loadEconomicIndices() }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'convites_perm') loadInvitePermissions() }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
 
   function save() {
@@ -1034,6 +1133,7 @@ export default function ConfiguracoesPage() {
 
   const currentRole = currentUser?.role || 'viewer'
   const isAdminUser = currentRole === 'admin' || currentRole === 'super_admin'
+  const canEditEconomicIndices = ['super_admin', 'admin', 'manager', 'controller', 'financial'].includes(currentRole)
   const allowedRoleOptions = ROLE_OPTIONS.filter(r => isAdminUser || allowedInviteRoles.includes(r.id))
   const editableRoleOptions = ROLE_OPTIONS.filter(r => localCanManageRole(currentRole, r.id))
 
@@ -1070,14 +1170,16 @@ export default function ConfiguracoesPage() {
           <h1 className="text-xl font-semibold text-slate-900">Configuracoes</h1>
           <p className="text-sm text-slate-500 mt-0.5">White-label, credenciais, usuarios e permissoes</p>
         </div>
-        <button onClick={save} disabled={configSaving}
-          className={cn('flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-            saved ? 'bg-emerald-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white',
-            configSaving && 'opacity-60 cursor-not-allowed'
-          )}>
-          {configSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-          {configSaving ? 'Salvando...' : saved ? 'Salvo!' : 'Salvar'}
-        </button>
+        {tab !== 'indices' && (
+          <button onClick={save} disabled={configSaving}
+            className={cn('flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+              saved ? 'bg-emerald-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white',
+              configSaving && 'opacity-60 cursor-not-allowed'
+            )}>
+            {configSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : saved ? <Check className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+            {configSaving ? 'Salvando...' : saved ? 'Salvo!' : 'Salvar'}
+          </button>
+        )}
       </div>
 
       <div className="flex gap-5">
@@ -1208,6 +1310,153 @@ export default function ConfiguracoesPage() {
                     <Input value={sidebarColor} onChange={e => setSidebar(e.target.value)} className="w-32 font-mono text-xs" />
                   </div>
                 </Field>
+              </Section>
+            </>
+          )}
+
+          {/* ── Índices econômicos ── */}
+          {tab === 'indices' && (
+            <>
+              <Section
+                title="Atualização de IGP-M e IPCA"
+                sub="Cadastre a variação mensal dos índices para uso futuro nos cálculos de juros e correção de boletos."
+              >
+                <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-xs text-blue-800">
+                  Informe os percentuais do mês. Valores negativos são aceitos. Ao salvar novamente o mesmo mês, o registro existente será atualizado sem duplicar o histórico.
+                </div>
+
+                <Field label="Mês de referência" sub="Mês ao qual os índices pertencem">
+                  <Input
+                    type="month"
+                    value={indexReference}
+                    onChange={e => setIndexReference(e.target.value)}
+                    disabled={!canEditEconomicIndices || indicesSaving}
+                    className="max-w-xs"
+                  />
+                </Field>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">IGP-M (%)</label>
+                    <Input
+                      inputMode="decimal"
+                      value={igpmValue}
+                      onChange={e => setIgpmValue(e.target.value)}
+                      placeholder="Ex.: 0,52"
+                      disabled={!canEditEconomicIndices || indicesSaving}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">IPCA (%)</label>
+                    <Input
+                      inputMode="decimal"
+                      value={ipcaValue}
+                      onChange={e => setIpcaValue(e.target.value)}
+                      placeholder="Ex.: 0,46"
+                      disabled={!canEditEconomicIndices || indicesSaving}
+                    />
+                  </div>
+                </div>
+
+                {indicesStatus && (
+                  <div className={cn(
+                    'flex items-center gap-2 rounded-lg px-3 py-2 text-sm',
+                    indicesStatus.type === 'ok'
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'bg-red-50 text-red-700'
+                  )}>
+                    {indicesStatus.type === 'ok'
+                      ? <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                      : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+                    {indicesStatus.text}
+                  </div>
+                )}
+
+                {!canEditEconomicIndices && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                    Seu perfil possui acesso somente para consulta do histórico.
+                  </p>
+                )}
+
+                {canEditEconomicIndices && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={saveEconomicIndices}
+                      disabled={indicesSaving}
+                      className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+                    >
+                      {indicesSaving
+                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                        : <Save className="w-4 h-4" />}
+                      {indicesSaving ? 'Salvando...' : editingIndexId ? 'Atualizar índices' : 'Salvar índices'}
+                    </button>
+                    {editingIndexId && (
+                      <button
+                        type="button"
+                        onClick={() => { resetEconomicIndexForm(); setIndicesStatus(null) }}
+                        disabled={indicesSaving}
+                        className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                      >
+                        Cancelar edição
+                      </button>
+                    )}
+                  </div>
+                )}
+              </Section>
+
+              <Section
+                title="Histórico mensal"
+                sub={`${economicIndices.length} ${economicIndices.length === 1 ? 'mês cadastrado' : 'meses cadastrados'}`}
+              >
+                {indicesLoading ? (
+                  <div className="flex items-center justify-center py-10 text-sm text-slate-500">
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" /> Carregando histórico...
+                  </div>
+                ) : economicIndices.length === 0 ? (
+                  <div className="py-10 text-center">
+                    <TrendingUp className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                    <p className="text-sm font-medium text-slate-600">Nenhum índice cadastrado</p>
+                    <p className="text-xs text-slate-400 mt-1">Cadastre o primeiro mês no formulário acima.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-lg border border-slate-100">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                          <th className="px-4 py-3 font-semibold">Mês de referência</th>
+                          <th className="px-4 py-3 font-semibold text-right">IGP-M</th>
+                          <th className="px-4 py-3 font-semibold text-right">IPCA</th>
+                          <th className="px-4 py-3 font-semibold">Atualizado por</th>
+                          <th className="px-4 py-3 font-semibold">Última atualização</th>
+                          {canEditEconomicIndices && <th className="px-4 py-3 font-semibold text-right">Ação</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {economicIndices.map(item => (
+                          <tr key={item.id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                            <td className="px-4 py-3 font-medium text-slate-800">{formatReferenceMonth(item.referencia)}</td>
+                            <td className="px-4 py-3 text-right font-mono font-semibold text-slate-700">{formatIndexPercent(item.igpm)}</td>
+                            <td className="px-4 py-3 text-right font-mono font-semibold text-slate-700">{formatIndexPercent(item.ipca)}</td>
+                            <td className="px-4 py-3 text-slate-600">{item.atualizado_por || '—'}</td>
+                            <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{formatDateTimeBR(item.updated_at)}</td>
+                            {canEditEconomicIndices && (
+                              <td className="px-4 py-3 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => editEconomicIndex(item)}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-white hover:text-blue-700"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" /> Editar
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </Section>
             </>
           )}
