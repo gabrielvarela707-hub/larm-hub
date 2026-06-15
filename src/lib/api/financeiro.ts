@@ -328,6 +328,19 @@ export const getCashflowEmpresas = () =>
     '/financeiro/cashflow/empresas'
   ).then(data)
 
+export interface UpdateCashflowValorPayload {
+  linha_id: number
+  empresa: Empresa
+  ano: number
+  mes: number
+  valor: number
+}
+
+export const updateCashflowValor = (body: UpdateCashflowValorPayload) =>
+  apiClient.patch<{ ok: boolean; data: Record<string, unknown> }>(
+    '/financeiro/cashflow/valor', body
+  ).then(data)
+
 
 // ─── Orçamento Financeiro ────────────────────────────────────────────────────
 

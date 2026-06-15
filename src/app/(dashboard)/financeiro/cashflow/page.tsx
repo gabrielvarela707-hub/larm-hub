@@ -4,13 +4,14 @@
  * Relatório de Cash Flow — visão consolidada, por empresa, mensal e diária.
  */
 import { useEffect, useRef, useState } from 'react'
-import { Download, Loader2, Printer, X } from 'lucide-react'
+import { Check, Download, Loader2, Pencil, Printer, X } from 'lucide-react'
 import {
   getCashflow,
   getCashflowResumo,
   getCashflowEmpresas,
   getCashflowLancamentos,
   getMovimento,
+  updateCashflowValor,
   type CashflowLancamentoItem,
   type CashflowLancamentosParams,
   type Empresa,
@@ -71,6 +72,38 @@ function tipoMovimentoDaLinha(linha: any, valor: number): 'entrada' | 'saida' | 
   return undefined
 }
 
+function formatValorKParaEdicao(valor: number) {
+  return (Number(valor || 0) / 1_000).toLocaleString('pt-BR', {
+    useGrouping: false,
+    maximumFractionDigits: 3,
+  })
+}
+
+function parseValorK(value: string) {
+  let text = String(value || '').trim().replace(/R\$/gi, '').replace(/k/gi, '').replace(/\s/g, '')
+  if (!text) return null
+
+  const hasComma = text.includes(',')
+  const hasDot = text.includes('.')
+
+  if (hasComma && hasDot) {
+    const lastComma = text.lastIndexOf(',')
+    const lastDot = text.lastIndexOf('.')
+    if (lastComma > lastDot) text = text.replace(/\./g, '').replace(',', '.')
+    else text = text.replace(/,/g, '')
+  } else if (hasComma) {
+    text = text.replace(/\./g, '').replace(',', '.')
+  } else if (hasDot) {
+    const parts = text.split('.')
+    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+      text = parts.join('')
+    }
+  }
+
+  const parsed = Number(text)
+  return Number.isFinite(parsed) ? parsed * 1_000 : null
+}
+
 export default function CashFlowPage() {
   const [empresa, setEmpresa] = useState<Empresa>('CONSOLIDADO')
   const [ano, setAno] = useState(2026)
@@ -83,6 +116,10 @@ export default function CashFlowPage() {
   const [loading, setLoading] = useState(false)
   const [detalhe, setDetalhe] = useState<DetalheCashflow | null>(null)
   const [detalheLoading, setDetalheLoading] = useState(false)
+  const [edicaoKey, setEdicaoKey] = useState<string | null>(null)
+  const [edicaoValor, setEdicaoValor] = useState('')
+  const [edicaoSalvando, setEdicaoSalvando] = useState(false)
+  const [edicaoErro, setEdicaoErro] = useState('')
   const topScrollRef = useRef<HTMLDivElement | null>(null)
   const tableScrollRef = useRef<HTMLDivElement | null>(null)
 
@@ -109,8 +146,8 @@ export default function CashFlowPage() {
       })
   }, [])
 
-  const load = async () => {
-    setLoading(true)
+  const load = async (showLoading = true) => {
+    if (showLoading) setLoading(true)
     try {
       const params = visao === 'diaria' ? { visao, mes } : { visao }
       const [cf, res] = await Promise.all([
@@ -120,7 +157,7 @@ export default function CashFlowPage() {
       setData(cf)
       setResumo(res)
     } finally {
-      setLoading(false)
+      if (showLoading) setLoading(false)
     }
   }
 
@@ -145,6 +182,47 @@ export default function CashFlowPage() {
   const getValorColuna = (linha: any, coluna: any) => {
     const key = getColKey(coluna)
     return linha?.valores?.[key] ?? linha?.valores?.[Number(key)] ?? 0
+  }
+
+  const iniciarEdicaoSaldo = (linha: any, coluna: any, valor: number) => {
+    const key = `${linha.id}-${getColKey(coluna)}`
+    setEdicaoKey(key)
+    setEdicaoValor(formatValorKParaEdicao(valor))
+    setEdicaoErro('')
+  }
+
+  const cancelarEdicaoSaldo = () => {
+    if (edicaoSalvando) return
+    setEdicaoKey(null)
+    setEdicaoValor('')
+    setEdicaoErro('')
+  }
+
+  const salvarEdicaoSaldo = async (linha: any, coluna: any) => {
+    const valor = parseValorK(edicaoValor)
+    if (valor === null) {
+      setEdicaoErro('Informe um valor válido em K.')
+      return
+    }
+
+    setEdicaoSalvando(true)
+    setEdicaoErro('')
+    try {
+      await updateCashflowValor({
+        linha_id: Number(linha.id),
+        empresa,
+        ano,
+        mes: Number(coluna.mes),
+        valor,
+      })
+      setEdicaoKey(null)
+      setEdicaoValor('')
+      await load(false)
+    } catch (error: any) {
+      setEdicaoErro(error?.response?.data?.message || 'Não foi possível salvar o saldo.')
+    } finally {
+      setEdicaoSalvando(false)
+    }
   }
 
   const abrirDetalhes = async (linha: any, coluna: any | null, valor: number) => {
@@ -247,7 +325,8 @@ export default function CashFlowPage() {
     : `Cash Flow — ${empresa} ${ano}`
 
   const colunasCount = Number(data?.colunas?.length || 0)
-  const tableMinWidth = Math.max(760, 48 + 270 + (colunasCount * 86) + 96)
+  const monthColumnWidth = visao === 'mensal' ? 112 : 86
+  const tableMinWidth = Math.max(760, 48 + 270 + (colunasCount * monthColumnWidth) + 96)
 
   const stickyBase = 'sticky z-20 border-r border-zinc-100 dark:border-zinc-700'
   const stickyHeader = 'sticky z-30 bg-zinc-50 dark:bg-zinc-800/95 border-r border-zinc-100 dark:border-zinc-700'
@@ -327,11 +406,21 @@ export default function CashFlowPage() {
       {/* Tabela Cash Flow */}
       <div className="bg-white dark:bg-zinc-800/60 rounded-xl border border-zinc-200 dark:border-zinc-700 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 dark:border-zinc-700">
-          <h3 className="text-sm font-semibold">{tituloTabela}</h3>
+          <div>
+            <h3 className="text-sm font-semibold">{tituloTabela}</h3>
+            {visao === 'mensal' && (
+              <p className="text-[11px] text-zinc-400 mt-0.5">Nos saldos finais, use o lápis para editar o valor mensal diretamente em K.</p>
+            )}
+          </div>
           <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">
             {visao === 'diaria' ? 'Diário' : 'Orçado'}
           </span>
         </div>
+        {edicaoErro && (
+          <div className="px-4 py-2 text-xs text-red-600 bg-red-50 border-b border-red-100">
+            {edicaoErro}
+          </div>
+        )}
         {!loading && data?.linhas?.length ? (
           <div
             ref={topScrollRef}
@@ -361,7 +450,7 @@ export default function CashFlowPage() {
                   <th className={`${stickyHeader} left-0 px-3 py-2.5 text-left w-12 min-w-[48px]`}>#</th>
                   <th className={`${stickyHeader} left-[48px] px-3 py-2.5 text-left w-[270px] min-w-[270px] shadow-[6px_0_10px_-10px_rgba(15,23,42,0.7)]`}>Descrição</th>
                   {data.colunas.map((c: any) => (
-                    <th key={getColKey(c)} className="px-2 py-2.5 text-right min-w-[86px]">{c.label}</th>
+                    <th key={getColKey(c)} className="px-2 py-2.5 text-right" style={{ minWidth: monthColumnWidth }}>{c.label}</th>
                   ))}
                   <th className="px-3 py-2.5 text-right font-semibold min-w-[96px]">Total</th>
                 </tr>
@@ -379,17 +468,74 @@ export default function CashFlowPage() {
                       {data.colunas.map((c: any) => {
                         const v = Number(getValorColuna(linha, c) || 0)
                         const colorCls = v === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(v) ? 'text-red-500' : 'text-green-600'
+                        const cellKey = `${linha.id}-${getColKey(c)}`
+                        const editavel = visao === 'mensal' && Boolean(linha.editavel_saldo)
+                        const editando = editavel && edicaoKey === cellKey
                         return (
                           <td key={getColKey(c)} className={`px-2 py-1.5 text-right font-mono ${colorCls}`}>
-                            {v === 0 ? '–' : (
-                              <button
-                                type="button"
-                                onClick={() => abrirDetalhes(linha, c, v)}
-                                title="Ver lançamentos que compõem este valor"
-                                className="w-full text-right hover:underline hover:decoration-dotted underline-offset-2"
-                              >
-                                {fmtBRL(v)}
-                              </button>
+                            {editando ? (
+                              <div className="flex items-center justify-end gap-1 min-w-[96px]">
+                                <div className="relative">
+                                  <input
+                                    autoFocus
+                                    inputMode="decimal"
+                                    value={edicaoValor}
+                                    onChange={e => setEdicaoValor(e.target.value)}
+                                    onKeyDown={e => {
+                                      if (e.key === 'Enter') salvarEdicaoSaldo(linha, c)
+                                      if (e.key === 'Escape') cancelarEdicaoSaldo()
+                                    }}
+                                    disabled={edicaoSalvando}
+                                    aria-label={`Editar ${linha.descricao} em ${c.label}, valor em K`}
+                                    className="w-[68px] rounded border border-amber-400 bg-white px-1.5 py-1 pr-4 text-right text-[11px] text-zinc-800 outline-none focus:ring-2 focus:ring-amber-200 disabled:opacity-60"
+                                  />
+                                  <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400">K</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => salvarEdicaoSaldo(linha, c)}
+                                  disabled={edicaoSalvando}
+                                  title="Salvar saldo"
+                                  className="rounded p-1 text-green-600 hover:bg-green-50 disabled:opacity-50"
+                                >
+                                  {edicaoSalvando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={cancelarEdicaoSaldo}
+                                  disabled={edicaoSalvando}
+                                  title="Cancelar edição"
+                                  className="rounded p-1 text-zinc-400 hover:bg-zinc-100 disabled:opacity-50"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="group flex items-center justify-end gap-1 min-w-[84px]">
+                                {v === 0 ? (
+                                  <span className="flex-1 text-right">–</span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => abrirDetalhes(linha, c, v)}
+                                    title="Ver lançamentos que compõem este valor"
+                                    className="flex-1 text-right hover:underline hover:decoration-dotted underline-offset-2"
+                                  >
+                                    {fmtBRL(v)}
+                                  </button>
+                                )}
+                                {editavel && (
+                                  <button
+                                    type="button"
+                                    onClick={() => iniciarEdicaoSaldo(linha, c, v)}
+                                    title="Editar saldo deste mês"
+                                    aria-label={`Editar ${linha.descricao} em ${c.label}`}
+                                    className="shrink-0 rounded p-1 text-zinc-300 opacity-60 transition hover:bg-amber-50 hover:text-amber-600 group-hover:opacity-100"
+                                  >
+                                    <Pencil className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
                             )}
                           </td>
                         )
