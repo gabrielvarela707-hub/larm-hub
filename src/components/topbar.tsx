@@ -24,6 +24,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/landing-pages': 'Landing Pages',
   '/ia': 'Chat IA',
   '/controladoria': 'Controladoria',
+  '/cadastros/atualizacao-indices': 'Atualização de Índices',
   '/configuracoes': 'Configuracoes',
 }
 

@@ -75,6 +75,7 @@ const NAV: NavItem[] = [
     children: [
       { label: 'Tipo de Documento', href: '/cadastros/tipo-documento', moduleIds: ['cadastros_tipo_documento'] },
       { label: 'Plano de Contas', href: '/cadastros/plano-contas', moduleIds: ['cadastros_plano_contas'] },
+      { label: 'Atualização de Índices', href: '/cadastros/atualizacao-indices', moduleIds: ['cadastros_indices_economicos'] },
     ],
   },
   {

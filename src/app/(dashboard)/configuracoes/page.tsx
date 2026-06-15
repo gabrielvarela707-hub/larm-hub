@@ -209,7 +209,6 @@ const TABS = [
   { id: 'identidade',   label: 'Identidade visual', icon: Palette },
   { id: 'dominio',      label: 'Dominio',            icon: Globe },
   { id: 'credenciais',  label: 'Credenciais',        icon: Key },
-  { id: 'indices',      label: 'Atualização IGPM/IPCA', icon: TrendingUp },
   { id: 'usuarios',     label: 'Usuarios',           icon: Users },
   { id: 'perfis',       label: 'Perfis',             icon: Layers },
   { id: 'permissoes',   label: 'Permissoes',         icon: Shield },
