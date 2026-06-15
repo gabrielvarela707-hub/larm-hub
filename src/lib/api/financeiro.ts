@@ -79,6 +79,14 @@ export interface Parcela {
   multa?: number
   juros?: number
   desconto?: number
+  retencao_ipi?: number
+  retencao_iss?: number
+  retencao_icms?: number
+  retencao_pis?: number
+  retencao_cofins?: number
+  retencao_csll?: number
+  retencao_irrf?: number
+  retencao_inss?: number
   banco_conta_id?: number
   status: 'P' | 'Q' | 'V' | 'C'
   data_pagamento?: string

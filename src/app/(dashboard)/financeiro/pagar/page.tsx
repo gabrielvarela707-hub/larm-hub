@@ -11,7 +11,27 @@ interface Fornecedor { id: number; razao_social: string; empresa: string; cnpj_c
 interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null; digito?: string | null }
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
 interface TipoDocumento { id: number; nome: string }
-interface Parcela     { id?: number; numero: number; valor: number | string; vencimento: string; status: string; acrescimo?: number | string; multa?: number | string; juros?: number | string; desconto?: number | string; valor_final?: number | string }
+type RetencaoKey = 'retencao_ipi' | 'retencao_iss' | 'retencao_icms' | 'retencao_pis' | 'retencao_cofins' | 'retencao_csll' | 'retencao_irrf' | 'retencao_inss'
+interface Parcela     {
+  id?: number
+  numero: number
+  valor: number | string
+  vencimento: string
+  status: string
+  acrescimo?: number | string
+  multa?: number | string
+  juros?: number | string
+  desconto?: number | string
+  retencao_ipi?: number | string
+  retencao_iss?: number | string
+  retencao_icms?: number | string
+  retencao_pis?: number | string
+  retencao_cofins?: number | string
+  retencao_csll?: number | string
+  retencao_irrf?: number | string
+  retencao_inss?: number | string
+  valor_final?: number | string
+}
 interface NovoFornecedorForm {
   razao_social: string
   nome_fantasia: string
@@ -58,6 +78,9 @@ interface Lancamento {
   parcela_vencimento?: string | null; parcela_status?: string | null; parcela_dt_pagamento?: string | null
   parcela_motivo_baixa?: string | null; parcela_acrescimo?: number | null; parcela_desconto?: number | null
   parcela_juros?: number | null; parcela_multa?: number | null; parcela_valor_final?: number | null
+  parcela_retencao_ipi?: number | null; parcela_retencao_iss?: number | null; parcela_retencao_icms?: number | null
+  parcela_retencao_pis?: number | null; parcela_retencao_cofins?: number | null; parcela_retencao_csll?: number | null
+  parcela_retencao_irrf?: number | null; parcela_retencao_inss?: number | null
   parcela_baixa_acrescimo?: number | null; parcela_baixa_desconto?: number | null
   parcela_baixa_juros?: number | null; parcela_baixa_multa?: number | null; parcela_baixa_valor_final?: number | null
   parcela_forma_pagamento?: string | null
@@ -83,6 +106,18 @@ const STATUS_COLORS: Record<string, string> = {
   vencido:  'bg-red-100 text-red-700',
   cancelado:'bg-slate-100 text-slate-500',
 }
+
+const RETENCOES: Array<{ key: RetencaoKey; label: string }> = [
+  { key: 'retencao_ipi', label: 'IPI' },
+  { key: 'retencao_iss', label: 'ISS' },
+  { key: 'retencao_icms', label: 'ICMS' },
+  { key: 'retencao_pis', label: 'PIS' },
+  { key: 'retencao_cofins', label: 'COFINS' },
+  { key: 'retencao_csll', label: 'CSL / CSLL' },
+  { key: 'retencao_irrf', label: 'IRRF' },
+  { key: 'retencao_inss', label: 'INSS' },
+]
+const RETENCAO_KEYS = RETENCOES.map(item => item.key)
 
 const R$ = (v: number | null | undefined) =>
   (v ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -154,8 +189,18 @@ const decimalInputValue = (v: string | number | null | undefined) => {
   if (n === 0) return ''
   return n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
-const calculaValorFinalParcela = (p: Pick<Parcela, 'valor' | 'acrescimo' | 'multa' | 'juros' | 'desconto'>) =>
-  Math.max(0, toFiniteNumber(p.valor) + toFiniteNumber(p.acrescimo) + toFiniteNumber(p.multa) + toFiniteNumber(p.juros) - toFiniteNumber(p.desconto))
+const calculaTotalRetencoes = (p: Partial<Parcela>) =>
+  RETENCAO_KEYS.reduce((total, key) => total + toFiniteNumber(p[key]), 0)
+const calculaValorFinalParcela = (p: Partial<Parcela>) =>
+  Math.max(
+    0,
+    toFiniteNumber(p.valor)
+      + toFiniteNumber(p.acrescimo)
+      + toFiniteNumber(p.multa)
+      + toFiniteNumber(p.juros)
+      - toFiniteNumber(p.desconto)
+      - calculaTotalRetencoes(p),
+  )
 const normalizaParcelaPayload = (p: Parcela, idx: number): Parcela => {
   const next: Parcela = {
     id: p.id,
@@ -167,12 +212,29 @@ const normalizaParcelaPayload = (p: Parcela, idx: number): Parcela => {
     multa: toFiniteNumber(p.multa),
     juros: toFiniteNumber(p.juros),
     desconto: toFiniteNumber(p.desconto),
+    retencao_ipi: toFiniteNumber(p.retencao_ipi),
+    retencao_iss: toFiniteNumber(p.retencao_iss),
+    retencao_icms: toFiniteNumber(p.retencao_icms),
+    retencao_pis: toFiniteNumber(p.retencao_pis),
+    retencao_cofins: toFiniteNumber(p.retencao_cofins),
+    retencao_csll: toFiniteNumber(p.retencao_csll),
+    retencao_irrf: toFiniteNumber(p.retencao_irrf),
+    retencao_inss: toFiniteNumber(p.retencao_inss),
   }
   next.valor_final = calculaValorFinalParcela(next)
   return next
 }
 const sortText = (v: unknown) => String(v ?? '').toLocaleLowerCase('pt-BR')
 const sortDate = (v: string | null | undefined) => v ? (Date.parse(v) || 0) : 0
+const calculaTotalRetencoesLancamento = (l: Lancamento) =>
+  Number(l.parcela_retencao_ipi || 0)
+  + Number(l.parcela_retencao_iss || 0)
+  + Number(l.parcela_retencao_icms || 0)
+  + Number(l.parcela_retencao_pis || 0)
+  + Number(l.parcela_retencao_cofins || 0)
+  + Number(l.parcela_retencao_csll || 0)
+  + Number(l.parcela_retencao_irrf || 0)
+  + Number(l.parcela_retencao_inss || 0)
 const getSortValue = (l: Lancamento, key: SortKey): string | number => {
   switch (key) {
     case 'empresa': return sortText(l.empresa)
@@ -183,7 +245,7 @@ const getSortValue = (l: Lancamento, key: SortKey): string | number => {
     case 'valor': {
       const valor = Number(l.parcela_valor ?? l.valor_total ?? 0)
       const final = l.parcela_valor_final === null || l.parcela_valor_final === undefined
-        ? valor + Number(l.parcela_acrescimo || 0) + Number(l.parcela_multa || 0) + Number(l.parcela_juros || 0) - Number(l.parcela_desconto || 0)
+        ? valor + Number(l.parcela_acrescimo || 0) + Number(l.parcela_multa || 0) + Number(l.parcela_juros || 0) - Number(l.parcela_desconto || 0) - calculaTotalRetencoesLancamento(l)
         : Number(l.parcela_valor_final)
       return Number.isFinite(final) ? final : valor
     }
@@ -476,6 +538,7 @@ export default function PagarPage() {
   const [aiMessage, setAiMessage] = useState('')
   const aiParcelasRef = useRef<Parcela[] | null>(null)
   const [parcelas, setParcelas] = useState<Parcela[]>([])
+  const [retencoesAbertas, setRetencoesAbertas] = useState<Record<number, boolean>>({})
   const [errors,   setErrors]   = useState<Record<string, string>>({})
 
   const load = useCallback(async () => {
@@ -557,6 +620,14 @@ export default function PagarPage() {
         multa: 0,
         juros: 0,
         desconto: 0,
+        retencao_ipi: 0,
+        retencao_iss: 0,
+        retencao_icms: 0,
+        retencao_pis: 0,
+        retencao_cofins: 0,
+        retencao_csll: 0,
+        retencao_irrf: 0,
+        retencao_inss: 0,
         valor_final: valor,
       }
     })
@@ -574,6 +645,14 @@ export default function PagarPage() {
         multa: atual.multa ?? 0,
         juros: atual.juros ?? 0,
         desconto: atual.desconto ?? 0,
+        retencao_ipi: atual.retencao_ipi ?? 0,
+        retencao_iss: atual.retencao_iss ?? 0,
+        retencao_icms: atual.retencao_icms ?? 0,
+        retencao_pis: atual.retencao_pis ?? 0,
+        retencao_cofins: atual.retencao_cofins ?? 0,
+        retencao_csll: atual.retencao_csll ?? 0,
+        retencao_irrf: atual.retencao_irrf ?? 0,
+        retencao_inss: atual.retencao_inss ?? 0,
       }
       next.valor_final = calculaValorFinalParcela(next)
       return next
@@ -584,7 +663,7 @@ export default function PagarPage() {
     setParcelas(p => p.map((x, idx) => {
       if (idx !== i) return x
       const next = { ...x, [key]: val } as Parcela
-      if (['valor', 'acrescimo', 'multa', 'juros', 'desconto'].includes(String(key))) {
+      if (['valor', 'acrescimo', 'multa', 'juros', 'desconto', ...RETENCAO_KEYS].includes(String(key))) {
         next.valor_final = calculaValorFinalParcela(next)
       }
       return next
@@ -674,7 +753,7 @@ export default function PagarPage() {
     setFTipoDoc(''); setFNF(''); setFValor(''); setFNParc(1); setFCC(''); setFObs('')
     setFDocumentoNome(''); setFDocumentoMime(''); setFDocumentoBase64(''); setFDocumentoErro('')
     setAiMessage(''); setAiLoading(false); aiParcelasRef.current = null
-    setParcelas([]); setErrors({})
+    setParcelas([]); setRetencoesAbertas({}); setErrors({})
     setShowFornecedorModal(false); setFornecedorErrors({})
     setShowBaixaModal(false); setBaixaParcela(null); setBaixaErrors({})
     setFBancoCodigo(''); setEditingId(null)
@@ -833,7 +912,7 @@ export default function PagarPage() {
       setFCC(d.centro_custo || '')
       setFObs(d.obs || '')
       if (d.parcelas?.length) {
-        const loadedParcelas = d.parcelas.map((p: { id?: number; numero: number; valor: number | string; vencimento: string; status: string; acrescimo?: number | string; multa?: number | string; juros?: number | string; desconto?: number | string; valor_final?: number | string }, idx: number) =>
+        const loadedParcelas = d.parcelas.map((p: Parcela, idx: number) =>
           normalizaParcelaPayload({
             id: p.id,
             numero: p.numero,
@@ -844,6 +923,14 @@ export default function PagarPage() {
             multa: toFiniteNumber(p.multa),
             juros: toFiniteNumber(p.juros),
             desconto: toFiniteNumber(p.desconto),
+            retencao_ipi: toFiniteNumber(p.retencao_ipi),
+            retencao_iss: toFiniteNumber(p.retencao_iss),
+            retencao_icms: toFiniteNumber(p.retencao_icms),
+            retencao_pis: toFiniteNumber(p.retencao_pis),
+            retencao_cofins: toFiniteNumber(p.retencao_cofins),
+            retencao_csll: toFiniteNumber(p.retencao_csll),
+            retencao_irrf: toFiniteNumber(p.retencao_irrf),
+            retencao_inss: toFiniteNumber(p.retencao_inss),
             valor_final: toFiniteNumber(p.valor_final),
           }, idx)
         )
@@ -851,6 +938,9 @@ export default function PagarPage() {
         // carregados do banco com multa/juros/desconto zerados.
         aiParcelasRef.current = loadedParcelas
         setParcelas(loadedParcelas)
+        setRetencoesAbertas(Object.fromEntries(
+          loadedParcelas.map((p: Parcela, idx: number) => [idx, calculaTotalRetencoes(p) > 0]),
+        ))
       }
       setEditingId(l.id)
       setShowForm(true)
@@ -1017,6 +1107,7 @@ export default function PagarPage() {
       + Number(l.parcela_multa || 0)
       + Number(l.parcela_juros || 0)
       - Number(l.parcela_desconto || 0)
+      - calculaTotalRetencoesLancamento(l)
     const final = l.parcela_valor_final === null || l.parcela_valor_final === undefined
       ? calculado
       : Number(l.parcela_valor_final)
@@ -1030,6 +1121,7 @@ export default function PagarPage() {
       || Number(l.parcela_multa || 0) !== 0
       || Number(l.parcela_juros || 0) !== 0
       || Number(l.parcela_desconto || 0) !== 0
+      || calculaTotalRetencoesLancamento(l) !== 0
       || Math.abs(final - valor) > 0.009
   }
 
@@ -1263,6 +1355,9 @@ export default function PagarPage() {
                           <p>Base: {R$(valorParcela)}</p>
                           <p>Multa {R$(Number(l.parcela_multa || 0))} · Juros {R$(Number(l.parcela_juros || 0))}</p>
                           <p>Desc. {R$(Number(l.parcela_desconto || 0))} · Acrésc. {R$(Number(l.parcela_acrescimo || 0))}</p>
+                          {calculaTotalRetencoesLancamento(l) > 0 && (
+                            <p title="IPI, ISS, ICMS, PIS, COFINS, CSL/CSLL, IRRF e INSS">Imp. retidos {R$(calculaTotalRetencoesLancamento(l))}</p>
+                          )}
                         </div>
                       )}
                     </td>
@@ -1458,49 +1553,90 @@ export default function PagarPage() {
                 {parcelas.length > 0 && (
                   <div>
                     <p className="text-xs font-medium text-slate-600 mb-2">Parcelas e Vencimentos</p>
-                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
                       {parcelas.map((p, i) => (
-                        <div key={i} className="grid grid-cols-[60px_1fr_95px_85px_85px_85px_105px] items-end gap-2 bg-slate-50 rounded-lg px-3 py-2">
-                          <div>
-                            <label className="block text-[10px] text-slate-500 mb-1">Parcela</label>
-                            <div className="text-xs font-semibold text-slate-600">{p.numero || i + 1}/{parcelas.length}</div>
-                          </div>
-                          <div>
-                            <label className="block text-[10px] text-slate-500 mb-1">Vencimento</label>
-                            <input type="date" value={p.vencimento}
-                              onChange={e => updateParcela(i, 'vencimento', e.target.value)}
-                              className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] text-slate-500 mb-1">Valor</label>
-                            <input type="text" inputMode="decimal" value={decimalInputValue(p.valor)}
-                              onChange={e => updateParcela(i, 'valor', e.target.value)}
-                              className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] text-red-400 mb-1">Multa</label>
-                            <input type="text" inputMode="decimal" value={decimalInputValue(p.multa)} placeholder="0,00"
-                              onChange={e => updateParcela(i, 'multa', e.target.value)}
-                              className="text-xs border border-red-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-red-600" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] text-orange-400 mb-1">Juros</label>
-                            <input type="text" inputMode="decimal" value={decimalInputValue(p.juros)} placeholder="0,00"
-                              onChange={e => updateParcela(i, 'juros', e.target.value)}
-                              className="text-xs border border-orange-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-orange-600" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] text-green-500 mb-1">Desconto</label>
-                            <input type="text" inputMode="decimal" value={decimalInputValue(p.desconto)} placeholder="0,00"
-                              onChange={e => updateParcela(i, 'desconto', e.target.value)}
-                              className="text-xs border border-green-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-green-700" />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] text-slate-500 mb-1">Final</label>
-                            <div className="text-xs border border-slate-200 rounded px-2 py-1 bg-slate-100 w-full text-right tabular-nums font-semibold text-slate-700">
-                              {R$(calculaValorFinalParcela(p))}
+                        <div key={i} className="overflow-x-auto bg-slate-50 rounded-lg px-3 py-2">
+                          <div className="grid min-w-[820px] grid-cols-[60px_1fr_95px_80px_80px_80px_110px_105px] items-end gap-2">
+                            <div>
+                              <label className="block text-[10px] text-slate-500 mb-1">Parcela</label>
+                              <div className="text-xs font-semibold text-slate-600">{p.numero || i + 1}/{parcelas.length}</div>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-slate-500 mb-1">Vencimento</label>
+                              <input type="date" value={p.vencimento}
+                                onChange={e => updateParcela(i, 'vencimento', e.target.value)}
+                                className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-slate-500 mb-1">Valor</label>
+                              <input type="text" inputMode="decimal" value={decimalInputValue(p.valor)}
+                                onChange={e => updateParcela(i, 'valor', e.target.value)}
+                                className="text-xs border border-slate-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-red-400 mb-1">Multa</label>
+                              <input type="text" inputMode="decimal" value={decimalInputValue(p.multa)} placeholder="0,00"
+                                onChange={e => updateParcela(i, 'multa', e.target.value)}
+                                className="text-xs border border-red-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-red-600" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-orange-400 mb-1">Juros</label>
+                              <input type="text" inputMode="decimal" value={decimalInputValue(p.juros)} placeholder="0,00"
+                                onChange={e => updateParcela(i, 'juros', e.target.value)}
+                                className="text-xs border border-orange-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-orange-600" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-green-500 mb-1">Desconto</label>
+                              <input type="text" inputMode="decimal" value={decimalInputValue(p.desconto)} placeholder="0,00"
+                                onChange={e => updateParcela(i, 'desconto', e.target.value)}
+                                className="text-xs border border-green-200 rounded px-2 py-1 bg-white w-full text-right tabular-nums text-green-700" />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-violet-500 mb-1">Imp. retidos</label>
+                              <button
+                                type="button"
+                                aria-expanded={Boolean(retencoesAbertas[i])}
+                                onClick={() => setRetencoesAbertas(prev => ({ ...prev, [i]: !prev[i] }))}
+                                className="flex w-full items-center justify-between gap-1 rounded border border-violet-200 bg-white px-2 py-1 text-[10px] font-medium text-violet-700 hover:bg-violet-50"
+                              >
+                                <span>{calculaTotalRetencoes(p) > 0 ? R$(calculaTotalRetencoes(p)) : 'Adicionar'}</span>
+                                <ChevronsUpDown className="h-3 w-3 shrink-0" />
+                              </button>
+                            </div>
+                            <div>
+                              <label className="block text-[10px] text-slate-500 mb-1">Final</label>
+                              <div className="text-xs border border-slate-200 rounded px-2 py-1 bg-slate-100 w-full text-right tabular-nums font-semibold text-slate-700">
+                                {R$(calculaValorFinalParcela(p))}
+                              </div>
                             </div>
                           </div>
+
+                          {retencoesAbertas[i] && (
+                            <div className="mt-2 rounded-lg border border-violet-100 bg-white p-3">
+                              <div className="mb-2 flex items-center justify-between gap-3">
+                                <div>
+                                  <p className="text-[11px] font-semibold text-slate-700">Impostos retidos na fonte</p>
+                                  <p className="text-[10px] text-slate-400">Informe os valores retidos. O total será subtraído do valor final da parcela.</p>
+                                </div>
+                                <span className="text-xs font-semibold text-violet-700">Total: {R$(calculaTotalRetencoes(p))}</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                                {RETENCOES.map(imposto => (
+                                  <div key={imposto.key}>
+                                    <label className="mb-1 block text-[10px] font-medium text-slate-500">{imposto.label}</label>
+                                    <input
+                                      type="text"
+                                      inputMode="decimal"
+                                      value={decimalInputValue(p[imposto.key])}
+                                      placeholder="0,00"
+                                      onChange={e => updateParcela(i, imposto.key, e.target.value)}
+                                      className="w-full rounded border border-violet-100 bg-white px-2 py-1 text-right text-xs tabular-nums text-violet-700 focus:border-violet-300 focus:outline-none focus:ring-1 focus:ring-violet-100"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
