@@ -10,7 +10,7 @@
 
 ---
 
-## Visão Geral2
+## Visão Geral
 
 O LarmHub é uma plataforma SaaS multi-tenant construída para o Grupo LARM, com foco em loteamentos residenciais e gestão corporativa. Cada tenant (empreendimento ou empresa) possui identidade visual, usuários, permissões e dados totalmente isolados.
 
