@@ -11,6 +11,7 @@ interface Fornecedor { id: number; razao_social: string; empresa: string; cnpj_c
 interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null; digito?: string | null }
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
 interface TipoDocumento { id: number; nome: string }
+type DocumentoParcelaId = number | string | null
 type RetencaoKey = 'retencao_iss' | 'retencao_pis' | 'retencao_cofins' | 'retencao_csll' | 'retencao_irrf' | 'retencao_inss'
 interface Parcela     {
   id?: number
@@ -18,6 +19,9 @@ interface Parcela     {
   valor: number | string
   vencimento: string
   status: string
+  tipo_documento_id?: DocumentoParcelaId
+  tipo_documento_nome?: string | null
+  numero_documento?: string | null
   acrescimo?: number | string
   multa?: number | string
   juros?: number | string
@@ -73,6 +77,8 @@ interface Lancamento {
   descricao_conta: string | null; centro_custo: string | null; obs: string | null
   fornecedor_nome: string | null; banco_nome: string | null; proximo_venc: string | null
   parcela_id?: number | null; parcela_numero?: number | null; parcela_valor?: number | null
+  parcela_tipo_documento_id?: number | null; parcela_tipo_documento_nome?: string | null
+  parcela_numero_documento?: string | null
   parcela_vencimento?: string | null; parcela_status?: string | null; parcela_dt_pagamento?: string | null
   parcela_motivo_baixa?: string | null; parcela_acrescimo?: number | null; parcela_desconto?: number | null
   parcela_juros?: number | null; parcela_multa?: number | null; parcela_valor_final?: number | null
@@ -204,6 +210,8 @@ const normalizaParcelaPayload = (p: Parcela, idx: number): Parcela => {
     valor: toFiniteNumber(p.valor),
     vencimento: dateOnly(p.vencimento) || todayISO(),
     status: p.status || 'pendente',
+    tipo_documento_id: p.tipo_documento_id ? String(p.tipo_documento_id) : null,
+    numero_documento: String(p.numero_documento || '').trim() || null,
     acrescimo: toFiniteNumber(p.acrescimo),
     multa: toFiniteNumber(p.multa),
     juros: toFiniteNumber(p.juros),
@@ -231,8 +239,8 @@ const getSortValue = (l: Lancamento, key: SortKey): string | number => {
   switch (key) {
     case 'empresa': return sortText(l.empresa)
     case 'fornecedor': return sortText(l.fornecedor_nome)
-    case 'tipo_documento': return sortText(l.tipo_documento_nome)
-    case 'numero': return sortText(l.nf_doc)
+    case 'tipo_documento': return sortText(l.parcela_tipo_documento_nome || l.tipo_documento_nome)
+    case 'numero': return sortText(l.parcela_numero_documento || l.nf_doc)
     case 'parcela': return Number(l.parcela_numero || 0)
     case 'valor': {
       const valor = Number(l.parcela_valor ?? l.valor_total ?? 0)
@@ -529,6 +537,8 @@ export default function PagarPage() {
   const [aiLoading, setAiLoading] = useState(false)
   const [aiMessage, setAiMessage] = useState('')
   const aiParcelasRef = useRef<Parcela[] | null>(null)
+  const parcelaTipoDocAnteriorRef = useRef('')
+  const parcelaNumeroDocAnteriorRef = useRef('')
   const [parcelas, setParcelas] = useState<Parcela[]>([])
   const [retencoesAbertas, setRetencoesAbertas] = useState<Record<number, boolean>>({})
   const [errors,   setErrors]   = useState<Record<string, string>>({})
@@ -608,6 +618,8 @@ export default function PagarPage() {
         valor,
         vencimento: addMonthsDateOnly(fEmissao || todayISO(), i + 1),
         status: 'pendente',
+        tipo_documento_id: fTipoDoc || null,
+        numero_documento: fNF || null,
         acrescimo: 0,
         multa: 0,
         juros: 0,
@@ -631,6 +643,8 @@ export default function PagarPage() {
         id: atual.id,
         vencimento: atual.vencimento || base.vencimento,
         status: atual.status || base.status,
+        tipo_documento_id: atual.tipo_documento_id ?? base.tipo_documento_id,
+        numero_documento: atual.numero_documento ?? base.numero_documento,
         acrescimo: atual.acrescimo ?? 0,
         multa: atual.multa ?? 0,
         juros: atual.juros ?? 0,
@@ -646,6 +660,26 @@ export default function PagarPage() {
       return next
     }))
   }, [fValor, fNParc, fEmissao])
+
+  // Mantém os documentos das parcelas sincronizados com o documento principal
+  // enquanto a pessoa ainda não personalizou o valor daquela parcela.
+  useEffect(() => {
+    const tipoAnterior = parcelaTipoDocAnteriorRef.current
+    const numeroAnterior = parcelaNumeroDocAnteriorRef.current
+
+    setParcelas(atual => atual.map(parcela => {
+      const tipoAtual = parcela.tipo_documento_id == null ? '' : String(parcela.tipo_documento_id)
+      const numeroAtual = String(parcela.numero_documento || '')
+      return {
+        ...parcela,
+        tipo_documento_id: (!tipoAtual || tipoAtual === tipoAnterior) ? (fTipoDoc || null) : parcela.tipo_documento_id,
+        numero_documento: (!numeroAtual || numeroAtual === numeroAnterior) ? (fNF || null) : parcela.numero_documento,
+      }
+    }))
+
+    parcelaTipoDocAnteriorRef.current = fTipoDoc
+    parcelaNumeroDocAnteriorRef.current = fNF
+  }, [fTipoDoc, fNF])
 
   function updateParcela(i: number, key: keyof Parcela, val: string | number) {
     setParcelas(p => p.map((x, idx) => {
@@ -741,6 +775,7 @@ export default function PagarPage() {
     setFTipoDoc(''); setFNF(''); setFValor(''); setFNParc(1); setFCC(''); setFObs('')
     setFDocumentoNome(''); setFDocumentoMime(''); setFDocumentoBase64(''); setFDocumentoErro('')
     setAiMessage(''); setAiLoading(false); aiParcelasRef.current = null
+    parcelaTipoDocAnteriorRef.current = ''; parcelaNumeroDocAnteriorRef.current = ''
     setParcelas([]); setRetencoesAbertas({}); setErrors({})
     setShowFornecedorModal(false); setFornecedorErrors({})
     setShowBaixaModal(false); setBaixaParcela(null); setBaixaErrors({})
@@ -754,8 +789,20 @@ export default function PagarPage() {
     if (!fValor || moneyToNumber(fValor) <= 0) e.valor = 'Informe um valor válido'
     if (fNF && fNF.trim().length < 1)
       e.nf_doc = 'Mínimo 1 caractere'
+
+    const parcelaDocumentoIncompleto = parcelas.find((parcela) => {
+      const temTipo = Boolean(parcela.tipo_documento_id)
+      const temNumero = Boolean(String(parcela.numero_documento || '').trim())
+      return temTipo !== temNumero
+    })
+    if (parcelaDocumentoIncompleto) {
+      e.parcelas_documento = 'Informe o tipo e o número do documento na mesma parcela.'
+    }
+
     if (Object.keys(e).length) {
-      e._geral = 'Revise os campos: algum deles está impedindo o envio das informações.'
+      e._geral = parcelaDocumentoIncompleto
+        ? `Parcela ${parcelaDocumentoIncompleto.numero}: informe o tipo e o número do documento.`
+        : 'Revise os campos: algum deles está impedindo o envio das informações.'
     }
     setErrors(e)
     return Object.keys(e).filter(k => k !== '_geral').length === 0
@@ -907,6 +954,9 @@ export default function PagarPage() {
             valor: toFiniteNumber(p.valor),
             vencimento: dateOnly(p.vencimento),
             status: p.status || 'pendente',
+            tipo_documento_id: p.tipo_documento_id ? String(p.tipo_documento_id) : (d.tipo_documento_id ? String(d.tipo_documento_id) : null),
+            tipo_documento_nome: p.tipo_documento_nome || null,
+            numero_documento: p.numero_documento || d.nf_doc || null,
             acrescimo: toFiniteNumber(p.acrescimo),
             multa: toFiniteNumber(p.multa),
             juros: toFiniteNumber(p.juros),
@@ -1326,9 +1376,9 @@ export default function PagarPage() {
                       <p className="font-medium text-slate-700 truncate" title={fornecedorDisplay}>{fornecedorDisplay}</p>
                       {fornecedorSubtitulo && <p className="text-slate-400 text-[10px] truncate" title={fornecedorSubtitulo}>{fornecedorSubtitulo}</p>}
                     </td>
-                    <td className="px-3 py-2 max-w-[150px] text-slate-600 truncate">{l.tipo_documento_nome || '—'}</td>
+                    <td className="px-3 py-2 max-w-[150px] text-slate-600 truncate">{l.parcela_tipo_documento_nome || l.tipo_documento_nome || '—'}</td>
                     <td className="px-3 py-2 max-w-[130px] text-slate-600 truncate">
-                      <p className="truncate">{l.nf_doc || '—'}</p>
+                      <p className="truncate">{l.parcela_numero_documento || l.nf_doc || '—'}</p>
                       {l.documento_nome && <p className="text-slate-400 text-[10px] truncate">Anexo: {l.documento_nome}</p>}
                     </td>
                     <td className="px-3 py-2 text-center text-slate-600 whitespace-nowrap">
@@ -1594,6 +1644,30 @@ export default function PagarPage() {
                               <div className="text-xs border border-slate-200 rounded px-2 py-1 bg-slate-100 w-full text-right tabular-nums font-semibold text-slate-700">
                                 {R$(calculaValorFinalParcela(p))}
                               </div>
+                            </div>
+                          </div>
+
+                          <div className="mt-2 grid min-w-[820px] grid-cols-1 gap-2 sm:grid-cols-2">
+                            <div>
+                              <label className="mb-1 block text-[10px] font-medium text-slate-500">Tipo de documento da parcela</label>
+                              <select
+                                value={p.tipo_documento_id == null ? '' : String(p.tipo_documento_id)}
+                                onChange={e => updateParcela(i, 'tipo_documento_id', e.target.value || '')}
+                                className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-100"
+                              >
+                                <option value="">Selecione</option>
+                                {tiposDocumento.map(tipo => <option key={tipo.id} value={tipo.id}>{tipo.nome}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-[10px] font-medium text-slate-500">Número do documento da parcela</label>
+                              <input
+                                type="text"
+                                value={p.numero_documento || ''}
+                                onChange={e => updateParcela(i, 'numero_documento', e.target.value)}
+                                placeholder="Número específico desta parcela"
+                                className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-blue-300 focus:outline-none focus:ring-1 focus:ring-blue-100"
+                              />
                             </div>
                           </div>
 
