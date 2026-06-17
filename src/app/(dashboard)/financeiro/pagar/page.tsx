@@ -11,7 +11,7 @@ interface Fornecedor { id: number; razao_social: string; empresa: string; cnpj_c
 interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null; digito?: string | null }
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
 interface TipoDocumento { id: number; nome: string }
-type RetencaoKey = 'retencao_ipi' | 'retencao_iss' | 'retencao_icms' | 'retencao_pis' | 'retencao_cofins' | 'retencao_csll' | 'retencao_irrf' | 'retencao_inss'
+type RetencaoKey = 'retencao_iss' | 'retencao_pis' | 'retencao_cofins' | 'retencao_csll' | 'retencao_irrf' | 'retencao_inss'
 interface Parcela     {
   id?: number
   numero: number
@@ -22,9 +22,7 @@ interface Parcela     {
   multa?: number | string
   juros?: number | string
   desconto?: number | string
-  retencao_ipi?: number | string
   retencao_iss?: number | string
-  retencao_icms?: number | string
   retencao_pis?: number | string
   retencao_cofins?: number | string
   retencao_csll?: number | string
@@ -108,9 +106,7 @@ const STATUS_COLORS: Record<string, string> = {
 }
 
 const RETENCOES: Array<{ key: RetencaoKey; label: string }> = [
-  { key: 'retencao_ipi', label: 'IPI' },
   { key: 'retencao_iss', label: 'ISS' },
-  { key: 'retencao_icms', label: 'ICMS' },
   { key: 'retencao_pis', label: 'PIS' },
   { key: 'retencao_cofins', label: 'COFINS' },
   { key: 'retencao_csll', label: 'CSL / CSLL' },
@@ -212,9 +208,7 @@ const normalizaParcelaPayload = (p: Parcela, idx: number): Parcela => {
     multa: toFiniteNumber(p.multa),
     juros: toFiniteNumber(p.juros),
     desconto: toFiniteNumber(p.desconto),
-    retencao_ipi: toFiniteNumber(p.retencao_ipi),
     retencao_iss: toFiniteNumber(p.retencao_iss),
-    retencao_icms: toFiniteNumber(p.retencao_icms),
     retencao_pis: toFiniteNumber(p.retencao_pis),
     retencao_cofins: toFiniteNumber(p.retencao_cofins),
     retencao_csll: toFiniteNumber(p.retencao_csll),
@@ -227,9 +221,7 @@ const normalizaParcelaPayload = (p: Parcela, idx: number): Parcela => {
 const sortText = (v: unknown) => String(v ?? '').toLocaleLowerCase('pt-BR')
 const sortDate = (v: string | null | undefined) => v ? (Date.parse(v) || 0) : 0
 const calculaTotalRetencoesLancamento = (l: Lancamento) =>
-  Number(l.parcela_retencao_ipi || 0)
-  + Number(l.parcela_retencao_iss || 0)
-  + Number(l.parcela_retencao_icms || 0)
+  Number(l.parcela_retencao_iss || 0)
   + Number(l.parcela_retencao_pis || 0)
   + Number(l.parcela_retencao_cofins || 0)
   + Number(l.parcela_retencao_csll || 0)
@@ -620,9 +612,7 @@ export default function PagarPage() {
         multa: 0,
         juros: 0,
         desconto: 0,
-        retencao_ipi: 0,
         retencao_iss: 0,
-        retencao_icms: 0,
         retencao_pis: 0,
         retencao_cofins: 0,
         retencao_csll: 0,
@@ -645,9 +635,7 @@ export default function PagarPage() {
         multa: atual.multa ?? 0,
         juros: atual.juros ?? 0,
         desconto: atual.desconto ?? 0,
-        retencao_ipi: atual.retencao_ipi ?? 0,
         retencao_iss: atual.retencao_iss ?? 0,
-        retencao_icms: atual.retencao_icms ?? 0,
         retencao_pis: atual.retencao_pis ?? 0,
         retencao_cofins: atual.retencao_cofins ?? 0,
         retencao_csll: atual.retencao_csll ?? 0,
@@ -923,10 +911,8 @@ export default function PagarPage() {
             multa: toFiniteNumber(p.multa),
             juros: toFiniteNumber(p.juros),
             desconto: toFiniteNumber(p.desconto),
-            retencao_ipi: toFiniteNumber(p.retencao_ipi),
-            retencao_iss: toFiniteNumber(p.retencao_iss),
-            retencao_icms: toFiniteNumber(p.retencao_icms),
-            retencao_pis: toFiniteNumber(p.retencao_pis),
+                    retencao_iss: toFiniteNumber(p.retencao_iss),
+                    retencao_pis: toFiniteNumber(p.retencao_pis),
             retencao_cofins: toFiniteNumber(p.retencao_cofins),
             retencao_csll: toFiniteNumber(p.retencao_csll),
             retencao_irrf: toFiniteNumber(p.retencao_irrf),
@@ -1356,7 +1342,7 @@ export default function PagarPage() {
                           <p>Multa {R$(Number(l.parcela_multa || 0))} · Juros {R$(Number(l.parcela_juros || 0))}</p>
                           <p>Desc. {R$(Number(l.parcela_desconto || 0))} · Acrésc. {R$(Number(l.parcela_acrescimo || 0))}</p>
                           {calculaTotalRetencoesLancamento(l) > 0 && (
-                            <p title="IPI, ISS, ICMS, PIS, COFINS, CSL/CSLL, IRRF e INSS">Imp. retidos {R$(calculaTotalRetencoesLancamento(l))}</p>
+                            <p title="ISS, PIS, COFINS, CSL/CSLL, IRRF e INSS">Imp. retidos {R$(calculaTotalRetencoesLancamento(l))}</p>
                           )}
                         </div>
                       )}
@@ -1620,7 +1606,7 @@ export default function PagarPage() {
                                 </div>
                                 <span className="text-xs font-semibold text-violet-700">Total: {R$(calculaTotalRetencoes(p))}</span>
                               </div>
-                              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                                 {RETENCOES.map(imposto => (
                                   <div key={imposto.key}>
                                     <label className="mb-1 block text-[10px] font-medium text-slate-500">{imposto.label}</label>
