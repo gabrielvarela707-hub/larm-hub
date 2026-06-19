@@ -22,7 +22,17 @@ interface FornecedorOption {
   digito?: string | null
   tipo_conta?: string | null
 }
-type ModalidadePagamento = '' | 'PIX' | 'BOLETO' | 'TED' | 'DOC'
+type ModalidadePagamento =
+  | ''
+  | 'PIX'
+  | 'BOLETO'
+  | 'TED'
+  | 'DOC'
+  | 'TRANSFERENCIA'
+  | 'DEBITO_AUTOMATICO'
+  | 'DINHEIRO'
+  | 'CARTAO'
+  | 'OUTRO'
 interface BoletoNovo {
   temp_id: string
   nome: string
@@ -1237,7 +1247,9 @@ export default function PagarPage() {
         digito_pagamento: fDigitoPagamento || null,
         tipo_conta_pagamento: fTipoContaPagamento || null,
         linha_digitavel_boleto: fLinhaDigitavelBoleto || null,
-        boletos_novos: boletosNovos.map(({ temp_id, ...file }) => file),
+        boletos_novos: fModalidadePagamento === 'BOLETO'
+          ? boletosNovos.map(({ temp_id, ...file }) => file)
+          : [],
         boletos_removidos: boletosRemovidos,
         parcelas:        parcelas.map((p, idx) => normalizaParcelaPayload(p, idx)),
       }
@@ -1824,6 +1836,11 @@ export default function PagarPage() {
                       <option value="BOLETO">Boleto</option>
                       <option value="TED">TED</option>
                       <option value="DOC">DOC</option>
+                      <option value="TRANSFERENCIA">Transferência</option>
+                      <option value="DEBITO_AUTOMATICO">Débito automático</option>
+                      <option value="DINHEIRO">Dinheiro</option>
+                      <option value="CARTAO">Cartão</option>
+                      <option value="OUTRO">Outro</option>
                     </select>
                   </F>
 

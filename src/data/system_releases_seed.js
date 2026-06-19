@@ -6,6 +6,53 @@
 
 const SYSTEM_RELEASES = [
   {
+    version: "0.3.42",
+    title: "Contas a Pagar — restauração das formas de pagamento",
+    description:
+      "Restaura as modalidades antigas no lançamento de Contas a Pagar e mantém o preenchimento inteligente exclusivamente para PIX, Boleto, TED e DOC.",
+    frontend_version: "0.3.42",
+    backend_version: "0.3.42",
+    released_at: "2026-06-19T19:40:00.000Z",
+    changes: [
+      "Restauradas as opções Transferência, Débito automático, Dinheiro, Cartão e Outro no campo Forma de pagamento / modalidade.",
+      "PIX continua carregando automaticamente a chave cadastrada do fornecedor.",
+      "TED e DOC continuam carregando banco, código, agência, conta, dígito e tipo de conta do fornecedor.",
+      "Boleto continua permitindo linha digitável e upload de múltiplos PDFs ou imagens.",
+      "As modalidades restauradas permanecem simples e não abrem campos adicionais nem executam preenchimento automático.",
+      "O backend passa a preservar todas as modalidades aceitas sem descartar as opções restauradas.",
+      "Uploads novos de boleto são processados somente quando a modalidade selecionada é Boleto.",
+      "Versionamento atualizado para 0.3.42."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Contas a Pagar v0.3.42"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro v0.3.42"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_lancamentos_cp",
+        "fin_lancamentos_cp_boletos",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "PIX",
+        "Boleto",
+        "TED",
+        "DOC"
+      ],
+    },
+  },
+
+  {
     version: "0.3.41",
     title: "Contas a Pagar — modalidade, dados do fornecedor e múltiplos boletos",
     description:
