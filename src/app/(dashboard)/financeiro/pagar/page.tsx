@@ -1,14 +1,42 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Plus, Search, X, Check, FileText, Loader2, Sparkles, Pencil, Trash2, ChevronsUpDown, RotateCcw, Download } from 'lucide-react'
+import { Plus, Search, X, Check, FileText, Loader2, Sparkles, Pencil, Trash2, ChevronsUpDown, RotateCcw, Download, Eye, Landmark, CreditCard } from 'lucide-react'
 import TableFloatingNav from '@/components/table-floating-nav'
 import { apiClient } from '@/lib/auth-store'
 import { BANCOS_BR } from '@/lib/bancos-br'
 import { cn } from '@/lib/utils'
-import FornecedorFormModal from '@/components/financeiro/FornecedorFormModal'
+import FornecedorFormModal, { type Fornecedor as FornecedorCompleto } from '@/components/financeiro/FornecedorFormModal'
 
-interface Fornecedor { id: number; razao_social: string; empresa: string; cnpj_cpf?: string | null; nome_fantasia?: string | null }
+interface FornecedorOption {
+  id: number
+  razao_social: string
+  empresa: string
+  cnpj_cpf?: string | null
+  nome_fantasia?: string | null
+  chave_pix?: string | null
+  banco_nome?: string | null
+  codigo_banco?: string | null
+  agencia?: string | null
+  conta?: string | null
+  digito?: string | null
+  tipo_conta?: string | null
+}
+type ModalidadePagamento = '' | 'PIX' | 'BOLETO' | 'TED' | 'DOC'
+interface BoletoNovo {
+  temp_id: string
+  nome: string
+  mime: string
+  tamanho_bytes: number
+  arquivo_base64: string
+}
+interface BoletoExistente {
+  id: number
+  nome: string
+  mime: string
+  tamanho_bytes: number
+  created_at?: string | null
+}
 interface BancoConta { id: number; empresa: string; banco_nome: string; agencia: string | null; conta: string | null; digito?: string | null }
 interface PlanoConta  { id: number; codigo: string; descricao: string; tipo: string }
 interface TipoDocumento { id: number; nome: string }
@@ -376,7 +404,7 @@ function PlanoContasSelect({ value, onChange, contas, inp }: { value: string; on
 
 
 // ─── FornecedorSelect ───────────────────────────────────────────────────────
-function fornecedorLabel(f: Fornecedor) {
+function fornecedorLabel(f: FornecedorOption) {
   const nome = f.nome_fantasia?.trim() || f.razao_social
   const doc = f.cnpj_cpf ? ` · ${f.cnpj_cpf}` : ''
   return `${nome}${doc}`
@@ -392,7 +420,7 @@ function FornecedorSelect({
 }: {
   value: string
   onChange: (v: string) => void
-  fornecedores: Fornecedor[]
+  fornecedores: FornecedorOption[]
   inp: string
   placeholder?: string
   emptyLabel?: string
@@ -461,6 +489,8 @@ export default function PagarPage() {
   const [saving,    setSaving]    = useState(false)
   const [showForm,  setShowForm]  = useState(false)
   const [showFornecedorModal, setShowFornecedorModal] = useState(false)
+  const [editingFornecedorId, setEditingFornecedorId] = useState<number | null>(null)
+  const [editingFornecedorData, setEditingFornecedorData] = useState<Partial<FornecedorCompleto> | undefined>(undefined)
   const [savingFornecedor, setSavingFornecedor] = useState(false)
   const [fornecedorErrors, setFornecedorErrors] = useState<Record<string, string>>({})
   const [showBaixaModal, setShowBaixaModal] = useState(false)
@@ -488,7 +518,7 @@ export default function PagarPage() {
   })
 
   // Listas para selects
-  const [fornecedores, setFornecedores] = useState<Fornecedor[]>([])
+  const [fornecedores, setFornecedores] = useState<FornecedorOption[]>([])
   const [bancos,       setBancos]       = useState<BancoConta[]>([])
   const [plano,        setPlano]        = useState<PlanoConta[]>([])
   const [tiposDocumento, setTiposDocumento] = useState<TipoDocumento[]>([])
@@ -525,6 +555,19 @@ export default function PagarPage() {
   const [fNParc,   setFNParc]   = useState(1)
   const [fCC,      setFCC]      = useState('')
   const [fObs,     setFObs]     = useState('')
+  const [fModalidadePagamento, setFModalidadePagamento] = useState<ModalidadePagamento>('')
+  const [fChavePixPagamento, setFChavePixPagamento] = useState('')
+  const [fBancoPagamentoNome, setFBancoPagamentoNome] = useState('')
+  const [fBancoPagamentoCodigo, setFBancoPagamentoCodigo] = useState('')
+  const [fAgenciaPagamento, setFAgenciaPagamento] = useState('')
+  const [fContaPagamento, setFContaPagamento] = useState('')
+  const [fDigitoPagamento, setFDigitoPagamento] = useState('')
+  const [fTipoContaPagamento, setFTipoContaPagamento] = useState('')
+  const [fLinhaDigitavelBoleto, setFLinhaDigitavelBoleto] = useState('')
+  const [boletosNovos, setBoletosNovos] = useState<BoletoNovo[]>([])
+  const [boletosExistentes, setBoletosExistentes] = useState<BoletoExistente[]>([])
+  const [boletosRemovidos, setBoletosRemovidos] = useState<number[]>([])
+  const [boletoErro, setBoletoErro] = useState('')
   const [novoFornecedor, setNovoFornecedor] = useState<NovoFornecedorForm>({
     razao_social: '', nome_fantasia: '', cnpj_cpf: '',
     tipo_pessoa: 'PJ', empresa: '', codigo: '', email: '', telefone: '',
@@ -702,7 +745,41 @@ export default function PagarPage() {
     setSortDir(key === 'valor' ? 'desc' : 'asc')
   }
 
+  function fornecedorSelecionado(id = fForn) {
+    return fornecedores.find(f => String(f.id) === String(id)) || null
+  }
+
+  function preencherPagamentoDoFornecedor(modalidade: ModalidadePagamento, fornecedorId = fForn) {
+    const fornecedor = fornecedorSelecionado(fornecedorId)
+    if (!fornecedor) return
+
+    if (modalidade === 'PIX') {
+      setFChavePixPagamento(fornecedor.chave_pix || '')
+    }
+
+    if (modalidade === 'TED' || modalidade === 'DOC') {
+      setFBancoPagamentoNome(fornecedor.banco_nome || '')
+      setFBancoPagamentoCodigo(fornecedor.codigo_banco || '')
+      setFAgenciaPagamento(fornecedor.agencia || '')
+      setFContaPagamento(fornecedor.conta || '')
+      setFDigitoPagamento(fornecedor.digito || '')
+      setFTipoContaPagamento(fornecedor.tipo_conta || '')
+    }
+  }
+
+  function handleFornecedorChange(value: string) {
+    setFForn(value)
+    preencherPagamentoDoFornecedor(fModalidadePagamento, value)
+  }
+
+  function handleModalidadeChange(value: ModalidadePagamento) {
+    setFModalidadePagamento(value)
+    preencherPagamentoDoFornecedor(value)
+  }
+
   function openFornecedorModal() {
+    setEditingFornecedorId(null)
+    setEditingFornecedorData(undefined)
     setFornecedorErrors({})
     setNovoFornecedor({
       razao_social: '', nome_fantasia: '', cnpj_cpf: '',
@@ -713,9 +790,27 @@ export default function PagarPage() {
     setShowFornecedorModal(true)
   }
 
+  async function openEditarFornecedorModal() {
+    const fornecedorId = Number(fForn)
+    if (!Number.isInteger(fornecedorId) || fornecedorId <= 0) return
+
+    setFornecedorErrors({})
+    try {
+      const r = await apiClient.get(`/financeiro/fornecedores/${fornecedorId}`)
+      setEditingFornecedorId(fornecedorId)
+      setEditingFornecedorData(r.data.data || undefined)
+      setShowFornecedorModal(true)
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Não foi possível carregar o fornecedor.'
+      setErrors({ _geral: message })
+    }
+  }
+
   function closeFornecedorModal() {
     if (savingFornecedor) return
     setShowFornecedorModal(false)
+    setEditingFornecedorId(null)
+    setEditingFornecedorData(undefined)
     setFornecedorErrors({})
   }
 
@@ -754,7 +849,7 @@ export default function PagarPage() {
         categoria: null,
       }
       const r = await apiClient.post('/financeiro/fornecedores', payload)
-      const criado = r.data.data as Fornecedor
+      const criado = r.data.data as FornecedorOption
       const sel = await apiClient.get('/financeiro/fornecedores/select')
       setFornecedores(sel.data.data || [])
       setFForn(String(criado.id))
@@ -775,10 +870,15 @@ export default function PagarPage() {
     setFEmp(''); setFForn(''); setFBanco(''); setFConta(''); setFHistorico('')
     setFTipoDoc(''); setFNF(''); setFValor(''); setFNParc(1); setFCC(''); setFObs('')
     setFDocumentoNome(''); setFDocumentoMime(''); setFDocumentoBase64(''); setFDocumentoErro('')
+    setFModalidadePagamento(''); setFChavePixPagamento('')
+    setFBancoPagamentoNome(''); setFBancoPagamentoCodigo(''); setFAgenciaPagamento('')
+    setFContaPagamento(''); setFDigitoPagamento(''); setFTipoContaPagamento('')
+    setFLinhaDigitavelBoleto(''); setBoletosNovos([]); setBoletosExistentes([])
+    setBoletosRemovidos([]); setBoletoErro('')
     setAiMessage(''); setAiLoading(false); aiParcelasRef.current = null
     parcelaTipoDocAnteriorRef.current = ''; parcelaNumeroDocAnteriorRef.current = ''
     setParcelas([]); setRetencoesAbertas({}); setErrors({})
-    setShowFornecedorModal(false); setFornecedorErrors({})
+    setShowFornecedorModal(false); setEditingFornecedorId(null); setEditingFornecedorData(undefined); setFornecedorErrors({})
     setShowBaixaModal(false); setBaixaParcela(null); setBaixaErrors({})
     setFBancoCodigo(''); setEditingId(null)
   }
@@ -790,6 +890,17 @@ export default function PagarPage() {
     if (!fValor || moneyToNumber(fValor) <= 0) e.valor = 'Informe um valor válido'
     if (fNF && fNF.trim().length < 1)
       e.nf_doc = 'Mínimo 1 caractere'
+
+    if (fModalidadePagamento === 'PIX' && !fChavePixPagamento.trim())
+      e.modalidade_pagamento = 'Informe ou cadastre a chave PIX do fornecedor.'
+    if ((fModalidadePagamento === 'TED' || fModalidadePagamento === 'DOC')
+      && (!fBancoPagamentoNome.trim() || !fAgenciaPagamento.trim() || !fContaPagamento.trim()))
+      e.modalidade_pagamento = 'Informe banco, agência e conta do fornecedor.'
+    if (fModalidadePagamento === 'BOLETO'
+      && !fLinhaDigitavelBoleto.trim()
+      && boletosNovos.length === 0
+      && boletosExistentes.length === 0)
+      e.modalidade_pagamento = 'Digite a linha do boleto ou anexe ao menos um PDF/imagem.'
 
     const parcelaDocumentoIncompleto = parcelas.find((parcela) => {
       const temTipo = Boolean(parcela.tipo_documento_id)
@@ -841,6 +952,91 @@ export default function PagarPage() {
     reader.readAsDataURL(file)
   }
 
+  function formatFileSize(bytes: number) {
+    if (!bytes) return '0 KB'
+    if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
+
+  function abrirArquivoBase64(nome: string, mime: string, base64: string) {
+    const binary = window.atob(base64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+    const url = window.URL.createObjectURL(new Blob([bytes], { type: mime }))
+    const popup = window.open(url, '_blank', 'noopener,noreferrer')
+    if (!popup) {
+      const a = document.createElement('a')
+      a.href = url
+      a.download = nome
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    }
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000)
+  }
+
+  async function handleBoletosChange(files: FileList | null) {
+    setBoletoErro('')
+    const selecionados = Array.from(files || [])
+    if (!selecionados.length) return
+
+    const invalid = selecionados.find(file => file.type !== 'application/pdf' && !file.type.startsWith('image/'))
+    if (invalid) {
+      setBoletoErro(`O arquivo ${invalid.name} não é PDF nem imagem.`)
+      return
+    }
+
+    const oversized = selecionados.find(file => file.size > 6 * 1024 * 1024)
+    if (oversized) {
+      setBoletoErro(`O arquivo ${oversized.name} ultrapassa o limite de 6MB.`)
+      return
+    }
+
+    try {
+      const novos = await Promise.all(selecionados.map(file => new Promise<BoletoNovo>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const result = String(reader.result || '')
+          resolve({
+            temp_id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            nome: file.name,
+            mime: file.type,
+            tamanho_bytes: file.size,
+            arquivo_base64: result.includes(',') ? result.split(',')[1] : result,
+          })
+        }
+        reader.onerror = () => reject(new Error(`Não foi possível ler ${file.name}.`))
+        reader.readAsDataURL(file)
+      })))
+
+      const total = [...boletosNovos, ...novos].reduce((sum, file) => sum + file.tamanho_bytes, 0)
+      if (total > 20 * 1024 * 1024) {
+        setBoletoErro('O total dos novos boletos ultrapassa o limite de 20MB.')
+        return
+      }
+      setBoletosNovos(prev => [...prev, ...novos])
+    } catch (err) {
+      setBoletoErro(err instanceof Error ? err.message : 'Não foi possível ler os boletos.')
+    }
+  }
+
+  function removerBoletoExistente(id: number) {
+    setBoletosExistentes(prev => prev.filter(item => item.id !== id))
+    setBoletosRemovidos(prev => prev.includes(id) ? prev : [...prev, id])
+  }
+
+  async function abrirBoletoExistente(boleto: BoletoExistente) {
+    if (!editingId) return
+    try {
+      const r = await apiClient.get(`/financeiro/lancamentos-cp/${editingId}/boletos/${boleto.id}`)
+      const file = r.data.data
+      abrirArquivoBase64(file.nome, file.mime, file.arquivo_base64)
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } }).response?.data?.message || 'Não foi possível abrir o boleto.'
+      setBoletoErro(message)
+    }
+  }
+
   function findFornecedorByAi(data: AiContaPagarResult) {
     const cnpjDigits = String(data.fornecedor_cnpj || '').replace(/\D/g, '')
     if (cnpjDigits) {
@@ -861,7 +1057,7 @@ export default function PagarPage() {
   function applyAiResult(data: AiContaPagarResult) {
     const fornecedor = findFornecedorByAi(data)
     if (fornecedor) {
-      setFForn(String(fornecedor.id))
+      handleFornecedorChange(String(fornecedor.id))
       if (!fEmp && fornecedor.empresa) setFEmp(fornecedor.empresa)
     }
 
@@ -947,6 +1143,19 @@ export default function PagarPage() {
       setFConta(d.conta_contabil || '')
       setFCC(d.centro_custo || '')
       setFObs(d.obs || '')
+      setFModalidadePagamento((d.modalidade_pagamento || '') as ModalidadePagamento)
+      setFChavePixPagamento(d.chave_pix_pagamento || '')
+      setFBancoPagamentoNome(d.banco_pagamento_nome || '')
+      setFBancoPagamentoCodigo(d.banco_pagamento_codigo || '')
+      setFAgenciaPagamento(d.agencia_pagamento || '')
+      setFContaPagamento(d.conta_pagamento || '')
+      setFDigitoPagamento(d.digito_pagamento || '')
+      setFTipoContaPagamento(d.tipo_conta_pagamento || '')
+      setFLinhaDigitavelBoleto(d.linha_digitavel_boleto || '')
+      setBoletosExistentes(Array.isArray(d.boletos) ? d.boletos : [])
+      setBoletosNovos([])
+      setBoletosRemovidos([])
+      setBoletoErro('')
       if (d.parcelas?.length) {
         const loadedParcelas = d.parcelas.map((p: Parcela, idx: number) =>
           normalizaParcelaPayload({
@@ -1019,6 +1228,17 @@ export default function PagarPage() {
         qtd_parcelas:    fNParc,
         centro_custo:    fCC      || null,
         obs:             fObs     || null,
+        modalidade_pagamento: fModalidadePagamento || null,
+        chave_pix_pagamento: fChavePixPagamento || null,
+        banco_pagamento_nome: fBancoPagamentoNome || null,
+        banco_pagamento_codigo: fBancoPagamentoCodigo || null,
+        agencia_pagamento: fAgenciaPagamento || null,
+        conta_pagamento: fContaPagamento || null,
+        digito_pagamento: fDigitoPagamento || null,
+        tipo_conta_pagamento: fTipoContaPagamento || null,
+        linha_digitavel_boleto: fLinhaDigitavelBoleto || null,
+        boletos_novos: boletosNovos.map(({ temp_id, ...file }) => file),
+        boletos_removidos: boletosRemovidos,
         parcelas:        parcelas.map((p, idx) => normalizaParcelaPayload(p, idx)),
       }
       if (editingId) {
@@ -1491,13 +1711,23 @@ export default function PagarPage() {
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center justify-between gap-2">
                       <label className="text-xs font-medium text-slate-600">Fornecedor</label>
-                      <button type="button" onClick={openFornecedorModal} className="text-[10px] font-semibold text-blue-700 hover:text-blue-900">
-                        + Novo fornecedor
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={openEditarFornecedorModal}
+                          disabled={!fForn}
+                          className="text-[10px] font-semibold text-amber-700 hover:text-amber-900 disabled:cursor-not-allowed disabled:text-slate-300"
+                        >
+                          Editar fornecedor
+                        </button>
+                        <button type="button" onClick={openFornecedorModal} className="text-[10px] font-semibold text-blue-700 hover:text-blue-900">
+                          + Novo fornecedor
+                        </button>
+                      </div>
                     </div>
                     <FornecedorSelect
                       value={fForn}
-                      onChange={setFForn}
+                      onChange={handleFornecedorChange}
                       fornecedores={fornecedores.filter(f => !fEmp || f.empresa === fEmp || f.empresa === 'TODOS')}
                       inp={inp}
                     />
@@ -1570,6 +1800,157 @@ export default function PagarPage() {
                     <input className={inp} value={fCC} onChange={e => setFCC(e.target.value)} placeholder="Opcional" />
                   </F>
                 </div>
+              </div>
+
+              {/* Forma / modalidade de pagamento */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <CreditCard className="h-4 w-4 text-[#1e3a5f]" />
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Forma de pagamento / modalidade</p>
+                    <p className="text-[10px] text-slate-400">Os dados abaixo ficam gravados no lançamento como instrução de pagamento.</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <F label="Modalidade" name="modalidade_pagamento">
+                    <select
+                      className={cn(inp, errors.modalidade_pagamento && 'border-red-300')}
+                      value={fModalidadePagamento}
+                      onChange={e => handleModalidadeChange(e.target.value as ModalidadePagamento)}
+                    >
+                      <option value="">Não informada</option>
+                      <option value="PIX">PIX</option>
+                      <option value="BOLETO">Boleto</option>
+                      <option value="TED">TED</option>
+                      <option value="DOC">DOC</option>
+                    </select>
+                  </F>
+
+                  {fModalidadePagamento === 'PIX' && (
+                    <F label="Chave PIX do fornecedor" name="chave_pix_pagamento">
+                      <input
+                        className={cn(inp, errors.modalidade_pagamento && 'border-red-300')}
+                        value={fChavePixPagamento}
+                        onChange={e => setFChavePixPagamento(e.target.value)}
+                        placeholder="Chave PIX cadastrada no fornecedor"
+                      />
+                      <p className="mt-1 text-[10px] text-slate-400">
+                        Preenchida automaticamente a partir do cadastro do fornecedor. Pode ser ajustada neste lançamento.
+                      </p>
+                    </F>
+                  )}
+                </div>
+
+                {(fModalidadePagamento === 'TED' || fModalidadePagamento === 'DOC') && (
+                  <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="mb-2 flex items-center gap-2">
+                      <Landmark className="h-3.5 w-3.5 text-slate-500" />
+                      <p className="text-[11px] font-semibold text-slate-600">Dados bancários do fornecedor</p>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="lg:col-span-2">
+                        <label className="mb-1 block text-[10px] text-slate-500">Banco</label>
+                        <input className={inp} value={fBancoPagamentoNome} onChange={e => setFBancoPagamentoNome(e.target.value)} placeholder="Banco" />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] text-slate-500">Código</label>
+                        <input className={inp} value={fBancoPagamentoCodigo} onChange={e => setFBancoPagamentoCodigo(e.target.value)} placeholder="000" />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] text-slate-500">Tipo de conta</label>
+                        <input className={inp} value={fTipoContaPagamento} onChange={e => setFTipoContaPagamento(e.target.value)} placeholder="Corrente" />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] text-slate-500">Agência</label>
+                        <input className={cn(inp, errors.modalidade_pagamento && 'border-red-300')} value={fAgenciaPagamento} onChange={e => setFAgenciaPagamento(e.target.value)} />
+                      </div>
+                      <div className="lg:col-span-2">
+                        <label className="mb-1 block text-[10px] text-slate-500">Conta</label>
+                        <input className={cn(inp, errors.modalidade_pagamento && 'border-red-300')} value={fContaPagamento} onChange={e => setFContaPagamento(e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] text-slate-500">Dígito</label>
+                        <input className={inp} value={fDigitoPagamento} onChange={e => setFDigitoPagamento(e.target.value)} />
+                      </div>
+                    </div>
+                    <p className="mt-2 text-[10px] text-slate-400">Os dados são trazidos do fornecedor e podem ser ajustados apenas para este lançamento.</p>
+                  </div>
+                )}
+
+                {fModalidadePagamento === 'BOLETO' && (
+                  <div className="mt-3 space-y-3 rounded-lg border border-slate-200 bg-white p-3">
+                    <div>
+                      <label className="mb-1 block text-[10px] font-medium text-slate-500">Linha digitável / código do boleto</label>
+                      <textarea
+                        className={cn(inp, 'min-h-[58px] resize-y', errors.modalidade_pagamento && 'border-red-300')}
+                        value={fLinhaDigitavelBoleto}
+                        onChange={e => setFLinhaDigitavelBoleto(e.target.value)}
+                        placeholder="Digite ou cole a linha digitável do boleto"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs text-slate-600 hover:bg-slate-100">
+                        <FileText className="h-3.5 w-3.5 text-slate-400" />
+                        <span>Selecionar um ou mais boletos em PDF ou imagem</span>
+                        <input
+                          type="file"
+                          multiple
+                          accept="application/pdf,image/*"
+                          className="hidden"
+                          onChange={e => {
+                            handleBoletosChange(e.target.files)
+                            e.currentTarget.value = ''
+                          }}
+                        />
+                      </label>
+                      <p className="mt-1 text-[10px] text-slate-400">Até 6MB por arquivo e 20MB no total dos novos boletos.</p>
+                    </div>
+
+                    {(boletosExistentes.length > 0 || boletosNovos.length > 0) && (
+                      <div className="space-y-2">
+                        {boletosExistentes.map(boleto => (
+                          <div key={`existente-${boleto.id}`} className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-medium text-slate-700">{boleto.nome}</p>
+                              <p className="text-[10px] text-slate-400">Salvo · {formatFileSize(Number(boleto.tamanho_bytes || 0))}</p>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button type="button" onClick={() => abrirBoletoExistente(boleto)} title="Abrir boleto" className="rounded p-1.5 text-blue-600 hover:bg-blue-50">
+                                <Eye className="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" onClick={() => removerBoletoExistente(boleto.id)} title="Remover boleto" className="rounded p-1.5 text-red-500 hover:bg-red-50">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                        {boletosNovos.map(boleto => (
+                          <div key={boleto.temp_id} className="flex items-center justify-between gap-3 rounded-lg border border-emerald-100 bg-emerald-50/50 px-3 py-2">
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-medium text-slate-700">{boleto.nome}</p>
+                              <p className="text-[10px] text-emerald-600">Novo · {formatFileSize(boleto.tamanho_bytes)}</p>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button type="button" onClick={() => abrirArquivoBase64(boleto.nome, boleto.mime, boleto.arquivo_base64)} title="Abrir boleto" className="rounded p-1.5 text-blue-600 hover:bg-blue-50">
+                                <Eye className="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" onClick={() => setBoletosNovos(prev => prev.filter(item => item.temp_id !== boleto.temp_id))} title="Remover boleto" className="rounded p-1.5 text-red-500 hover:bg-red-50">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {boletoErro && <p className="text-[10px] text-red-500">{boletoErro}</p>}
+                  </div>
+                )}
+
+                {errors.modalidade_pagamento && (
+                  <p className="mt-2 text-[10px] font-medium text-red-500">{errors.modalidade_pagamento}</p>
+                )}
               </div>
 
               {/* Valor e parcelas */}
@@ -1836,12 +2217,25 @@ export default function PagarPage() {
 
       <FornecedorFormModal
         open={showFornecedorModal}
+        editId={editingFornecedorId}
+        initialData={editingFornecedorData}
         onClose={closeFornecedorModal}
-        onSaved={criado => {
+        onSaved={salvo => {
           apiClient.get('/financeiro/fornecedores/select').then(sel => {
-            setFornecedores(sel.data.data || [])
-            setFForn(String(criado.id))
-            if (!fEmp && criado.empresa && criado.empresa !== 'TODOS') setFEmp(criado.empresa)
+            const options = sel.data.data || []
+            setFornecedores(options)
+            setFForn(String(salvo.id))
+            const atualizado = options.find((item: FornecedorOption) => Number(item.id) === Number(salvo.id))
+            if (fModalidadePagamento === 'PIX') setFChavePixPagamento(atualizado?.chave_pix || salvo.chave_pix || '')
+            if (fModalidadePagamento === 'TED' || fModalidadePagamento === 'DOC') {
+              setFBancoPagamentoNome(atualizado?.banco_nome || salvo.banco_nome || '')
+              setFBancoPagamentoCodigo(atualizado?.codigo_banco || salvo.codigo_banco || '')
+              setFAgenciaPagamento(atualizado?.agencia || salvo.agencia || '')
+              setFContaPagamento(atualizado?.conta || salvo.conta || '')
+              setFDigitoPagamento(atualizado?.digito || salvo.digito || '')
+              setFTipoContaPagamento(atualizado?.tipo_conta || salvo.tipo_conta || '')
+            }
+            if (!fEmp && salvo.empresa && salvo.empresa !== 'TODOS') setFEmp(salvo.empresa)
           })
           closeFornecedorModal()
         }}

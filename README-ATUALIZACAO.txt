@@ -1,23 +1,27 @@
-LARMHUB FRONTEND v0.3.40
+LARMHUB FRONTEND v0.3.41
 
-Correções e melhorias:
-- Corrigido o botão "Voltar ao topo" das setas flutuantes.
-- O botão agora retorna primeiro a rolagem interna da tabela para a primeira linha e também retorna a página ao topo.
-- Mantidas as setas horizontais já aplicadas em Contas a Pagar, Cash Flow, Orçamento, Movimento Orçado e Movimento Bancário.
-- Aplicado o mesmo padrão de navegação em Contas a Receber, Bancos e Contas e Fornecedores.
-- Cabeçalhos dessas novas tabelas permanecem visíveis durante a rolagem vertical.
-- Nenhuma regra de cálculo, baixa, lançamento, cadastro ou filtro foi alterada.
+Alterações em Contas a Pagar:
+- Adicionado o botão "Editar fornecedor" ao lado de "+ Novo fornecedor".
+- Ao editar o fornecedor dentro do lançamento, a lista é atualizada sem fechar o lançamento.
+- Criado o campo Forma de pagamento / modalidade com as opções PIX, Boleto, TED e DOC.
+- PIX preenche automaticamente a chave cadastrada no fornecedor e permite ajuste no lançamento.
+- TED/DOC preenchem automaticamente banco, código, agência, conta, dígito e tipo de conta do fornecedor.
+- Boleto permite digitar a linha digitável e anexar múltiplos arquivos PDF ou imagem.
+- Boletos já salvos podem ser abertos ou removidos durante a edição.
+- Limite visual: 6MB por boleto e 20MB no total dos novos boletos.
+
+Versionamento:
+- Versão atual: 0.3.41.
+- Regra registrada: após 0.3.99, a próxima versão será 0.4.0.
 
 Instalação:
-1. Extraia este ZIP na raiz do frontend.
+1. Extraia o ZIP na raiz do frontend.
 2. Confirme a substituição dos arquivos.
 3. Publique novamente na Vercel.
 
 Arquivos alterados:
-- src/components/table-floating-nav.tsx
-- src/app/(dashboard)/financeiro/receber/page.tsx
-- src/app/(dashboard)/financeiro/bancos/page.tsx
-- src/app/(dashboard)/financeiro/fornecedores/page.tsx
+- src/app/(dashboard)/financeiro/pagar/page.tsx
+- src/data/system_releases_seed.js
 - package.json
 - package-lock.json
 - README-ATUALIZACAO.txt

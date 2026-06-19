@@ -6,6 +6,55 @@
 
 const SYSTEM_RELEASES = [
   {
+    version: "0.3.41",
+    title: "Contas a Pagar — modalidade, dados do fornecedor e múltiplos boletos",
+    description:
+      "Melhora a edição de lançamentos de Contas a Pagar com acesso direto ao fornecedor e instruções específicas para PIX, Boleto, TED e DOC.",
+    frontend_version: "0.3.41",
+    backend_version: "0.3.41",
+    released_at: "2026-06-19T18:10:00.000Z",
+    changes: [
+      "Adicionado botão Editar fornecedor ao lado de Novo fornecedor no formulário de Contas a Pagar.",
+      "A modalidade PIX passa a preencher automaticamente a chave PIX cadastrada no fornecedor, preservando uma cópia no lançamento.",
+      "As modalidades TED e DOC passam a preencher banco, código, agência, conta, dígito e tipo de conta do fornecedor.",
+      "A modalidade Boleto recebeu campo de linha digitável e upload de múltiplos arquivos PDF ou imagem.",
+      "Criada tabela fin_lancamentos_cp_boletos para armazenar vários boletos vinculados ao mesmo lançamento.",
+      "Boletos existentes podem ser abertos ou removidos durante a edição do lançamento.",
+      "A API passa a aceitar até 30MB por requisição, mantendo limite individual de 6MB e total de 20MB para os novos boletos.",
+      "Versionamento atualizado para 0.3.41; ao atingir 0.3.99, a próxima versão será 0.4.0."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Contas a Pagar v0.3.41"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro v0.3.41"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_lancamentos_cp",
+        "fin_lancamentos_cp_boletos",
+        "fin_fornecedores",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Cadastro de Fornecedores",
+        "PIX",
+        "Boleto",
+        "TED",
+        "DOC"
+      ],
+    },
+  },
+
+  {
     version: "0.0.1",
     title: "Base de versionamento e auditoria operacional",
     description:
