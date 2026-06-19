@@ -12,6 +12,33 @@ const { PLANO_CONTAS_SEED } = require("../data/plano_contas_seed");
 const router = express.Router();
 router.use(authenticate);
 
+function xmlEscape(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function sendExcelXml(res, filename, sheetName, columns, rows) {
+  const header = columns.map(c => `<Cell><Data ss:Type="String">${xmlEscape(c.header)}</Data></Cell>`).join('');
+  const body = rows.map(row => {
+    const cells = columns.map(c => {
+      const raw = typeof c.value === 'function' ? c.value(row) : row[c.key];
+      const value = raw === null || raw === undefined ? '' : raw;
+      const numeric = typeof value === 'number' && Number.isFinite(value);
+      return `<Cell><Data ss:Type="${numeric ? 'Number' : 'String'}">${xmlEscape(value)}</Data></Cell>`;
+    }).join('');
+    return `<Row>${cells}</Row>`;
+  }).join('');
+  const xml = `<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="${xmlEscape(sheetName).slice(0, 31) || 'Export'}"><Table><Row>${header}</Row>${body}</Table></Worksheet></Workbook>`;
+  res.setHeader('Content-Type', 'application/vnd.ms-excel; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  return res.send(xml);
+}
+
+
 const AI_JSON_SCHEMA_PROMPT = `
 Você é um extrator de dados financeiros para Contas a Pagar no Brasil.
 Leia o PDF/imagem anexado e retorne somente JSON válido, sem markdown e sem comentários.
@@ -121,6 +148,76 @@ function normalizeAiResult(raw) {
   };
 }
 
+const CP_DOCUMENTO_DUPLICADO_CONSTRAINT =
+  "uq_fin_lancamentos_cp_fornecedor_tipo_numero";
+
+function normalizeDocumentoKey(value) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^0-9A-Z]/g, "");
+}
+
+function duplicateCpMessage() {
+  return "Já existe um lançamento para este fornecedor com o mesmo tipo e número de documento.";
+}
+
+function isDuplicateCpDocumentError(err) {
+  return Boolean(
+    err &&
+      err.code === "23505" &&
+      (err.constraint === CP_DOCUMENTO_DUPLICADO_CONSTRAINT ||
+        String(err.message || "").includes(CP_DOCUMENTO_DUPLICADO_CONSTRAINT) ||
+        String(err.message || "").includes("mesmo tipo e número de documento")),
+  );
+}
+
+async function findDuplicateCpDocument(
+  client,
+  { fornecedorId, tipoDocumentoId, numeroDocumento, excludeId = null },
+) {
+  const fornecedor = Number(fornecedorId);
+  const tipoDocumento = Number(tipoDocumentoId);
+  const numeroNormalizado = normalizeDocumentoKey(numeroDocumento);
+
+  if (
+    !Number.isInteger(fornecedor) ||
+    fornecedor <= 0 ||
+    !Number.isInteger(tipoDocumento) ||
+    tipoDocumento <= 0 ||
+    !numeroNormalizado
+  ) {
+    return null;
+  }
+
+  const lockKey = `cp-documento:${fornecedor}:${tipoDocumento}:${numeroNormalizado}`;
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [lockKey]);
+
+  const params = [fornecedor, tipoDocumento, numeroNormalizado];
+  let excludeSql = "";
+  if (excludeId !== null && excludeId !== undefined && excludeId !== "") {
+    params.push(Number(excludeId));
+    excludeSql = ` AND l.id <> $${params.length}`;
+  }
+
+  const { rows } = await client.query(
+    `SELECT l.id, l.nf_doc, f.razao_social AS fornecedor_nome,
+            td.nome AS tipo_documento_nome
+       FROM fin_lancamentos_cp l
+       LEFT JOIN fin_fornecedores f ON f.id = l.fornecedor_id
+       LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
+      WHERE l.fornecedor_id = $1
+        AND l.tipo_documento_id = $2
+        AND UPPER(REGEXP_REPLACE(BTRIM(COALESCE(l.nf_doc, '')), '[^[:alnum:]]', '', 'g')) = $3
+        ${excludeSql}
+      ORDER BY l.id
+      LIMIT 1`,
+    params,
+  );
+
+  return rows[0] || null;
+}
+
 function parseMoney(value, fallback = 0) {
   if (value === undefined || value === null || value === "") return fallback;
   if (typeof value === "number")
@@ -179,15 +276,46 @@ function addMonthsDateOnly(baseDate, months) {
   return dateOnly(dt, iso);
 }
 
-function normalizeCpParcela(p, idx, fallbackDate, fallbackValue = 0) {
+const CP_RETENCAO_FIELDS = [
+  "retencao_ipi",
+  "retencao_iss",
+  "retencao_icms",
+  "retencao_pis",
+  "retencao_cofins",
+  "retencao_csll",
+  "retencao_irrf",
+  "retencao_inss",
+];
+
+function normalizeCpParcela(
+  p,
+  idx,
+  fallbackDate,
+  fallbackValue = 0,
+  fallbackTipoDocumentoId = null,
+  fallbackNumeroDocumento = null,
+) {
   const valor = parseMoney(p?.valor, fallbackValue);
   const acrescimo = parseMoney(p?.acrescimo, 0);
   const desconto = parseMoney(p?.desconto, 0);
   const juros = parseMoney(p?.juros, 0);
   const multa = parseMoney(p?.multa, 0);
+  const retencoes = Object.fromEntries(
+    CP_RETENCAO_FIELDS.map((field) => [
+      field,
+      parseMoney(
+        field === "retencao_csll" ? (p?.retencao_csll ?? p?.retencao_csl) : p?.[field],
+        0,
+      ),
+    ]),
+  );
+  const totalRetencoes = CP_RETENCAO_FIELDS.reduce(
+    (total, field) => total + retencoes[field],
+    0,
+  );
   const valorFinal = parseMoney(
     p?.valor_final,
-    Math.max(0, valor + acrescimo + juros + multa - desconto),
+    Math.max(0, valor + acrescimo + juros + multa - desconto - totalRetencoes),
   );
 
   return {
@@ -196,10 +324,13 @@ function normalizeCpParcela(p, idx, fallbackDate, fallbackValue = 0) {
     valor,
     vencimento: dateOnly(p?.vencimento, fallbackDate),
     status: p?.status || "pendente",
+    tipo_documento_id: parseInt(p?.tipo_documento_id || fallbackTipoDocumentoId) || null,
+    numero_documento: String(p?.numero_documento ?? fallbackNumeroDocumento ?? "").trim() || null,
     acrescimo,
     desconto,
     juros,
     multa,
+    ...retencoes,
     valor_final: valorFinal,
   };
 }
@@ -1442,12 +1573,12 @@ router.get("/lancamentos-cp", async (req, res) => {
   }
   if (tipo_documento_id) {
     params.push(parseInt(tipo_documento_id));
-    conditions.push(`l.tipo_documento_id = $${params.length}`);
+    conditions.push(`COALESCE(p.tipo_documento_id, l.tipo_documento_id) = $${params.length}`);
   }
   if (busca) {
     params.push(`%${busca}%`);
     conditions.push(
-      `(f.razao_social ILIKE $${params.length} OR l.historico ILIKE $${params.length} OR l.nf_doc ILIKE $${params.length} OR td.nome ILIKE $${params.length})`,
+      `(f.razao_social ILIKE $${params.length} OR l.historico ILIKE $${params.length} OR l.nf_doc ILIKE $${params.length} OR p.numero_documento ILIKE $${params.length} OR td.nome ILIKE $${params.length} OR ptd.nome ILIKE $${params.length})`,
     );
   }
   if (dt_inicio) {
@@ -1479,6 +1610,9 @@ router.get("/lancamentos-cp", async (req, res) => {
          f.razao_social AS fornecedor_nome,
          f.cnpj_cpf     AS fornecedor_cnpj,
          td.nome        AS tipo_documento_nome,
+         p.tipo_documento_id AS parcela_tipo_documento_id,
+         ptd.nome        AS parcela_tipo_documento_nome,
+         p.numero_documento AS parcela_numero_documento,
          b.banco_nome   AS banco_nome,
          b.agencia      AS banco_agencia,
          b.conta        AS banco_conta,
@@ -1491,6 +1625,14 @@ router.get("/lancamentos-cp", async (req, res) => {
          p.motivo_baixa AS parcela_motivo_baixa,
          p.acrescimo    AS parcela_acrescimo,
          p.desconto     AS parcela_desconto,
+         p.retencao_ipi AS parcela_retencao_ipi,
+         p.retencao_iss AS parcela_retencao_iss,
+         p.retencao_icms AS parcela_retencao_icms,
+         p.retencao_pis AS parcela_retencao_pis,
+         p.retencao_cofins AS parcela_retencao_cofins,
+         p.retencao_csll AS parcela_retencao_csll,
+         p.retencao_irrf AS parcela_retencao_irrf,
+         p.retencao_inss AS parcela_retencao_inss,
          p.juros        AS parcela_juros,
          p.multa        AS parcela_multa,
          p.valor_final  AS parcela_valor_final,
@@ -1506,6 +1648,7 @@ router.get("/lancamentos-cp", async (req, res) => {
        LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
        LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
        LEFT JOIN fin_parcelas_cp p ON p.lancamento_id = l.id
+       LEFT JOIN fin_tipos_documento ptd ON ptd.id = p.tipo_documento_id
        ${where}
        ORDER BY l.created_at DESC, p.numero ASC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -1517,6 +1660,7 @@ router.get("/lancamentos-cp", async (req, res) => {
        LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
        LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
        LEFT JOIN fin_parcelas_cp p ON p.lancamento_id = l.id
+       LEFT JOIN fin_tipos_documento ptd ON ptd.id = p.tipo_documento_id
        ${where}`,
       params.slice(0, -2),
     );
@@ -1526,6 +1670,123 @@ router.get("/lancamentos-cp", async (req, res) => {
       total: parseInt(ct.rows[0].count),
       total_valor: parseFloat(ct.rows[0].total_valor),
     });
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
+
+// GET /lancamentos-cp/exportar — exporta a lista filtrada em .xls compatível com Excel
+router.get("/lancamentos-cp/exportar", async (req, res) => {
+  const {
+    empresa,
+    status,
+    fornecedor_id,
+    tipo_documento_id,
+    busca,
+    dt_inicio,
+    dt_fim,
+    venc_inicio,
+    venc_fim,
+  } = req.query;
+  const conditions = [];
+  const params = [];
+
+  if (empresa) {
+    params.push(empresa.toUpperCase());
+    conditions.push(`l.empresa = $${params.length}`);
+  }
+  if (status) {
+    params.push(status);
+    conditions.push(`p.status = $${params.length}`);
+  }
+  if (fornecedor_id) {
+    params.push(parseInt(fornecedor_id));
+    conditions.push(`l.fornecedor_id = $${params.length}`);
+  }
+  if (tipo_documento_id) {
+    params.push(parseInt(tipo_documento_id));
+    conditions.push(`COALESCE(p.tipo_documento_id, l.tipo_documento_id) = $${params.length}`);
+  }
+  if (busca) {
+    params.push(`%${busca}%`);
+    conditions.push(
+      `(f.razao_social ILIKE $${params.length} OR l.historico ILIKE $${params.length} OR l.nf_doc ILIKE $${params.length} OR p.numero_documento ILIKE $${params.length} OR td.nome ILIKE $${params.length} OR ptd.nome ILIKE $${params.length})`,
+    );
+  }
+  if (dt_inicio) {
+    params.push(dt_inicio);
+    conditions.push(`l.dt_emissao >= $${params.length}`);
+  }
+  if (dt_fim) {
+    params.push(dt_fim);
+    conditions.push(`l.dt_emissao <= $${params.length}`);
+  }
+  if (venc_inicio) {
+    params.push(venc_inicio);
+    conditions.push(`p.vencimento >= $${params.length}`);
+  }
+  if (venc_fim) {
+    params.push(venc_fim);
+    conditions.push(`p.vencimento <= $${params.length}`);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  try {
+    const { rows } = await query(
+      `SELECT
+         l.empresa,
+         f.razao_social AS fornecedor_nome,
+         COALESCE(ptd.nome, td.nome) AS tipo_documento_nome,
+         COALESCE(NULLIF(BTRIM(p.numero_documento), ''), l.nf_doc) AS nf_doc,
+         l.historico,
+         TO_CHAR(l.dt_emissao, 'YYYY-MM-DD') AS dt_emissao,
+         p.numero AS parcela_numero,
+         l.qtd_parcelas,
+         COALESCE(p.valor_final, p.valor)::float AS valor,
+         (
+           COALESCE(p.retencao_ipi, 0) + COALESCE(p.retencao_iss, 0)
+           + COALESCE(p.retencao_icms, 0) + COALESCE(p.retencao_pis, 0)
+           + COALESCE(p.retencao_cofins, 0) + COALESCE(p.retencao_csll, 0)
+           + COALESCE(p.retencao_irrf, 0) + COALESCE(p.retencao_inss, 0)
+         )::float AS impostos_retidos,
+         TO_CHAR(p.vencimento, 'YYYY-MM-DD') AS vencimento,
+         TO_CHAR(p.dt_pagamento, 'YYYY-MM-DD') AS dt_pagamento,
+         p.status,
+         p.forma_pagamento,
+         b.banco_nome,
+         b.agencia,
+         b.conta
+       FROM fin_lancamentos_cp l
+       LEFT JOIN fin_fornecedores f ON f.id = l.fornecedor_id
+       LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
+       LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
+       LEFT JOIN fin_parcelas_cp p ON p.lancamento_id = l.id
+       LEFT JOIN fin_tipos_documento ptd ON ptd.id = p.tipo_documento_id
+       ${where}
+       ORDER BY p.vencimento ASC NULLS LAST, l.created_at DESC, p.numero ASC`,
+      params,
+    );
+
+    return sendExcelXml(res, "contas-a-pagar.xls", "Contas a Pagar", [
+      { header: "Empresa", key: "empresa" },
+      { header: "Fornecedor", key: "fornecedor_nome" },
+      { header: "Tipo de Documento", key: "tipo_documento_nome" },
+      { header: "Número", key: "nf_doc" },
+      { header: "Histórico", key: "historico" },
+      { header: "Emissão", key: "dt_emissao" },
+      { header: "Parcela", value: r => `${r.parcela_numero || ''}/${r.qtd_parcelas || 1}` },
+      { header: "Valor", key: "valor" },
+      { header: "Impostos Retidos", key: "impostos_retidos" },
+      { header: "Vencimento", key: "vencimento" },
+      { header: "Pagamento", key: "dt_pagamento" },
+      { header: "Status", key: "status" },
+      { header: "Forma de Pagamento", key: "forma_pagamento" },
+      { header: "Banco", key: "banco_nome" },
+      { header: "Agência", key: "agencia" },
+      { header: "Conta", key: "conta" },
+    ], rows);
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message });
   }
@@ -1549,7 +1810,13 @@ router.get("/lancamentos-cp/:id", async (req, res) => {
       return res.status(404).json({ ok: false, message: "Não encontrado" });
 
     const { rows: parcelas } = await query(
-      `SELECT p.*, TO_CHAR(p.vencimento, 'YYYY-MM-DD') AS vencimento, TO_CHAR(p.dt_pagamento, 'YYYY-MM-DD') AS dt_pagamento FROM fin_parcelas_cp p WHERE lancamento_id = $1 ORDER BY numero`,
+      `SELECT p.*, ptd.nome AS tipo_documento_nome,
+              TO_CHAR(p.vencimento, 'YYYY-MM-DD') AS vencimento,
+              TO_CHAR(p.dt_pagamento, 'YYYY-MM-DD') AS dt_pagamento
+         FROM fin_parcelas_cp p
+         LEFT JOIN fin_tipos_documento ptd ON ptd.id = p.tipo_documento_id
+        WHERE p.lancamento_id = $1
+        ORDER BY p.numero`,
       [req.params.id],
     );
     return res.json({ ok: true, data: { ...lanc, parcelas } });
@@ -1677,6 +1944,21 @@ router.post("/lancamentos-cp", async (req, res) => {
   try {
     await client.query("BEGIN");
 
+    const duplicate = await findDuplicateCpDocument(client, {
+      fornecedorId: fornecedor_id,
+      tipoDocumentoId: tipo_documento_id,
+      numeroDocumento: nf_doc,
+    });
+    if (duplicate) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        code: "DOCUMENTO_DUPLICADO",
+        message: duplicateCpMessage(),
+        duplicate_id: duplicate.id,
+      });
+    }
+
     // Insere lançamento
     const {
       rows: [lanc],
@@ -1722,6 +2004,8 @@ router.post("/lancamentos-cp", async (req, res) => {
             numero: i + 1,
             valor: parseFloat((vlr / n).toFixed(2)),
             vencimento: addMonthsDateOnly(dt_emissao || todayDateOnly(), i + 1),
+            tipo_documento_id: tipo_documento_id || null,
+            numero_documento: nf_doc || null,
           }));
 
     const parcs = rawParcs.map((p, idx) =>
@@ -1730,22 +2014,37 @@ router.post("/lancamentos-cp", async (req, res) => {
         idx,
         addMonthsDateOnly(dt_emissao || todayDateOnly(), idx + 1),
         parseFloat((vlr / n).toFixed(2)),
+        tipo_documento_id || null,
+        nf_doc || null,
       ),
     );
 
     for (const p of parcs) {
       await client.query(
         `INSERT INTO fin_parcelas_cp
-          (lancamento_id, numero, valor, vencimento, status, acrescimo, desconto, juros, multa, valor_final)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          (lancamento_id, numero, valor, vencimento, status, tipo_documento_id, numero_documento, acrescimo, desconto,
+           retencao_ipi, retencao_iss, retencao_icms, retencao_pis,
+           retencao_cofins, retencao_csll, retencao_irrf, retencao_inss,
+           juros, multa, valor_final)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
         [
           lanc.id,
           p.numero,
           p.valor,
           p.vencimento,
           p.status || "pendente",
+          p.tipo_documento_id,
+          p.numero_documento,
           p.acrescimo,
           p.desconto,
+          p.retencao_ipi,
+          p.retencao_iss,
+          p.retencao_icms,
+          p.retencao_pis,
+          p.retencao_cofins,
+          p.retencao_csll,
+          p.retencao_irrf,
+          p.retencao_inss,
           p.juros,
           p.multa,
           p.valor_final,
@@ -1759,6 +2058,13 @@ router.post("/lancamentos-cp", async (req, res) => {
       .json({ ok: true, data: { ...lanc, parcelas: parcs } });
   } catch (err) {
     await client.query("ROLLBACK");
+    if (isDuplicateCpDocumentError(err)) {
+      return res.status(409).json({
+        ok: false,
+        code: "DOCUMENTO_DUPLICADO",
+        message: duplicateCpMessage(),
+      });
+    }
     return res.status(500).json({ ok: false, message: err.message });
   } finally {
     client.release();
@@ -1815,6 +2121,22 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
       return res
         .status(404)
         .json({ ok: false, message: "Lançamento não encontrado" });
+    }
+
+    const duplicate = await findDuplicateCpDocument(client, {
+      fornecedorId: fornecedor_id,
+      tipoDocumentoId: tipo_documento_id,
+      numeroDocumento: nf_doc,
+      excludeId: req.params.id,
+    });
+    if (duplicate) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        code: "DOCUMENTO_DUPLICADO",
+        message: duplicateCpMessage(),
+        duplicate_id: duplicate.id,
+      });
     }
 
     const { rows: paidRows } = await client.query(
@@ -1886,6 +2208,8 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
             valor: parseFloat((vlr / n).toFixed(2)),
             vencimento: addMonthsDateOnly(dt_emissao || todayDateOnly(), i + 1),
             status: "pendente",
+            tipo_documento_id: tipo_documento_id || null,
+            numero_documento: nf_doc || null,
           }));
 
     const parcs = rawParcs.map((p, idx) =>
@@ -1894,6 +2218,8 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
         idx,
         addMonthsDateOnly(dt_emissao || todayDateOnly(), idx + 1),
         parseFloat((vlr / n).toFixed(2)),
+        tipo_documento_id || null,
+        nf_doc || null,
       ),
     );
 
@@ -1926,33 +2252,83 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
                     WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN status
                     ELSE $3
                   END,
+                  tipo_documento_id=CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN tipo_documento_id
+                    ELSE $4
+                  END,
+                  numero_documento=CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN numero_documento
+                    ELSE $5
+                  END,
                   acrescimo=CASE
                     WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN acrescimo
-                    ELSE $4
+                    ELSE $6
                   END,
                   desconto=CASE
                     WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN desconto
-                    ELSE $5
+                    ELSE $7
+                  END,
+                  retencao_ipi=CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN retencao_ipi
+                    ELSE $8
+                  END,
+                  retencao_iss=CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN retencao_iss
+                    ELSE $9
+                  END,
+                  retencao_icms=CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN retencao_icms
+                    ELSE $10
+                  END,
+                  retencao_pis=CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN retencao_pis
+                    ELSE $11
+                  END,
+                  retencao_cofins=CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN retencao_cofins
+                    ELSE $12
+                  END,
+                  retencao_csll=CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN retencao_csll
+                    ELSE $13
+                  END,
+                  retencao_irrf=CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN retencao_irrf
+                    ELSE $14
+                  END,
+                  retencao_inss=CASE
+                    WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN retencao_inss
+                    ELSE $15
                   END,
                   juros=CASE
                     WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN juros
-                    ELSE $6
+                    ELSE $16
                   END,
                   multa=CASE
                     WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN multa
-                    ELSE $7
+                    ELSE $17
                   END,
                   valor_final=CASE
                     WHEN LOWER(COALESCE(status, '')) = 'pago' OR movimento_id IS NOT NULL THEN valor_final
-                    ELSE $8
+                    ELSE $18
                   END
-            WHERE lancamento_id=$9 AND numero=$10`,
+            WHERE lancamento_id=$19 AND numero=$20`,
           [
             p.valor,
             p.vencimento,
             p.status || "pendente",
+            p.tipo_documento_id,
+            p.numero_documento,
             p.acrescimo,
             p.desconto,
+            p.retencao_ipi,
+            p.retencao_iss,
+            p.retencao_icms,
+            p.retencao_pis,
+            p.retencao_cofins,
+            p.retencao_csll,
+            p.retencao_irrf,
+            p.retencao_inss,
             p.juros,
             p.multa,
             p.valor_final,
@@ -1968,16 +2344,29 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
       for (const p of parcs) {
         await client.query(
           `INSERT INTO fin_parcelas_cp
-            (lancamento_id, numero, valor, vencimento, status, acrescimo, desconto, juros, multa, valor_final)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            (lancamento_id, numero, valor, vencimento, status, tipo_documento_id, numero_documento, acrescimo, desconto,
+             retencao_ipi, retencao_iss, retencao_icms, retencao_pis,
+             retencao_cofins, retencao_csll, retencao_irrf, retencao_inss,
+             juros, multa, valor_final)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
           [
             req.params.id,
             p.numero,
             p.valor,
             p.vencimento,
             p.status || "pendente",
+            p.tipo_documento_id,
+            p.numero_documento,
             p.acrescimo,
             p.desconto,
+            p.retencao_ipi,
+            p.retencao_iss,
+            p.retencao_icms,
+            p.retencao_pis,
+            p.retencao_cofins,
+            p.retencao_csll,
+            p.retencao_irrf,
+            p.retencao_inss,
             p.juros,
             p.multa,
             p.valor_final,
@@ -1987,7 +2376,13 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
     }
 
     const { rows: updatedParcelas } = await client.query(
-      `SELECT p.*, TO_CHAR(p.vencimento, 'YYYY-MM-DD') AS vencimento, TO_CHAR(p.dt_pagamento, 'YYYY-MM-DD') AS dt_pagamento FROM fin_parcelas_cp p WHERE lancamento_id=$1 ORDER BY numero`,
+      `SELECT p.*, ptd.nome AS tipo_documento_nome,
+              TO_CHAR(p.vencimento, 'YYYY-MM-DD') AS vencimento,
+              TO_CHAR(p.dt_pagamento, 'YYYY-MM-DD') AS dt_pagamento
+         FROM fin_parcelas_cp p
+         LEFT JOIN fin_tipos_documento ptd ON ptd.id = p.tipo_documento_id
+        WHERE p.lancamento_id=$1
+        ORDER BY p.numero`,
       [req.params.id],
     );
 
@@ -1995,6 +2390,13 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
     return res.json({ ok: true, data: { ...lanc, parcelas: updatedParcelas } });
   } catch (err) {
     await client.query("ROLLBACK");
+    if (isDuplicateCpDocumentError(err)) {
+      return res.status(409).json({
+        ok: false,
+        code: "DOCUMENTO_DUPLICADO",
+        message: duplicateCpMessage(),
+      });
+    }
     return res.status(500).json({ ok: false, message: err.message });
   } finally {
     client.release();
@@ -2084,6 +2486,7 @@ router.put("/lancamentos-cp/:id/parcelas/:parcId/pagar", async (req, res) => {
     multa = 0,
     valor_final,
     forma_pagamento,
+    banco_conta_id,
   } = req.body;
 
   const dataPagamento = dateOnly(dt_pagamento, todayDateOnly());
@@ -2091,6 +2494,10 @@ router.put("/lancamentos-cp/:id/parcelas/:parcId/pagar", async (req, res) => {
     return res
       .status(400)
       .json({ ok: false, message: "forma_pagamento obrigatório" });
+  if (!banco_conta_id)
+    return res
+      .status(400)
+      .json({ ok: false, message: "banco_conta_id obrigatório" });
 
   const client = await require("../config/database").pool.connect();
   try {
@@ -2100,7 +2507,8 @@ router.put("/lancamentos-cp/:id/parcelas/:parcId/pagar", async (req, res) => {
       `SELECT
          p.*,
          l.empresa, l.fornecedor_id, l.banco_conta_id, l.conta_contabil, l.descricao_conta,
-         l.historico, l.nf_doc, l.centro_custo, l.obra, l.n_cheque,
+         l.historico, COALESCE(NULLIF(BTRIM(p.numero_documento), ''), l.nf_doc) AS nf_doc,
+         p.tipo_documento_id AS parcela_tipo_documento_id, l.centro_custo, l.obra, l.n_cheque,
          f.razao_social AS fornecedor_nome,
          b.banco_nome   AS banco_nome
        FROM fin_parcelas_cp p
@@ -2120,6 +2528,19 @@ router.put("/lancamentos-cp/:id/parcelas/:parcId/pagar", async (req, res) => {
         .json({ ok: false, message: "Parcela não encontrada" });
     }
 
+    const { rows: bancoRows } = await client.query(
+      `SELECT id, empresa, banco_nome, agencia, conta, digito
+         FROM fin_bancos_contas
+        WHERE id = $1 AND ativo = true
+        LIMIT 1`,
+      [banco_conta_id],
+    );
+    const bancoPagamento = bancoRows[0];
+    if (!bancoPagamento) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ ok: false, message: "Conta bancária de pagamento não encontrada ou inativa" });
+    }
+
     const valorParcela = parseMoney(parc.valor);
     const acrescimoNum = parseMoney(acrescimo);
     const descontoNum = parseMoney(desconto);
@@ -2135,7 +2556,7 @@ router.put("/lancamentos-cp/:id/parcelas/:parcId/pagar", async (req, res) => {
     const movimentoPayload = [
       dataPagamento,
       parc.empresa,
-      parc.banco_nome || null,
+      bancoPagamento.banco_nome || null,
       0,
       valorFinalNum,
       parc.fornecedor_nome || null,
@@ -2152,7 +2573,7 @@ router.put("/lancamentos-cp/:id/parcelas/:parcId/pagar", async (req, res) => {
       "financeiro",
       parc.vencimento,
       parc.fornecedor_id || null,
-      parc.banco_conta_id || null,
+      bancoPagamento.id || null,
     ];
 
     if (movimentoId) {
@@ -2177,6 +2598,13 @@ router.put("/lancamentos-cp/:id/parcelas/:parcId/pagar", async (req, res) => {
       );
       movimentoId = movRows[0]?.id || null;
     }
+
+    await client.query(
+      `UPDATE fin_lancamentos_cp
+          SET banco_conta_id=$1, updated_at=NOW()
+        WHERE id=$2 AND (banco_conta_id IS NULL OR banco_conta_id <> $1)`,
+      [bancoPagamento.id, req.params.id],
+    );
 
     await client.query(
       `UPDATE fin_parcelas_cp

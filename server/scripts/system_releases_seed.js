@@ -993,6 +993,658 @@ const SYSTEM_RELEASES = [
       ],
     },
   },
+
+  {
+    version: "0.3.10",
+    title: "Financeiro — detalhes do Cash Flow e ajustes de fornecedores",
+    description:
+      "Adiciona abertura de lançamentos no Cash Flow mensal e diário, botão direto para inativar/reativar fornecedores na listagem e flexibiliza o número do documento em Contas a Pagar para mínimo de 1 caractere.",
+    frontend_version: "0.3.10",
+    backend_version: "0.3.10",
+    released_at: "2026-05-31T20:40:00.000Z",
+    changes: [
+      "Adicionado botão Inativar/Reativar na coluna Ações da listagem de Fornecedores, preservando o status atual e sem exclusão física.",
+      "Alterada a validação do campo NF / Nº Documento em Contas a Pagar de mínimo 9 dígitos numéricos para mínimo 1 caractere.",
+      "Adicionado modal de detalhamento no Cash Flow para abrir os lançamentos por célula na visão mensal ou diária.",
+      "Criado endpoint GET /financeiro/cashflow/lancamentos para retornar lançamentos do Movimento Bancário, Contas a Pagar Futuro e Contas a Receber Futuro conforme linha, mês e dia selecionados.",
+      "Mantidas as regras existentes de fornecedores, contratos, bancos, contas a pagar, movimento bancário, reservas, comissões e recebíveis sem alteração estrutural.",
+      "Atualizada versão técnica do front-end e backend para 0.3.10."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Cash Flow Detalhes v0.3.10"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "PM2"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Contas a Pagar Futuro",
+        "Contas a Receber Futuro",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.11",
+    title: "Financeiro — ajuste de lançamentos do Cash Flow diário",
+    description:
+      "Corrige a abertura de lançamentos nas linhas sintéticas do Cash Flow diário, inclui lançamentos internos de banco sem movimento vinculado e melhora a navegação horizontal da tabela com colunas fixas.",
+    frontend_version: "0.3.11",
+    backend_version: "0.3.11",
+    released_at: "2026-05-31T22:10:00.000Z",
+    changes: [
+      "Corrigido o modal de lançamentos do Cash Flow diário para Receitas Realizadas, Despesas Realizadas e Saldo do Dia, sem filtrar indevidamente por natureza financeira 1/2/5.",
+      "Incluídos lançamentos internos de banco existentes em fin_bancos_lancamentos sem movimento_id vinculado na composição da visão diária e no modal de detalhes.",
+      "Mantido o filtro por natureza financeira nas linhas reais do Cash Flow mensal, preservando o comportamento existente.",
+      "Adicionada barra de rolagem horizontal superior na tabela do Cash Flow para facilitar navegação em meses/dias.",
+      "Travadas as colunas # e Descrição no Cash Flow para manter os nomes das linhas visíveis durante a rolagem horizontal.",
+      "Atualizada versão técnica do front-end e backend para 0.3.11."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Cash Flow Sticky Columns v0.3.11"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "PM2"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_bancos_lancamentos",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Lançamentos internos de banco",
+        "Cash Flow Detalhado",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.12",
+    title: "Financeiro — Cash Flow por Movimento Bancário e seed futuro de Contas a Pagar",
+    description:
+      "Ajusta o detalhamento do Cash Flow diário para usar o Movimento Bancário como fonte realizada, reforça o fallback visual do modal e adiciona importação de lançamentos futuros de 2026 diretamente em Contas a Pagar, sem criar movimento bancário antes da baixa.",
+    frontend_version: "0.3.12",
+    backend_version: "0.3.12",
+    released_at: "2026-05-31T23:00:00.000Z",
+    changes: [
+      "Ajustado o backend do Cash Flow diário para buscar lançamentos realizados diretamente em fin_movimento, com filtro robusto por empresa, ano, mês e dia.",
+      "Corrigido o detalhamento de Receitas Realizadas e Despesas Realizadas para aceitar valores de saída/entrada diferentes de zero, evitando modal vazio quando a célula possui valor.",
+      "Mantido o uso de fin_bancos_lancamentos apenas para lançamentos internos sem movimento_id, evitando duplicidade quando já existe vínculo com o Movimento Bancário.",
+      "Adicionado fallback no frontend para consultar a mesma listagem de Movimento Bancário quando o endpoint de detalhes do Cash Flow diário não localizar itens.",
+      "Adicionado script de importação de contas a pagar futuras de 2026, gravando somente fin_lancamentos_cp e fin_parcelas_cp como pendente.",
+      "Garantido que o Excel futuro de Contas a Pagar não alimente fin_movimento; o Movimento Bancário só é criado pelo rito normal de pagamento/baixa.",
+      "Atualizada versão técnica do front-end e backend para 0.3.12."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Cash Flow Detalhes v0.3.12"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Importação Contas a Pagar Futuro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "fin_bancos_lancamentos",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Contas a Pagar Futuro",
+        "Excel 2026 futuro",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.13",
+    title: "Financeiro — Orçamento mensal, exportações e baixa com conta bancária",
+    description:
+      "Cria o módulo inicial de Orçamento Mensal com visão Previsto x Realizado, adiciona exportação Excel no Movimento Bancário e em Contas a Pagar, padroniza status do Movimento e exige conta bancária na baixa de parcelas.",
+    frontend_version: "0.3.13",
+    backend_version: "0.3.13",
+    released_at: "2026-05-31T23:45:00.000Z",
+    changes: [
+      "Adicionado módulo Financeiro > Orçamento com estrutura mensal Previsto x Realizado por linha financeira, preparado para receber futura planilha de orçamento.",
+      "Adicionado botão Exportar Excel na tela de Movimento Bancário usando os filtros ativos da listagem.",
+      "Adicionado botão Exportar Excel na tela de Contas a Pagar usando os filtros ativos da listagem.",
+      "Padronizado o Movimento Bancário para exibir apenas status Realizado para movimentos diretos e Pago para movimentos gerados por baixa de Contas a Pagar.",
+      "A baixa de parcela em Contas a Pagar agora exige a seleção da conta bancária de pagamento, com banco, agência e conta, e grava esse vínculo no movimento bancário.",
+      "Adicionada barra de rolagem horizontal superior na listagem de Contas a Pagar para facilitar navegação lateral.",
+      "Atualizada versão técnica do front-end e backend para 0.3.13."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Orçamento Mensal v0.3.13"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Exportação Excel XML"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Contas a Pagar",
+        "Orçamento Mensal",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+  {
+    version: "0.3.14",
+    title: "Financeiro — Status do movimento e ajustes de tabelas",
+    description:
+      "Padroniza o Movimento Bancário para status Pago/Recebido, ajusta filtros, melhora a rolagem horizontal das tabelas e usa o histórico quando não houver fornecedor identificado em Contas a Pagar.",
+    frontend_version: "0.3.14",
+    backend_version: "0.3.14",
+    released_at: "2026-05-31T23:58:00.000Z",
+    changes: [
+      "Movimento Bancário passa a exibir Pago para saídas e Recebido para entradas, removendo o status Realizado da listagem e dos filtros.",
+      "Filtro de status do Movimento Bancário passa a disponibilizar apenas Todos, Pago e Recebido.",
+      "Exportação do Movimento Bancário usa a mesma regra de status Pago/Recebido aplicada na tela.",
+      "Adicionada barra de rolagem horizontal superior na tela de Movimento Bancário para melhorar a navegação lateral da tabela.",
+      "A tabela de Contas a Pagar foi ajustada com largura fixa por coluna para reduzir o espaço excessivo entre Pagamento e Status.",
+      "Quando Contas a Pagar não tiver fornecedor identificado, a listagem passa a mostrar o histórico do lançamento como referência principal.",
+      "Atualizada versão técnica do front-end e backend para 0.3.14."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.14"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Exportação Excel XML"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Contas a Pagar",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.15",
+    title: "Financeiro — Correção dos status do Movimento Bancário",
+    description:
+      "Corrige a lista de status do Movimento Bancário para usar somente Pago e Realizado, removendo Pendente e o Pago duplicado no filtro.",
+    frontend_version: "0.3.15",
+    backend_version: "0.3.15",
+    released_at: "2026-06-01T00:15:00.000Z",
+    changes: [
+      "Filtro de status do Movimento Bancário agora exibe somente Todos status, Pago e Realizado.",
+      "Removidas as opções Pendente e Recebido do filtro do Movimento Bancário.",
+      "Corrigido o rótulo do status Realizado, que estava aparecendo como Pago e gerando duplicidade visual.",
+      "Backend do Movimento Bancário passa a retornar Pago para movimentos vinculados à baixa de Contas a Pagar e Realizado para movimentos bancários diretos/importados.",
+      "Exportação Excel do Movimento Bancário passa a seguir a mesma regra de status Pago/Realizado.",
+      "Atualizada versão técnica do front-end e backend para 0.3.15."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.15"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Exportação Excel XML"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Contas a Pagar",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.16",
+    title: "Financeiro — Status correto do Movimento Bancário",
+    description:
+      "Ajusta definitivamente o Movimento Bancário para trabalhar com os status Pago e Recebido, derivados do tipo do movimento: saídas como Pago e entradas como Recebido.",
+    frontend_version: "0.3.16",
+    backend_version: "0.3.16",
+    released_at: "2026-06-01T00:25:00.000Z",
+    changes: [
+      "Movimento Bancário passa a exibir somente Pago e Recebido como status operacionais.",
+      "Saídas/débitos do Movimento Bancário, inclusive registros antigos importados como realizado, passam a ser tratados e filtrados como Pago.",
+      "Entradas/créditos do Movimento Bancário passam a ser tratadas e filtradas como Recebido.",
+      "Filtro de status do Movimento Bancário passa a disponibilizar apenas Todos status, Pago e Recebido.",
+      "Exportação Excel do Movimento Bancário passa a usar a mesma regra visual: saídas como Pago e entradas como Recebido.",
+      "Mantida compatibilidade para status antigo realizado no backend, direcionando-o para o filtro de saídas/Pago quando recebido por cache ou versão anterior do front-end.",
+      "Atualizada versão técnica do front-end e backend para 0.3.16."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.16"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Exportação Excel XML"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.17",
+    title: "Financeiro — Saldo final do Movimento com saldos bancários",
+    description:
+      "Atualiza o resumo do Movimento Bancário para calcular o Saldo Final a partir dos saldos iniciais das contas bancárias de 01/01 do ano selecionado, somando entradas e subtraindo saídas.",
+    frontend_version: "0.3.17",
+    backend_version: "0.3.17",
+    released_at: "2026-06-01T00:45:00.000Z",
+    changes: [
+      "O card de Saldo do Movimento Bancário passa a representar o Saldo Final do ano selecionado.",
+      "O cálculo considera a soma dos saldos iniciais das contas bancárias ativas cadastradas para 01/01 do ano filtrado.",
+      "Para 2026, o cálculo usa os saldos iniciais cadastrados em fin_bancos_contas com data_saldo_inicial em 2026.",
+      "Saldo Final = saldos iniciais dos bancos + entradas do Movimento Bancário - saídas do Movimento Bancário.",
+      "Quando houver filtro por empresa, banco ou conta bancária, o saldo inicial considerado respeita o mesmo recorte financeiro.",
+      "Atualizada versão técnica do front-end e backend para 0.3.17."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.17"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Bancos e Contas",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.18",
+    title: "Financeiro — card de Saldo Inicial no Movimento Bancário",
+    description:
+      "Adiciona o card de Saldo Inicial no resumo do Movimento Bancário para deixar visível a composição do Saldo Final do ano selecionado.",
+    frontend_version: "0.3.18",
+    backend_version: "0.3.18",
+    released_at: "2026-06-01T01:05:00.000Z",
+    changes: [
+      "Resumo do Movimento Bancário passa a exibir o card Saldo Inicial do ano selecionado, antes de Entradas, Saídas e Saldo Final.",
+      "Para 2026, o card mostra a soma dos saldos iniciais das contas bancárias cadastradas em 01/01/2026.",
+      "Frontend passa a calcular o Saldo Final com fallback explícito: Saldo Inicial + Entradas - Saídas, evitando exibir apenas o saldo do movimento quando o backend ainda estiver em cache.",
+      "Backend passa a retornar também saldo_final e formula_saldo_final na resposta do Movimento Bancário para facilitar conferência da composição.",
+      "Atualizada versão técnica do front-end e backend para 0.3.18."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.18"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Bancos e Contas",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.19",
+    title: "Financeiro — correção do Saldo Inicial no Movimento Bancário",
+    description:
+      "Corrige o cálculo e a exibição do Saldo Inicial no Movimento Bancário, usando a mesma base de saldos cadastrados em Bancos e Contas quando necessário.",
+    frontend_version: "0.3.19",
+    backend_version: "0.3.19",
+    released_at: "2026-06-01T01:25:00.000Z",
+    changes: [
+      "Backend passa a somar os saldos iniciais das contas bancárias do ano selecionado e aplica fallback para a soma das contas ativas quando a data do saldo inicial não estiver preenchida na base.",
+      "Resumo do Movimento Bancário passa a retornar aliases saldo_inicial, saldo_inicial_ano e saldo_inicial_bancos para evitar incompatibilidade entre versões de frontend e backend.",
+      "Frontend passa a aceitar os aliases de saldo inicial e exibir R$ 0,00 no card quando o valor for zero, evitando mostrar apenas traço no card de conferência.",
+      "Mantida a fórmula do Saldo Final: Saldo Inicial + Entradas - Saídas.",
+      "Atualizada versão técnica do front-end e backend para 0.3.19."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.19"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Bancos e Contas",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.20",
+    title: "Financeiro — Saldo Inicial do Movimento pela base de Bancos e Contas",
+    description:
+      "Corrige definitivamente o Saldo Inicial do Movimento Bancário usando a mesma origem do módulo Bancos e Contas, incluindo fallback no front-end quando o backend estiver em cache.",
+    frontend_version: "0.3.20",
+    backend_version: "0.3.20",
+    released_at: "2026-06-01T01:45:00.000Z",
+    changes: [
+      "Movimento Bancário passa a consultar o saldo inicial diretamente em fin_bancos_contas, a mesma tabela usada por Financeiro > Bancos e Contas.",
+      "Criado endpoint GET /financeiro/movimento/saldo-inicial-bancos para conferência isolada do saldo inicial por ano, empresa, banco e conta.",
+      "Filtro por empresa no saldo inicial passa a comparar UPPER/TRIM, evitando retorno zerado por diferença de caixa ou espaços.",
+      "Frontend passa a buscar fallback em /financeiro/bancos quando o resumo do movimento não trouxer saldo inicial, garantindo que LARM mostre R$ 88.195,56 e Consolidado mostre a soma das contas ativas.",
+      "Saldo Final do Movimento continua sendo calculado como Saldo Inicial + Entradas - Saídas.",
+      "Atualizada versão técnica do front-end e backend para 0.3.20."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.20"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Bancos e Contas",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.21",
+    title: "Financeiro — Orçamento 2026 com Previsto x Realizado",
+    description:
+      "Conclui a primeira versão operacional do módulo Orçamento, importando o CashFlow orçado e o Movimento Bancário orçado de 2026 para comparar previsto e realizado.",
+    frontend_version: "0.3.21",
+    backend_version: "0.3.21",
+    released_at: "2026-06-01T02:15:00.000Z",
+    changes: [
+      "Criadas tabelas fin_orcamento_linhas, fin_orcamento_valores e fin_orcamento_movimento para separar orçamento do movimento bancário realizado.",
+      "Criado importador scripts/import_orcamento_2026.py para carregar CashFlow Consolidado 2026-Orçado e Movimento Bancário 2026-Orçado.",
+      "Adicionados comandos npm run db:migrate:orcamento e npm run db:seed:orcamento:2026 no backend.",
+      "Criados endpoints GET /financeiro/orcamento, GET /financeiro/orcamento/empresas e GET /financeiro/orcamento/movimento.",
+      "Tela Financeiro > Orçamento passa a exibir valores Previsto x Realizado por mês e por linha financeira.",
+      "Movimento orçado fica armazenado separado em fin_orcamento_movimento, sem gravar nada em fin_movimento realizado.",
+      "Atualizada versão técnica do front-end e backend para 0.3.21."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.21"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_orcamento_linhas",
+        "fin_orcamento_valores",
+        "fin_orcamento_movimento",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Orçamento Financeiro",
+        "CashFlow Orçado",
+        "Movimento Bancário Orçado",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.22",
+    title: "Financeiro — Orçamento baseado no Movimento Orçado",
+    description:
+      "Corrige a origem do previsto no módulo Orçamento 2026 para usar a planilha de Movimento Bancário Orçado e adiciona a tela Movimento Orçado.",
+    frontend_version: "0.3.22",
+    backend_version: "0.3.22",
+    released_at: "2026-06-01T02:45:00.000Z",
+    changes: [
+      "Alterado o seed do orçamento para usar a planilha Movimento Bancário-2026-orçado como fonte dos valores previstos.",
+      "O importador passa a agregar o previsto por Natureza Financeira, empresa e mês em fin_orcamento_valores.",
+      "Mantida a gravação do movimento orçado em fin_orcamento_movimento, sem misturar com fin_movimento realizado.",
+      "Criada a tela Financeiro > Mov. Orçado para consultar os lançamentos previstos de 2026.",
+      "Tela Orçamento passa a comparar Previsto do Movimento Orçado x Realizado do Movimento Bancário efetivo.",
+      "Atualizado comando npm run db:seed:orcamento:2026 para usar somente scripts/imports/orcamento-movimento-2026.xlsx.",
+      "Atualizada versão técnica do front-end e backend para 0.3.22."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.22"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_orcamento_linhas",
+        "fin_orcamento_valores",
+        "fin_orcamento_movimento",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário Orçado",
+        "Orçamento Financeiro",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.23",
+    title: "Financeiro — correção do realizado e limpeza de movimento futuro",
+    description:
+      "Ajusta o Orçamento para usar o Movimento Bancário realmente pago/recebido como realizado, adiciona limpeza segura dos movimentos futuros de 2026 importados por engano e corrige a navegação do Mov. Orçado.",
+    frontend_version: "0.3.23",
+    backend_version: "0.3.23",
+    released_at: "2026-06-01T03:20:00.000Z",
+    changes: [
+      "Orçamento passa a preencher Realizado a partir do Movimento Bancário efetivo, e não mais dos valores estáticos do CashFlow.",
+      "Criada trava para ignorar movimentos futuros de 2026 sem vínculo com baixa de Contas a Pagar ou recebimento em Contas a Receber.",
+      "Adicionado script seguro para prévia e limpeza dos movimentos futuros indevidos após 28/06/2026.",
+      "Mov. Orçado recebeu barra horizontal superior para facilitar navegação lateral da tabela.",
+      "Corrigido destaque duplicado no menu lateral entre Mov. Orçado e Mov. Bancário.",
+      "Atualizada versão técnica do front-end e backend para 0.3.23."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Financeiro v0.3.23"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_orcamento_movimento",
+        "fin_orcamento_valores",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário Realizado",
+        "Movimento Bancário Orçado",
+        "Orçamento Financeiro",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
 ];
 
 module.exports = { SYSTEM_RELEASES };
