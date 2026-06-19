@@ -1,8 +1,9 @@
 'use client'
 
 import type { ElementType } from 'react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Search, Download, AlertCircle, CheckCircle, Clock, DollarSign } from 'lucide-react'
+import TableFloatingNav from '@/components/table-floating-nav'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
 import { mockParcelas, mockKPIs } from '@/lib/mock-data'
 import type { ParcelaStatus } from '@/types'
@@ -17,6 +18,7 @@ const STATUS_CONFIG: Record<ParcelaStatus, { label: string; color: string; icon:
 export default function ContasReceberPage() {
   const [filter, setFilter] = useState<ParcelaStatus | 'all'>('all')
   const [search, setSearch] = useState('')
+  const tableScrollRef = useRef<HTMLDivElement | null>(null)
 
   const filtered = mockParcelas.filter(p => {
     if (filter !== 'all' && p.status !== filter) return false
@@ -78,8 +80,9 @@ export default function ContasReceberPage() {
       </div>
 
       <div className="bg-white rounded-xl border border-slate-100 shadow-card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
+        <div ref={tableScrollRef} className="max-h-[70vh] overflow-auto">
+        <table className="w-full text-sm" style={{ minWidth: 980 }}>
+          <thead className="sticky top-0 z-20 bg-slate-50">
             <tr className="border-b border-slate-100 bg-slate-50/50">
               <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Cliente</th>
               <th className="text-left px-4 py-3 text-xs font-semibold text-slate-600">Contrato</th>
@@ -119,10 +122,13 @@ export default function ContasReceberPage() {
             })}
           </tbody>
         </table>
+        </div>
         {filtered.length === 0 && (
           <div className="py-12 text-center text-slate-400 text-sm">Nenhuma parcela encontrada</div>
         )}
       </div>
+
+      <TableFloatingNav scrollRef={tableScrollRef} />
     </div>
   )
 }

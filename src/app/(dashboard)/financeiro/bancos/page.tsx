@@ -5,7 +5,7 @@
  * → larmhub-web/src/app/(dashboard)/financeiro/bancos/page.tsx
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Plus,
   Pencil,
@@ -22,6 +22,7 @@ import {
 import { apiClient } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
 import BancoSearchSelect from "@/components/financeiro/BancoSearchSelect";
+import TableFloatingNav from "@/components/table-floating-nav";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type LancamentoTipo = "saldo_inicial" | "taxa" | "rendimento" | "aplicacao";
@@ -179,6 +180,7 @@ export default function BancosPage() {
   const [fEmpresa, setFEmpresa] = useState("");
   const [fStatus, setFStatus] = useState<"ativas" | "inativas" | "todas">("ativas");
   const [statusLoadingId, setStatusLoadingId] = useState<number | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Lançamentos extras (taxas, rendimentos)
   const [showLancModal, setShowLancModal] = useState(false);
@@ -451,9 +453,9 @@ export default function BancosPage() {
 
       {/* Tabela */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
+        <div ref={tableScrollRef} className="max-h-[70vh] overflow-auto">
+          <table className="w-full text-xs" style={{ minWidth: 980 }}>
+            <thead className="sticky top-0 z-20">
               <tr className="bg-[#0d1b2a] text-white">
                 {[
                   "Empresa",
@@ -589,6 +591,8 @@ export default function BancosPage() {
           </table>
         </div>
       </div>
+
+      <TableFloatingNav scrollRef={tableScrollRef} />
 
       {/* ── Modal Nova/Editar Conta ─────────────────────────────────────────── */}
       {showForm && (

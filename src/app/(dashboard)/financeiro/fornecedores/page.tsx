@@ -33,6 +33,7 @@ import {
 import * as XLSX from "xlsx";
 import { apiClient } from "@/lib/auth-store";
 import { cn } from "@/lib/utils";
+import TableFloatingNav from "@/components/table-floating-nav";
 import BancoSearchSelect from "@/components/financeiro/BancoSearchSelect";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -670,6 +671,7 @@ export default function FornecedoresPage() {
   const [fBusca, setFBusca] = useState("");
   const [fEmpresa, setFEmpresa] = useState("");
   const [fCategoria, setFCategoria] = useState("");
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Importação
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -1329,9 +1331,9 @@ export default function FornecedoresPage() {
 
       {/* Tabela */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
+        <div ref={tableScrollRef} className="max-h-[70vh] overflow-auto">
+          <table className="w-full text-sm" style={{ minWidth: 980 }}>
+            <thead className="sticky top-0 z-20">
               <tr className="bg-[#0d1b2a] text-white">
                 {[
                   "Razão Social / Fantasia",
@@ -1455,6 +1457,8 @@ export default function FornecedoresPage() {
           </table>
         </div>
       </div>
+
+      <TableFloatingNav scrollRef={tableScrollRef} />
 
       {/* ── Modal Importação ────────────────────────────────────────────────── */}
       {showImport && (
