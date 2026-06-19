@@ -1,11 +1,11 @@
-LARMHUB FRONTEND v0.3.37
+LARMHUB FRONTEND v0.3.38
 
 Alterações:
-- Adicionado indicador visual nas células de detalhe do Cash Flow que incluem valores em aberto do Contas a Pagar.
-- Ao passar o mouse sobre o valor ou indicador, o sistema mostra a composição entre realizado e Contas a Pagar em aberto.
-- A legenda informa que os valores em aberto são considerados pela data de vencimento.
-- Ao clicar na célula de detalhe, o modal apresenta tanto os movimentos realizados quanto as parcelas em aberto correspondentes.
-- Mantidas as setas de navegação horizontal, barras de rolagem e botão Voltar ao topo da versão anterior.
+- O grupo "Cadastros Auxiliares" passa a se chamar "Cadastros" e foi movido para cima do Financeiro.
+- Fornecedores agora aparece dentro de Cadastros, mantendo a tela já existente.
+- Adicionada a tela de Clientes com pesquisa, paginação, cadastro, edição e inativação.
+- Adicionada a permissão independente "cadastros_clientes" na configuração de perfis.
+- As rotas de Clientes e Fornecedores em Cadastros passam pela validação de permissão.
 
 Instalação:
 1. Extraia este ZIP na raiz do frontend.
@@ -13,6 +13,12 @@ Instalação:
 3. Publique novamente na Vercel.
 
 Arquivos alterados:
-- src/app/(dashboard)/financeiro/cashflow/page.tsx
+- src/components/sidebar.tsx
+- src/app/(dashboard)/cadastros/fornecedores/page.tsx
+- src/app/(dashboard)/cadastros/clientes/page.tsx
+- src/app/(dashboard)/configuracoes/page.tsx
+- src/lib/module-access.ts
+- src/lib/permissions.ts
+- src/hooks/usePermission.ts
 - package.json
 - package-lock.json

@@ -94,16 +94,17 @@ const MODULE_GROUPS: { group: string; modules: { id: string; label: string }[] }
     { id: 'fin_movimento',         label: 'Movimento Bancário' },
     { id: 'fin_receber',           label: 'Contas a Receber' },
     { id: 'fin_pagar',             label: 'Contas a Pagar' },
-    { id: 'fin_fornecedores',      label: 'Fornecedores' },
     { id: 'fin_bancos',            label: 'Bancos e Contas' },
     { id: 'fin_boletos',           label: 'Boletos' },
     { id: 'fin_split',             label: 'Split de Pagamento' },
     { id: 'fin_sped',              label: 'SPED e DIMOB' },
   ]},
-  { group: 'Cadastros Auxiliares', modules: [
-    { id: 'cadastros_tipo_documento',     label: 'Tipo de Documento' },
-    { id: 'cadastros_plano_contas',       label: 'Plano de Contas' },
-    { id: 'cadastros_indices_economicos', label: 'Atualização de Índices' },
+  { group: 'Cadastros', modules: [
+    { id: 'fin_fornecedores',              label: 'Fornecedores' },
+    { id: 'cadastros_tipo_documento',      label: 'Tipo de Documento' },
+    { id: 'cadastros_plano_contas',        label: 'Plano de Contas' },
+    { id: 'cadastros_indices_economicos',  label: 'Atualização de Índices' },
+    { id: 'cadastros_clientes',            label: 'Clientes' },
   ]},
   { group: 'Operacional', modules: [
     { id: 'obras',         label: 'Obras' },

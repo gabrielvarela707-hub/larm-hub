@@ -35,6 +35,7 @@ const MODULE_MAP: Record<string, string[]> = {
   cadastros_tipo_documento: ['cadastros_tipo_documento'],
   cadastros_plano_contas: ['cadastros_plano_contas'],
   cadastros_indices_economicos: ['cadastros_indices_economicos'],
+  cadastros_clientes: ['cadastros_clientes'],
   relatorios: ['relatorios'],
   relatorios_mapa_vendas: ['relatorios'],
   relatorios_projetos_obras: ['relatorios'],

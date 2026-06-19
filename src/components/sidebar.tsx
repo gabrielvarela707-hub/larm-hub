@@ -54,6 +54,16 @@ const NAV: NavItem[] = [
   { label: 'Simulador de Vendas', href: '/simulador', icon: TrendingUp, moduleIds: ['simulador'] },
   { label: 'Contratos', href: '/contratos', icon: FileText, badge: 2, badgeColor: 'bg-amber-500', moduleIds: ['contratos'] },
   {
+    label: 'Cadastros', icon: BookMarked,
+    children: [
+      { label: 'Fornecedores', href: '/cadastros/fornecedores', moduleIds: ['fin_fornecedores'] },
+      { label: 'Tipo de Documento', href: '/cadastros/tipo-documento', moduleIds: ['cadastros_tipo_documento'] },
+      { label: 'Plano de Contas', href: '/cadastros/plano-contas', moduleIds: ['cadastros_plano_contas'] },
+      { label: 'Atualização de Índices', href: '/cadastros/atualizacao-indices', moduleIds: ['cadastros_indices_economicos'] },
+      { label: 'Clientes', href: '/cadastros/clientes', moduleIds: ['cadastros_clientes'] },
+    ],
+  },
+  {
     label: 'Financeiro', icon: DollarSign,
     children: [
       { label: 'CashFlow', href: '/financeiro/cashflow', moduleIds: ['fin_cashflow'] },
@@ -62,7 +72,6 @@ const NAV: NavItem[] = [
       { label: 'Mov. Bancario', href: '/financeiro/movimento', moduleIds: ['fin_movimento'] },
       { label: 'Contas a Receber', href: '/financeiro/receber', badge: 3, moduleIds: ['fin_receber'] },
       { label: 'Contas a Pagar', href: '/financeiro/pagar', moduleIds: ['fin_pagar'] },
-      { label: 'Fornecedores', href: '/financeiro/fornecedores', moduleIds: ['fin_fornecedores'] },
       { label: 'Bancos e Contas', href: '/financeiro/bancos', moduleIds: ['fin_bancos'] },
       { label: 'Boletos', href: '/financeiro/boletos', moduleIds: ['fin_boletos'] },
       { label: 'Split de Pagamento', href: '/financeiro/split', moduleIds: ['fin_split'] },
@@ -70,14 +79,6 @@ const NAV: NavItem[] = [
     ],
   },
   { label: 'Obras', href: '/obras', icon: HardHat, moduleIds: ['obras'] },
-  {
-    label: 'Cadastros Auxiliares', icon: Tag,
-    children: [
-      { label: 'Tipo de Documento', href: '/cadastros/tipo-documento', moduleIds: ['cadastros_tipo_documento'] },
-      { label: 'Plano de Contas', href: '/cadastros/plano-contas', moduleIds: ['cadastros_plano_contas'] },
-      { label: 'Atualização de Índices', href: '/cadastros/atualizacao-indices', moduleIds: ['cadastros_indices_economicos'] },
-    ],
-  },
   {
     label: 'Relatorios', href: '/relatorios', icon: BarChart3, moduleIds: ['relatorios'],
     children: [
@@ -106,7 +107,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const config = useTenantConfig(s => s.config)
   const user = useAuthStore(s => s.user)
   const logout = useAuthStore(s => s.logout)
-  const [openGroups, setOpenGroups] = useState<string[]>(['CRM & Funil', 'Financeiro'])
+  const [openGroups, setOpenGroups] = useState<string[]>(['CRM & Funil', 'Cadastros', 'Financeiro'])
 
   useEffect(() => { hydrate() }, [hydrate])
 
