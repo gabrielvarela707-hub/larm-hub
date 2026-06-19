@@ -189,7 +189,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const { data } = await axios.post(`${API}/auth/refresh`, { refreshToken })
       if (data.ok) {
-        set({ accessToken: data.data.accessToken })
+        const currentUser = get().user
+        const refreshedUser = data.data.user
+          ? {
+              ...data.data.user,
+              // Mantém o portal escolhido no login; o backend recarrega o restante.
+              hubType: currentUser?.hubType || data.data.user.hubType,
+            } as AuthUser
+          : currentUser
+
+        if (typeof window !== 'undefined' && refreshedUser) {
+          sessionStorage.setItem('auth_user', JSON.stringify(refreshedUser))
+        }
+
+        set({ accessToken: data.data.accessToken, user: refreshedUser })
         // Renova o cookie também
         setCookie('hub_session', '1', 1)
         return true

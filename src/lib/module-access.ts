@@ -33,22 +33,28 @@ export const MODULE_ALIASES: Record<string, string[]> = {
   landing_pages: ['landing_pages'],
   simulador: ['simulador'],
   contratos: ['contratos'],
-  financeiro: ['fin_receber', 'fin_pagar', 'fin_boletos', 'fin_split', 'fin_sped'],
-  fin_cashflow: ['fin_receber', 'fin_pagar', 'relatorios'],
-  fin_orcamento: ['fin_receber', 'fin_pagar', 'relatorios'],
-  fin_movimento_orcado: ['fin_receber', 'fin_pagar', 'relatorios'],
-  fin_movimento: ['fin_receber', 'fin_pagar', 'fin_split'],
+  financeiro: [
+    'fin_cashflow', 'fin_orcamento', 'fin_movimento_orcado', 'fin_movimento',
+    'fin_receber', 'fin_pagar', 'fin_fornecedores', 'fin_bancos',
+    'fin_boletos', 'fin_split', 'fin_sped',
+  ],
+  // Permissões financeiras são independentes. Uma permissão não libera outro módulo.
+  fin_cashflow: ['fin_cashflow'],
+  fin_orcamento: ['fin_orcamento'],
+  fin_movimento_orcado: ['fin_movimento_orcado'],
+  fin_movimento: ['fin_movimento'],
   fin_receber: ['fin_receber'],
   fin_pagar: ['fin_pagar'],
-  fin_fornecedores: ['fin_pagar'],
-  fin_bancos: ['fin_receber', 'fin_pagar'],
+  fin_fornecedores: ['fin_fornecedores'],
+  fin_bancos: ['fin_bancos'],
   fin_boletos: ['fin_boletos'],
   fin_split: ['fin_split'],
   fin_sped: ['fin_sped'],
   obras: ['obras'],
-  cadastros_tipo_documento: ['fin_pagar', 'fin_receber', 'configuracoes'],
-  cadastros_plano_contas: ['fin_pagar', 'fin_receber', 'configuracoes'],
-  cadastros_indices_economicos: ['fin_pagar', 'fin_receber', 'configuracoes'],
+  // Cadastros auxiliares também exigem autorização própria.
+  cadastros_tipo_documento: ['cadastros_tipo_documento'],
+  cadastros_plano_contas: ['cadastros_plano_contas'],
+  cadastros_indices_economicos: ['cadastros_indices_economicos'],
   relatorios: ['relatorios'],
   relatorios_mapa_vendas: ['relatorios'],
   relatorios_projetos_obras: ['relatorios'],
@@ -63,7 +69,7 @@ export const MODULE_ALIASES: Record<string, string[]> = {
 export function normalizeModuleIds(moduleIds?: string | string[]): string[] {
   if (!moduleIds) return []
   const raw = Array.isArray(moduleIds) ? moduleIds : [moduleIds]
-  return raw.flatMap(id => MODULE_ALIASES[id] ?? [id]).filter(Boolean)
+  return [...new Set(raw.flatMap(id => MODULE_ALIASES[id] ?? [id]).filter(Boolean))]
 }
 
 export function isAdminUser(user?: Pick<AuthUser, 'role'> | null) {
@@ -120,7 +126,7 @@ export const ROUTE_ACCESS: RouteRule[] = [
   { prefix: '/contratos', modules: ['contratos'] },
   { prefix: '/financeiro/cashflow', modules: ['fin_cashflow'] },
   { prefix: '/financeiro/orcamento', modules: ['fin_orcamento'] },
-  { prefix: '/financeiro/movimento-orcado', modules: ['fin_orcamento'] },
+  { prefix: '/financeiro/movimento-orcado', modules: ['fin_movimento_orcado'] },
   { prefix: '/financeiro/movimento', modules: ['fin_movimento'] },
   { prefix: '/financeiro/receber', modules: ['fin_receber'] },
   { prefix: '/financeiro/pagar', modules: ['fin_pagar'] },
