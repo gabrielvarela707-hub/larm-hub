@@ -4,7 +4,7 @@
  * Relatório de Cash Flow — visão consolidada, por empresa, mensal e diária.
  */
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, ArrowUp, Check, Download, Loader2, Pencil, Printer, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ArrowUp, Check, Clock3, Download, Loader2, Pencil, Printer, X } from 'lucide-react'
 import {
   getCashflow,
   getCashflowResumo,
@@ -195,6 +195,23 @@ export default function CashFlowPage() {
     return linha?.valores?.[key] ?? linha?.valores?.[Number(key)] ?? 0
   }
 
+  const getComposicaoColuna = (linha: any, coluna: any | null) => {
+    if (!coluna) return linha?.composicao_total || null
+    const key = getColKey(coluna)
+    return linha?.composicao?.[key] ?? linha?.composicao?.[Number(key)] ?? null
+  }
+
+  const temContaPagarAberto = (composicao: any) =>
+    Math.abs(Number(composicao?.contas_pagar_aberto || 0)) > 0.000001
+
+  const tituloComposicao = (composicao: any) => {
+    if (!temContaPagarAberto(composicao)) return 'Ver lançamentos que compõem este valor'
+    const realizado = Number(composicao?.realizado || 0)
+    const contasPagar = Number(composicao?.contas_pagar_aberto || 0)
+    const total = realizado + contasPagar
+    return `Composição: realizado ${fmtBRLCompleto(realizado)} + Contas a Pagar em aberto ${fmtBRLCompleto(contasPagar)} = ${fmtBRLCompleto(total)}. As contas em aberto são consideradas pela data de vencimento.`
+  }
+
   const iniciarEdicaoSaldo = (linha: any, coluna: any, valor: number) => {
     const key = `${linha.id}-${getColKey(coluna)}`
     setEdicaoKey(key)
@@ -237,8 +254,6 @@ export default function CashFlowPage() {
   }
 
   const abrirDetalhes = async (linha: any, coluna: any | null, valor: number) => {
-    if (!valor) return
-
     const colunaLabel = coluna
       ? visao === 'diaria'
         ? `dia ${String(coluna.dia ?? coluna.key ?? '').padStart(2, '0')} de ${MESES_LONGOS[mes - 1]}`
@@ -338,6 +353,9 @@ export default function CashFlowPage() {
   const colunasCount = Number(data?.colunas?.length || 0)
   const monthColumnWidth = visao === 'mensal' ? 112 : 86
   const tableMinWidth = Math.max(760, 48 + 270 + (colunasCount * monthColumnWidth) + 96)
+  const possuiContasPagarNosDetalhes = Boolean(data?.linhas?.some((linha: any) =>
+    temContaPagarAberto(linha?.composicao_total),
+  ))
 
   const stickyBase = 'sticky z-20 border-r border-zinc-100 dark:border-zinc-700'
   const stickyHeader = 'sticky z-30 bg-zinc-50 dark:bg-zinc-800/95 border-r border-zinc-100 dark:border-zinc-700'
@@ -422,6 +440,11 @@ export default function CashFlowPage() {
             {visao === 'mensal' && (
               <p className="text-[11px] text-zinc-400 mt-0.5">Nos saldos finais, use o lápis para editar o valor mensal diretamente em K.</p>
             )}
+            {possuiContasPagarNosDetalhes && (
+              <p className="mt-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+                <Clock3 className="h-3 w-3" /> Valores com este símbolo incluem Contas a Pagar em aberto pela data de vencimento.
+              </p>
+            )}
           </div>
           <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">
             {visao === 'diaria' ? 'Diário' : 'Orçado'}
@@ -480,6 +503,8 @@ export default function CashFlowPage() {
                         const v = Number(getValorColuna(linha, c) || 0)
                         const colorCls = v === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(v) ? 'text-red-500' : 'text-green-600'
                         const cellKey = `${linha.id}-${getColKey(c)}`
+                        const composicao = getComposicaoColuna(linha, c)
+                        const incluiContaPagar = temContaPagarAberto(composicao)
                         const editavel = visao === 'mensal' && Boolean(linha.editavel_saldo)
                         const editando = editavel && edicaoKey === cellKey
                         return (
@@ -523,16 +548,22 @@ export default function CashFlowPage() {
                               </div>
                             ) : (
                               <div className="group flex items-center justify-end gap-1 min-w-[84px]">
-                                {v === 0 ? (
+                                {v === 0 && !incluiContaPagar ? (
                                   <span className="flex-1 text-right">–</span>
                                 ) : (
                                   <button
                                     type="button"
                                     onClick={() => abrirDetalhes(linha, c, v)}
-                                    title="Ver lançamentos que compõem este valor"
-                                    className="flex-1 text-right hover:underline hover:decoration-dotted underline-offset-2"
+                                    title={tituloComposicao(composicao)}
+                                    className="flex flex-1 items-center justify-end gap-1 text-right hover:underline hover:decoration-dotted underline-offset-2"
                                   >
-                                    {fmtBRL(v)}
+                                    <span>{v === 0 ? '–' : fmtBRL(v)}</span>
+                                    {incluiContaPagar && (
+                                      <Clock3
+                                        className="h-3 w-3 shrink-0 text-amber-500"
+                                        aria-label="Inclui Contas a Pagar em aberto"
+                                      />
+                                    )}
                                   </button>
                                 )}
                                 {editavel && (
@@ -551,18 +582,30 @@ export default function CashFlowPage() {
                           </td>
                         )
                       })}
-                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${linha.total === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(linha.total) ? 'text-red-500' : 'text-green-600'}`}>
-                        {linha.total === 0 ? '–' : (
-                          <button
-                            type="button"
-                            onClick={() => abrirDetalhes(linha, null, Number(linha.total || 0))}
-                            title="Ver lançamentos do total"
-                            className="w-full text-right hover:underline hover:decoration-dotted underline-offset-2"
-                          >
-                            {fmtBRL(linha.total)}
-                          </button>
-                        )}
-                      </td>
+                      {(() => {
+                        const composicaoTotal = getComposicaoColuna(linha, null)
+                        const incluiContaPagarTotal = temContaPagarAberto(composicaoTotal)
+                        return (
+                          <td className={`px-3 py-1.5 text-right font-mono font-semibold ${linha.total === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(linha.total) ? 'text-red-500' : 'text-green-600'}`}>
+                            {linha.total === 0 && !incluiContaPagarTotal ? '–' : (
+                              <button
+                                type="button"
+                                onClick={() => abrirDetalhes(linha, null, Number(linha.total || 0))}
+                                title={tituloComposicao(composicaoTotal)}
+                                className="flex w-full items-center justify-end gap-1 text-right hover:underline hover:decoration-dotted underline-offset-2"
+                              >
+                                <span>{linha.total === 0 ? '–' : fmtBRL(linha.total)}</span>
+                                {incluiContaPagarTotal && (
+                                  <Clock3
+                                    className="h-3 w-3 shrink-0 text-amber-500"
+                                    aria-label="Inclui Contas a Pagar em aberto"
+                                  />
+                                )}
+                              </button>
+                            )}
+                          </td>
+                        )
+                      })()}
                     </tr>
                   )
                 })}
