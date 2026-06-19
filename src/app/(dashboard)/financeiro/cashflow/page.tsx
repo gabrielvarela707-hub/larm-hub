@@ -4,7 +4,7 @@
  * Relatório de Cash Flow — visão consolidada, por empresa, mensal e diária.
  */
 import { useEffect, useRef, useState } from 'react'
-import { Check, Download, Loader2, Pencil, Printer, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ArrowUp, Check, Download, Loader2, Pencil, Printer, X } from 'lucide-react'
 import {
   getCashflow,
   getCashflowResumo,
@@ -126,6 +126,17 @@ export default function CashFlowPage() {
   const syncHorizontalScroll = (source: HTMLDivElement, target: HTMLDivElement | null) => {
     if (!target || target.scrollLeft === source.scrollLeft) return
     target.scrollLeft = source.scrollLeft
+  }
+
+  const moverTabelaHorizontalmente = (direcao: -1 | 1) => {
+    const tabela = tableScrollRef.current
+    if (!tabela) return
+    const deslocamento = Math.max(420, Math.floor(tabela.clientWidth * 0.75))
+    tabela.scrollBy({ left: direcao * deslocamento, behavior: 'smooth' })
+  }
+
+  const voltarAoTopo = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   useEffect(() => {
@@ -560,6 +571,39 @@ export default function CashFlowPage() {
           )}
         </div>
       </div>
+
+      {data?.linhas?.length ? (
+        <div className="fixed bottom-5 right-5 z-40 flex items-center gap-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white/95 dark:bg-zinc-900/95 p-1.5 shadow-lg backdrop-blur">
+          <button
+            type="button"
+            onClick={() => moverTabelaHorizontalmente(-1)}
+            title="Mover tabela para a esquerda"
+            aria-label="Mover tabela para a esquerda"
+            className="rounded-lg p-2 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => moverTabelaHorizontalmente(1)}
+            title="Mover tabela para a direita"
+            aria-label="Mover tabela para a direita"
+            className="rounded-lg p-2 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            <ArrowRight className="h-4 w-4" />
+          </button>
+          <span className="mx-0.5 h-5 w-px bg-zinc-200 dark:bg-zinc-700" />
+          <button
+            type="button"
+            onClick={voltarAoTopo}
+            title="Voltar ao topo"
+            aria-label="Voltar ao topo"
+            className="rounded-lg p-2 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
 
       {detalhe && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 pt-10 overflow-y-auto">

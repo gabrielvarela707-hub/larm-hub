@@ -1,7 +1,7 @@
 'use client'
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Loader2, TrendingDown, TrendingUp, WalletCards } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ArrowUp, Loader2, TrendingDown, TrendingUp, WalletCards } from 'lucide-react'
 import {
   getOrcamento,
   getOrcamentoEmpresas,
@@ -68,6 +68,17 @@ export default function OrcamentoPage() {
   const syncHorizontalScroll = (source: HTMLDivElement, target: HTMLDivElement | null) => {
     if (!target || target.scrollLeft === source.scrollLeft) return
     target.scrollLeft = source.scrollLeft
+  }
+
+  const moverTabelaHorizontalmente = (direcao: -1 | 1) => {
+    const tabela = tableScrollRef.current
+    if (!tabela) return
+    const deslocamento = Math.max(420, Math.floor(tabela.clientWidth * 0.75))
+    tabela.scrollBy({ left: direcao * deslocamento, behavior: 'smooth' })
+  }
+
+  const voltarAoTopo = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   useEffect(() => {
@@ -251,6 +262,39 @@ export default function OrcamentoPage() {
           )}
         </div>
       </div>
+
+      {data?.linhas?.length ? (
+        <div className="fixed bottom-5 right-5 z-40 flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white/95 p-1.5 shadow-lg backdrop-blur">
+          <button
+            type="button"
+            onClick={() => moverTabelaHorizontalmente(-1)}
+            title="Mover tabela para a esquerda"
+            aria-label="Mover tabela para a esquerda"
+            className="rounded-lg p-2 text-zinc-600 hover:bg-zinc-100"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => moverTabelaHorizontalmente(1)}
+            title="Mover tabela para a direita"
+            aria-label="Mover tabela para a direita"
+            className="rounded-lg p-2 text-zinc-600 hover:bg-zinc-100"
+          >
+            <ArrowRight className="h-4 w-4" />
+          </button>
+          <span className="mx-0.5 h-5 w-px bg-zinc-200" />
+          <button
+            type="button"
+            onClick={voltarAoTopo}
+            title="Voltar ao topo"
+            aria-label="Voltar ao topo"
+            className="rounded-lg p-2 text-zinc-600 hover:bg-zinc-100"
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

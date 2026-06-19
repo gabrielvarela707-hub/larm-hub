@@ -1,9 +1,9 @@
-LARMHUB FRONTEND v0.3.34
+LARMHUB FRONTEND v0.3.36
 
-Alteração:
-- Tipo de documento e número do documento em cada parcela de Contas a Pagar.
-- Os campos são preenchidos inicialmente com o documento principal e podem ser personalizados por parcela.
-- Listagem e ordenação exibem o documento específico da parcela quando existir.
+Alterações:
+- Adicionadas setas flutuantes para movimentar horizontalmente as tabelas de Cash Flow e Orçamento.
+- Mantidas as barras de rolagem horizontal já existentes.
+- Adicionado botão flutuante para voltar ao topo nas duas telas.
 
 Instalação:
 1. Extraia este ZIP na raiz do frontend.
@@ -11,6 +11,7 @@ Instalação:
 3. Publique novamente na Vercel.
 
 Arquivos alterados:
-- src/app/(dashboard)/financeiro/pagar/page.tsx
+- src/app/(dashboard)/financeiro/cashflow/page.tsx
+- src/app/(dashboard)/financeiro/orcamento/page.tsx
 - package.json
 - package-lock.json
