@@ -6,6 +6,62 @@
 
 const SYSTEM_RELEASES = [
   {
+    version: "0.3.47",
+    title: "Contas a Receber — recálculo, boleto e CNAB 400 Bradesco",
+    description:
+      "Adiciona recálculo auditável das parcelas vencidas por índice contratual, emissão de boleto em homologação e geração/processamento de arquivos de cobrança Bradesco CNAB 400.",
+    frontend_version: "0.3.47",
+    backend_version: "0.3.47",
+    released_at: "2026-06-19T22:45:00.000Z",
+    changes: [
+      "Adicionado botão Recalcular em cada parcela atrasada do Contas a Receber.",
+      "O recálculo usa a data escolhida pelo operador, o índice IGPM/IPCA do contrato ou da receita e os valores mensais cadastrados em Atualização de Índices.",
+      "A memória de cálculo mostra referências mensais, defasagem do índice, correção acumulada, multa, mora proporcional aos dias, seguro, outros acréscimos, desconto e valor final.",
+      "O operador pode ajustar percentuais e valores antes de salvar, mantendo a memória completa em recalculo_dados.",
+      "Adicionada configuração de cobrança Bradesco por tenant/empresa, inicialmente em modo de homologação.",
+      "Adicionada emissão de boleto imprimível com linha digitável e código de barras Bradesco.",
+      "Adicionada seleção de parcelas e geração de remessa de cobrança CNAB 400.",
+      "Remessas de homologação usam extensão TST; após confirmação bancária podem ser liberadas como REM.",
+      "Adicionado processamento idempotente de retorno CNAB 400, com registro de todas as ocorrências.",
+      "A ocorrência 06 de liquidação normal baixa automaticamente a parcela como recebida por retorno Bradesco.",
+      "Ocorrências de entrada confirmada, rejeição e baixa bancária atualizam o status do boleto sem criar baixa financeira indevida.",
+      "Adicionadas tabelas de configurações, remessas, retornos e itens, preservando o histórico de conciliação.",
+      "Versionamento atualizado para 0.3.47."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "Modal de recálculo",
+        "Seleção em lote para remessa",
+        "Importação de retorno",
+        "Boleto imprimível"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Motor de recálculo por índice mensal",
+        "Gerador e leitor CNAB 400 Bradesco",
+        "Auditoria de recálculo e conciliação"
+      ],
+      database: [
+        "com_parcelas",
+        "fin_indice_tipos",
+        "fin_indice_valores",
+        "fin_cobranca_bancaria_config",
+        "fin_remessas_cobranca",
+        "fin_remessas_cobranca_itens",
+        "fin_retornos_cobranca",
+        "fin_retornos_cobranca_itens"
+      ],
+      integrations: [
+        "Cobrança Bradesco CNAB 400",
+        "Retorno bancário",
+        "Índices econômicos"
+      ]
+    },
+  },
+
+  {
     version: "0.3.46",
     title: "Contas a Receber — tela operacional e conciliação bancária",
     description:
