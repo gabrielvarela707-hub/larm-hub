@@ -6,6 +6,61 @@
 
 const SYSTEM_RELEASES = [
   {
+    version: "0.3.46",
+    title: "Contas a Receber — tela operacional e conciliação bancária",
+    description:
+      "Substitui a tela mockada de Contas a Receber por uma listagem real de clientes, contratos, receitas e parcelas, com filtros, exportação e preparação para baixa por conciliação bancária.",
+    frontend_version: "0.3.46",
+    backend_version: "0.3.46",
+    released_at: "2026-06-19T21:35:00.000Z",
+    changes: [
+      "Removida a listagem mockada de Contas a Receber.",
+      "A tela passa a consultar com_parcelas, com_contratos, fin_receitas, fin_tipos_receita, cad_clientes e cad_produtos.",
+      "A consulta inicia no primeiro dia do mês atual e permite pesquisar livremente períodos anteriores pelos filtros de vencimento.",
+      "Adicionados filtros por cliente, tipo de receita, obra, status, vencimento e busca por cliente, contrato, receita, unidade ou documento.",
+      "Adicionada paginação, ordenação, cabeçalho travado, barra horizontal superior e setas flutuantes.",
+      "Adicionado Exportar Excel respeitando os filtros ativos.",
+      "O botão Novo Lançamento de Receita foi mantido visível e bloqueado até a definição do formulário pelo cliente.",
+      "Valores importados do Strato usam valor_total_relatorio para evitar somar novamente correção, mora, seguro e demais componentes já consolidados.",
+      "Parcelas recebidas passam a exibir a origem da baixa e, quando vinculadas ao Movimento Bancário, são identificadas como Conciliação bancária.",
+      "Criados movimento_id, origem_baixa, conciliado_em e conciliacao_dados em com_parcelas para suportar o retorno bancário.",
+      "Removido o badge mockado com número 3 do menu Contas a Receber.",
+      "Versionamento atualizado para 0.3.46."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Tabela operacional de Contas a Receber",
+        "TableFloatingNav"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Endpoints paginados e exportação Excel XML",
+        "Migration idempotente para conciliação"
+      ],
+      database: [
+        "com_parcelas",
+        "com_contratos",
+        "fin_receitas",
+        "fin_tipos_receita",
+        "cad_clientes",
+        "cad_pessoas",
+        "cad_produtos",
+        "fin_movimento"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Conciliação bancária preparada",
+        "Relatório Strato"
+      ]
+    },
+  },
+
+
+  {
     version: "0.3.42",
     title: "Contas a Pagar — restauração das formas de pagamento",
     description:
