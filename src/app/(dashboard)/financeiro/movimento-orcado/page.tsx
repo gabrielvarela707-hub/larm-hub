@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Loader2, Search, TrendingDown, TrendingUp, WalletCards } from 'lucide-react'
+import TableFloatingNav from '@/components/table-floating-nav'
 import {
   getOrcamentoMovimento,
   type Empresa,
@@ -165,10 +166,10 @@ export default function MovimentoOrcadoPage() {
         <div
           ref={tableScrollRef}
           onScroll={(e) => syncHorizontalScroll(e.currentTarget, topScrollRef.current)}
-          className="overflow-x-auto"
+          className="max-h-[70vh] overflow-auto"
         >
           <table className="w-full text-sm" style={{ minWidth: tableMinWidth }}>
-            <thead className="bg-slate-950 text-white">
+            <thead className="sticky top-0 z-20 bg-slate-950 text-white">
               <tr>
                 <th className="px-4 py-3 text-left">Data</th>
                 <th className="px-4 py-3 text-left">Empresa</th>
@@ -203,6 +204,8 @@ export default function MovimentoOrcadoPage() {
           </table>
         </div>
       </div>
+
+      <TableFloatingNav scrollRef={tableScrollRef} />
     </div>
   )
 }

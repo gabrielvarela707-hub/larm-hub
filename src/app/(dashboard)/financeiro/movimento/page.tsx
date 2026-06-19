@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { Search, TrendingUp, TrendingDown, DollarSign, ChevronLeft, ChevronRight, Download } from 'lucide-react'
+import TableFloatingNav from '@/components/table-floating-nav'
 import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 
@@ -527,10 +528,10 @@ export default function MovimentoPage() {
             <div
               ref={tableScrollRef}
               onScroll={(e) => syncHorizontalScroll(e.currentTarget, topTableScrollRef.current)}
-              className="overflow-x-auto"
+              className="max-h-[70vh] overflow-auto"
             >
               <table className="w-full text-xs" style={{ minWidth: tableMinWidth }}>
-                <thead>
+                <thead className="sticky top-0 z-20">
                   <tr className="bg-[#0d1b2a] text-white">
                     <SortTh k="data">Data</SortTh>
                     <SortTh k="empresa">Empresa</SortTh>
@@ -583,6 +584,8 @@ export default function MovimentoPage() {
             </div>
             <Pager {...pag} loading={loading} onChange={p => loadMovs(p)} />
           </div>
+
+          <TableFloatingNav scrollRef={tableScrollRef} />
         </>
       )}
 

@@ -1,7 +1,8 @@
 'use client'
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ArrowLeft, ArrowRight, ArrowUp, Loader2, TrendingDown, TrendingUp, WalletCards } from 'lucide-react'
+import { Loader2, TrendingDown, TrendingUp, WalletCards } from 'lucide-react'
+import TableFloatingNav from '@/components/table-floating-nav'
 import {
   getOrcamento,
   getOrcamentoEmpresas,
@@ -70,17 +71,6 @@ export default function OrcamentoPage() {
     target.scrollLeft = source.scrollLeft
   }
 
-  const moverTabelaHorizontalmente = (direcao: -1 | 1) => {
-    const tabela = tableScrollRef.current
-    if (!tabela) return
-    const deslocamento = Math.max(420, Math.floor(tabela.clientWidth * 0.75))
-    tabela.scrollBy({ left: direcao * deslocamento, behavior: 'smooth' })
-  }
-
-  const voltarAoTopo = () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
   useEffect(() => {
     getOrcamentoEmpresas()
       .then(rows => {
@@ -119,7 +109,7 @@ export default function OrcamentoPage() {
   }, [data])
 
   const stickyBase = 'sticky z-20 border-r border-zinc-100'
-  const stickyHeader = 'sticky z-30 bg-zinc-50 border-r border-zinc-100'
+  const stickyHeader = 'sticky top-0 z-30 bg-zinc-50 border-r border-zinc-100'
   const stickyBg = (tipo: string) => {
     if (tipo === 'header') return 'bg-amber-50'
     if (tipo === 'total') return 'bg-zinc-100'
@@ -200,7 +190,7 @@ export default function OrcamentoPage() {
         <div
           ref={tableScrollRef}
           onScroll={(e) => syncHorizontalScroll(e.currentTarget, topScrollRef.current)}
-          className="overflow-x-auto"
+          className="max-h-[70vh] overflow-auto"
         >
           {loading ? (
             <div className="py-12 flex items-center justify-center gap-2 text-zinc-400 text-sm">
@@ -213,7 +203,7 @@ export default function OrcamentoPage() {
             </div>
           ) : (
             <table className="w-full text-xs" style={{ minWidth: tableMinWidth }}>
-              <thead>
+              <thead className="sticky top-0 z-20">
                 <tr className="bg-zinc-50 text-zinc-400 uppercase" style={{ fontSize: '10px' }}>
                   <th className={`${stickyHeader} left-0 px-3 py-2.5 text-left w-12 min-w-[48px]`} rowSpan={2}>#</th>
                   <th className={`${stickyHeader} left-[48px] px-3 py-2.5 text-left w-[270px] min-w-[270px] shadow-[6px_0_10px_-10px_rgba(15,23,42,0.7)]`} rowSpan={2}>Descrição</th>
@@ -263,37 +253,8 @@ export default function OrcamentoPage() {
         </div>
       </div>
 
-      {data?.linhas?.length ? (
-        <div className="fixed bottom-5 right-5 z-40 flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white/95 p-1.5 shadow-lg backdrop-blur">
-          <button
-            type="button"
-            onClick={() => moverTabelaHorizontalmente(-1)}
-            title="Mover tabela para a esquerda"
-            aria-label="Mover tabela para a esquerda"
-            className="rounded-lg p-2 text-zinc-600 hover:bg-zinc-100"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => moverTabelaHorizontalmente(1)}
-            title="Mover tabela para a direita"
-            aria-label="Mover tabela para a direita"
-            className="rounded-lg p-2 text-zinc-600 hover:bg-zinc-100"
-          >
-            <ArrowRight className="h-4 w-4" />
-          </button>
-          <span className="mx-0.5 h-5 w-px bg-zinc-200" />
-          <button
-            type="button"
-            onClick={voltarAoTopo}
-            title="Voltar ao topo"
-            aria-label="Voltar ao topo"
-            className="rounded-lg p-2 text-zinc-600 hover:bg-zinc-100"
-          >
-            <ArrowUp className="h-4 w-4" />
-          </button>
-        </div>
+      {!loading && data?.linhas?.length ? (
+        <TableFloatingNav scrollRef={tableScrollRef} />
       ) : null}
     </div>
   )

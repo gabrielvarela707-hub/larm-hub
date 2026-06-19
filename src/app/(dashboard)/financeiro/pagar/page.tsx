@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Plus, Search, X, Check, FileText, Loader2, Sparkles, Pencil, Trash2, ChevronsUpDown, RotateCcw, Download } from 'lucide-react'
+import TableFloatingNav from '@/components/table-floating-nav'
 import { apiClient } from '@/lib/auth-store'
 import { BANCOS_BR } from '@/lib/bancos-br'
 import { cn } from '@/lib/utils'
@@ -1313,7 +1314,7 @@ export default function PagarPage() {
         <div
           ref={tableScrollRef}
           onScroll={(e) => syncHorizontalScroll(e.currentTarget, topTableScrollRef.current)}
-          className="overflow-x-auto"
+          className="max-h-[70vh] overflow-auto"
         >
           <table className="w-full table-fixed text-xs" style={{ minWidth: tableMinWidth }}>
             <colgroup>
@@ -1328,7 +1329,7 @@ export default function PagarPage() {
               <col style={{ width: 120 }} />
               <col style={{ width: 115 }} />
             </colgroup>
-            <thead>
+            <thead className="sticky top-0 z-20">
               <tr className="bg-[#0d1b2a] text-white">
                 <TH label="Empresa" k="empresa" />
                 <TH label="Fornecedor" k="fornecedor" />
@@ -1455,6 +1456,8 @@ export default function PagarPage() {
           </table>
         </div>
       </div>
+
+      <TableFloatingNav scrollRef={tableScrollRef} />
 
       {/* Modal Form */}
       {showForm && (

@@ -4,7 +4,8 @@
  * Relatório de Cash Flow — visão consolidada, por empresa, mensal e diária.
  */
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, ArrowUp, Check, Clock3, Download, Loader2, Pencil, Printer, X } from 'lucide-react'
+import { Check, Download, Loader2, Pencil, Printer, X } from 'lucide-react'
+import TableFloatingNav from '@/components/table-floating-nav'
 import {
   getCashflow,
   getCashflowResumo,
@@ -128,17 +129,6 @@ export default function CashFlowPage() {
     target.scrollLeft = source.scrollLeft
   }
 
-  const moverTabelaHorizontalmente = (direcao: -1 | 1) => {
-    const tabela = tableScrollRef.current
-    if (!tabela) return
-    const deslocamento = Math.max(420, Math.floor(tabela.clientWidth * 0.75))
-    tabela.scrollBy({ left: direcao * deslocamento, behavior: 'smooth' })
-  }
-
-  const voltarAoTopo = () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
   useEffect(() => {
     getCashflowEmpresas()
       .then(rows => {
@@ -195,23 +185,6 @@ export default function CashFlowPage() {
     return linha?.valores?.[key] ?? linha?.valores?.[Number(key)] ?? 0
   }
 
-  const getComposicaoColuna = (linha: any, coluna: any | null) => {
-    if (!coluna) return linha?.composicao_total || null
-    const key = getColKey(coluna)
-    return linha?.composicao?.[key] ?? linha?.composicao?.[Number(key)] ?? null
-  }
-
-  const temContaPagarAberto = (composicao: any) =>
-    Math.abs(Number(composicao?.contas_pagar_aberto || 0)) > 0.000001
-
-  const tituloComposicao = (composicao: any) => {
-    if (!temContaPagarAberto(composicao)) return 'Ver lançamentos que compõem este valor'
-    const realizado = Number(composicao?.realizado || 0)
-    const contasPagar = Number(composicao?.contas_pagar_aberto || 0)
-    const total = realizado + contasPagar
-    return `Composição: realizado ${fmtBRLCompleto(realizado)} + Contas a Pagar em aberto ${fmtBRLCompleto(contasPagar)} = ${fmtBRLCompleto(total)}. As contas em aberto são consideradas pela data de vencimento.`
-  }
-
   const iniciarEdicaoSaldo = (linha: any, coluna: any, valor: number) => {
     const key = `${linha.id}-${getColKey(coluna)}`
     setEdicaoKey(key)
@@ -254,6 +227,8 @@ export default function CashFlowPage() {
   }
 
   const abrirDetalhes = async (linha: any, coluna: any | null, valor: number) => {
+    if (!valor) return
+
     const colunaLabel = coluna
       ? visao === 'diaria'
         ? `dia ${String(coluna.dia ?? coluna.key ?? '').padStart(2, '0')} de ${MESES_LONGOS[mes - 1]}`
@@ -353,12 +328,9 @@ export default function CashFlowPage() {
   const colunasCount = Number(data?.colunas?.length || 0)
   const monthColumnWidth = visao === 'mensal' ? 112 : 86
   const tableMinWidth = Math.max(760, 48 + 270 + (colunasCount * monthColumnWidth) + 96)
-  const possuiContasPagarNosDetalhes = Boolean(data?.linhas?.some((linha: any) =>
-    temContaPagarAberto(linha?.composicao_total),
-  ))
 
   const stickyBase = 'sticky z-20 border-r border-zinc-100 dark:border-zinc-700'
-  const stickyHeader = 'sticky z-30 bg-zinc-50 dark:bg-zinc-800/95 border-r border-zinc-100 dark:border-zinc-700'
+  const stickyHeader = 'sticky top-0 z-30 bg-zinc-50 dark:bg-zinc-800/95 border-r border-zinc-100 dark:border-zinc-700'
   const stickyBg = (tipo: string) => {
     if (tipo === 'header') return 'bg-amber-50 dark:bg-amber-900/30'
     if (tipo === 'total') return 'bg-zinc-100 dark:bg-zinc-800'
@@ -440,11 +412,6 @@ export default function CashFlowPage() {
             {visao === 'mensal' && (
               <p className="text-[11px] text-zinc-400 mt-0.5">Nos saldos finais, use o lápis para editar o valor mensal diretamente em K.</p>
             )}
-            {possuiContasPagarNosDetalhes && (
-              <p className="mt-1 flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
-                <Clock3 className="h-3 w-3" /> Valores com este símbolo incluem Contas a Pagar em aberto pela data de vencimento.
-              </p>
-            )}
           </div>
           <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">
             {visao === 'diaria' ? 'Diário' : 'Orçado'}
@@ -468,7 +435,7 @@ export default function CashFlowPage() {
         <div
           ref={tableScrollRef}
           onScroll={(e) => syncHorizontalScroll(e.currentTarget, topScrollRef.current)}
-          className="overflow-x-auto"
+          className="max-h-[70vh] overflow-auto"
         >
           {loading ? (
             <div className="text-center py-10 text-zinc-400">Carregando...</div>
@@ -479,7 +446,7 @@ export default function CashFlowPage() {
             </div>
           ) : (
             <table className="w-full text-xs" style={{ minWidth: tableMinWidth }}>
-              <thead>
+              <thead className="sticky top-0 z-20">
                 <tr className="bg-zinc-50 dark:bg-zinc-800/80 text-zinc-400 uppercase" style={{fontSize:'10px'}}>
                   <th className={`${stickyHeader} left-0 px-3 py-2.5 text-left w-12 min-w-[48px]`}>#</th>
                   <th className={`${stickyHeader} left-[48px] px-3 py-2.5 text-left w-[270px] min-w-[270px] shadow-[6px_0_10px_-10px_rgba(15,23,42,0.7)]`}>Descrição</th>
@@ -503,8 +470,6 @@ export default function CashFlowPage() {
                         const v = Number(getValorColuna(linha, c) || 0)
                         const colorCls = v === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(v) ? 'text-red-500' : 'text-green-600'
                         const cellKey = `${linha.id}-${getColKey(c)}`
-                        const composicao = getComposicaoColuna(linha, c)
-                        const incluiContaPagar = temContaPagarAberto(composicao)
                         const editavel = visao === 'mensal' && Boolean(linha.editavel_saldo)
                         const editando = editavel && edicaoKey === cellKey
                         return (
@@ -548,22 +513,16 @@ export default function CashFlowPage() {
                               </div>
                             ) : (
                               <div className="group flex items-center justify-end gap-1 min-w-[84px]">
-                                {v === 0 && !incluiContaPagar ? (
+                                {v === 0 ? (
                                   <span className="flex-1 text-right">–</span>
                                 ) : (
                                   <button
                                     type="button"
                                     onClick={() => abrirDetalhes(linha, c, v)}
-                                    title={tituloComposicao(composicao)}
-                                    className="flex flex-1 items-center justify-end gap-1 text-right hover:underline hover:decoration-dotted underline-offset-2"
+                                    title="Ver lançamentos que compõem este valor"
+                                    className="flex-1 text-right hover:underline hover:decoration-dotted underline-offset-2"
                                   >
-                                    <span>{v === 0 ? '–' : fmtBRL(v)}</span>
-                                    {incluiContaPagar && (
-                                      <Clock3
-                                        className="h-3 w-3 shrink-0 text-amber-500"
-                                        aria-label="Inclui Contas a Pagar em aberto"
-                                      />
-                                    )}
+                                    {fmtBRL(v)}
                                   </button>
                                 )}
                                 {editavel && (
@@ -582,30 +541,18 @@ export default function CashFlowPage() {
                           </td>
                         )
                       })}
-                      {(() => {
-                        const composicaoTotal = getComposicaoColuna(linha, null)
-                        const incluiContaPagarTotal = temContaPagarAberto(composicaoTotal)
-                        return (
-                          <td className={`px-3 py-1.5 text-right font-mono font-semibold ${linha.total === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(linha.total) ? 'text-red-500' : 'text-green-600'}`}>
-                            {linha.total === 0 && !incluiContaPagarTotal ? '–' : (
-                              <button
-                                type="button"
-                                onClick={() => abrirDetalhes(linha, null, Number(linha.total || 0))}
-                                title={tituloComposicao(composicaoTotal)}
-                                className="flex w-full items-center justify-end gap-1 text-right hover:underline hover:decoration-dotted underline-offset-2"
-                              >
-                                <span>{linha.total === 0 ? '–' : fmtBRL(linha.total)}</span>
-                                {incluiContaPagarTotal && (
-                                  <Clock3
-                                    className="h-3 w-3 shrink-0 text-amber-500"
-                                    aria-label="Inclui Contas a Pagar em aberto"
-                                  />
-                                )}
-                              </button>
-                            )}
-                          </td>
-                        )
-                      })()}
+                      <td className={`px-3 py-1.5 text-right font-mono font-semibold ${linha.total === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(linha.total) ? 'text-red-500' : 'text-green-600'}`}>
+                        {linha.total === 0 ? '–' : (
+                          <button
+                            type="button"
+                            onClick={() => abrirDetalhes(linha, null, Number(linha.total || 0))}
+                            title="Ver lançamentos do total"
+                            className="w-full text-right hover:underline hover:decoration-dotted underline-offset-2"
+                          >
+                            {fmtBRL(linha.total)}
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   )
                 })}
@@ -615,37 +562,8 @@ export default function CashFlowPage() {
         </div>
       </div>
 
-      {data?.linhas?.length ? (
-        <div className="fixed bottom-5 right-5 z-40 flex items-center gap-1.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white/95 dark:bg-zinc-900/95 p-1.5 shadow-lg backdrop-blur">
-          <button
-            type="button"
-            onClick={() => moverTabelaHorizontalmente(-1)}
-            title="Mover tabela para a esquerda"
-            aria-label="Mover tabela para a esquerda"
-            className="rounded-lg p-2 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => moverTabelaHorizontalmente(1)}
-            title="Mover tabela para a direita"
-            aria-label="Mover tabela para a direita"
-            className="rounded-lg p-2 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-          >
-            <ArrowRight className="h-4 w-4" />
-          </button>
-          <span className="mx-0.5 h-5 w-px bg-zinc-200 dark:bg-zinc-700" />
-          <button
-            type="button"
-            onClick={voltarAoTopo}
-            title="Voltar ao topo"
-            aria-label="Voltar ao topo"
-            className="rounded-lg p-2 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-          >
-            <ArrowUp className="h-4 w-4" />
-          </button>
-        </div>
+      {!loading && data?.linhas?.length ? (
+        <TableFloatingNav scrollRef={tableScrollRef} />
       ) : null}
 
       {detalhe && (
