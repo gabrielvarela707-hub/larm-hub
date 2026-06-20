@@ -266,6 +266,7 @@ export default function ContasReceberPage() {
   const [recalcData, setRecalcData] = useState<Recalculation | null>(null)
   const [recalcLoading, setRecalcLoading] = useState(false)
   const [recalcSaving, setRecalcSaving] = useState(false)
+  const [recalcSaved, setRecalcSaved] = useState(false)
   const [recalcError, setRecalcError] = useState('')
 
   const [configOpen, setConfigOpen] = useState(false)
@@ -400,6 +401,7 @@ export default function ContasReceberPage() {
     setRecalcRow(row)
     setRecalcForm(form)
     setRecalcData(null)
+    setRecalcSaved(false)
     setRecalcError('')
     await previewRecalculation(row.id, form)
   }
@@ -413,6 +415,11 @@ export default function ContasReceberPage() {
     seguro: Number(form.seguro || 0),
     desconto: Number(form.desconto || 0),
   })
+
+  const updateRecalcForm = (patch: Partial<RecalcForm>) => {
+    setRecalcForm(current => current ? { ...current, ...patch } : current)
+    setRecalcSaved(false)
+  }
 
   const previewRecalculation = async (id = recalcRow?.id, form = recalcForm) => {
     if (!id || !form) return
@@ -435,18 +442,25 @@ export default function ContasReceberPage() {
     setRecalcError('')
     try {
       const response = await apiClient.post(`/financeiro/contas-receber/${recalcRow.id}/recalcular`, recalcPayload(recalcForm))
-      setRecalcData(response.data?.data || null)
-      setSuccess(`Parcela recalculada para ${formatDate(response.data?.data?.data_calculo)}.`)
-      setRecalcRow(null)
+      const savedData = response.data?.data || null
+      setRecalcData(savedData)
+      setRecalcSaved(true)
+      setRecalcRow(current => current ? {
+        ...current,
+        valor_recalculado: Number(savedData?.valor_final || current.valor_recalculado || 0),
+        data_recalculo: savedData?.data_calculo || current.data_recalculo,
+      } : current)
+      setSuccess(`Parcela recalculada para ${formatDate(savedData?.data_calculo)}.`)
       await load()
     } catch (requestError: unknown) {
+      setRecalcSaved(false)
       setRecalcError(requestErrorMessage(requestError, 'Não foi possível salvar o recálculo.'))
     } finally {
       setRecalcSaving(false)
     }
   }
 
-  const generateBoleto = async (row: ParcelaReceber) => {
+  const generateBoleto = async (row: ParcelaReceber, fromRecalculation = false) => {
     setError('')
     setSuccess('')
     const popup = window.open('', '_blank')
@@ -467,7 +481,9 @@ export default function ContasReceberPage() {
       await load()
     } catch (requestError: unknown) {
       popup?.close()
-      setError(requestErrorMessage(requestError, 'Não foi possível gerar o boleto.'))
+      const message = requestErrorMessage(requestError, 'Não foi possível gerar o boleto.')
+      if (fromRecalculation) setRecalcError(message)
+      else setError(message)
     }
   }
 
@@ -725,13 +741,13 @@ export default function ContasReceberPage() {
           <div className="space-y-4">
             {recalcError && <Notice type="error">{recalcError}</Notice>}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <Field label="Recalcular para / Receber até"><input type="date" min={todayIso()} value={recalcForm.data_calculo} onChange={event => setRecalcForm({ ...recalcForm, data_calculo: event.target.value })} className={inputClass} /></Field>
-              <Field label="Índice acumulado (%)"><input type="number" step="0.00000001" placeholder="Automático" value={recalcForm.percentual_indice} onChange={event => setRecalcForm({ ...recalcForm, percentual_indice: event.target.value })} className={inputClass} /></Field>
-              <Field label="Multa (%)"><input type="number" step="0.0001" placeholder="Padrão do banco" value={recalcForm.percentual_multa} onChange={event => setRecalcForm({ ...recalcForm, percentual_multa: event.target.value })} className={inputClass} /></Field>
-              <Field label="Mora mensal (%)"><input type="number" step="0.0001" placeholder="Padrão do banco" value={recalcForm.percentual_mora_mes} onChange={event => setRecalcForm({ ...recalcForm, percentual_mora_mes: event.target.value })} className={inputClass} /></Field>
-              <Field label="Outros acréscimos"><MoneyInput value={recalcForm.outros_acrescimos} onChange={value => setRecalcForm({ ...recalcForm, outros_acrescimos: value })} /></Field>
-              <Field label="Seguro"><MoneyInput value={recalcForm.seguro} onChange={value => setRecalcForm({ ...recalcForm, seguro: value })} /></Field>
-              <Field label="Desconto / abatimento"><MoneyInput value={recalcForm.desconto} onChange={value => setRecalcForm({ ...recalcForm, desconto: value })} /></Field>
+              <Field label="Recalcular para / Receber até"><input type="date" min={todayIso()} value={recalcForm.data_calculo} onChange={event => updateRecalcForm({ data_calculo: event.target.value })} className={inputClass} /></Field>
+              <Field label="Índice acumulado (%)"><input type="number" step="0.00000001" placeholder="Automático" value={recalcForm.percentual_indice} onChange={event => updateRecalcForm({ percentual_indice: event.target.value })} className={inputClass} /></Field>
+              <Field label="Multa (%)"><input type="number" step="0.0001" placeholder="Padrão do banco" value={recalcForm.percentual_multa} onChange={event => updateRecalcForm({ percentual_multa: event.target.value })} className={inputClass} /></Field>
+              <Field label="Mora mensal (%)"><input type="number" step="0.0001" placeholder="Padrão do banco" value={recalcForm.percentual_mora_mes} onChange={event => updateRecalcForm({ percentual_mora_mes: event.target.value })} className={inputClass} /></Field>
+              <Field label="Outros acréscimos"><MoneyInput value={recalcForm.outros_acrescimos} onChange={value => updateRecalcForm({ outros_acrescimos: value })} /></Field>
+              <Field label="Seguro"><MoneyInput value={recalcForm.seguro} onChange={value => updateRecalcForm({ seguro: value })} /></Field>
+              <Field label="Desconto / abatimento"><MoneyInput value={recalcForm.desconto} onChange={value => updateRecalcForm({ desconto: value })} /></Field>
               <div className="flex items-end"><button type="button" onClick={() => previewRecalculation()} disabled={recalcLoading} className="h-10 w-full rounded-lg border border-blue-200 bg-blue-50 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50">{recalcLoading ? 'Calculando...' : 'Atualizar cálculo'}</button></div>
             </div>
 
@@ -751,7 +767,12 @@ export default function ContasReceberPage() {
                 </div>
               </>
             )}
-            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onClick={() => setRecalcRow(null)} className={cancelButtonClass}>Cancelar</button><button type="button" disabled={!recalcData || recalcSaving || recalcLoading} onClick={saveRecalculation} className={primaryButtonClass}>{recalcSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Salvar recálculo</button></div>
+            {recalcSaved && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">Recálculo salvo. O boleto já pode ser gerado com o valor atualizado.</div>}
+            <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4">
+              <button type="button" onClick={() => setRecalcRow(null)} className={cancelButtonClass}>Fechar</button>
+              <button type="button" disabled={!recalcData || recalcSaving || recalcLoading || recalcSaved} onClick={saveRecalculation} className={primaryButtonClass}>{recalcSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {recalcSaved ? 'Recálculo salvo' : 'Salvar recálculo'}</button>
+              <button type="button" disabled={!recalcSaved || recalcSaving || recalcLoading} onClick={() => generateBoleto(recalcRow, true)} title={recalcSaved ? 'Gerar boleto com o valor recalculado' : 'Salve o recálculo antes de gerar o boleto'} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"><Printer className="h-4 w-4" /> Gerar boleto</button>
+            </div>
           </div>
         </Modal>
       )}

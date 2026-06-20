@@ -6,6 +6,43 @@
 
 const SYSTEM_RELEASES = [
   {
+    version: "0.3.50",
+    title: "Contas a Receber — gerar boleto após salvar recálculo",
+    description:
+      "Mantém o modal de recálculo aberto após a gravação e libera a emissão do boleto Bradesco com o valor atualizado da parcela.",
+    frontend_version: "0.3.50",
+    backend_version: "0.3.49",
+    released_at: "2026-06-20T21:35:00.000Z",
+    changes: [
+      "O modal de recálculo não fecha mais automaticamente após salvar.",
+      "Adicionado botão Gerar boleto ao lado de Salvar recálculo.",
+      "O botão de boleto permanece bloqueado até o recálculo ser salvo com sucesso.",
+      "Alterações nos campos financeiros voltam a bloquear a emissão até que o novo cálculo seja salvo.",
+      "Após salvar, a tela informa que o boleto será emitido com o valor recalculado.",
+      "Falhas na emissão do boleto são exibidas dentro do próprio modal de recálculo.",
+      "Versionamento do frontend atualizado para 0.3.50."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "Modal de recálculo",
+        "Emissão de boleto Bradesco",
+        "Controle de estado salvo/alterado"
+      ],
+      backend: [
+        "API existente de recálculo",
+        "API existente de boleto Bradesco"
+      ],
+      database: [
+        "Sem alteração de banco"
+      ],
+      integrations: [
+        "Cobrança Bradesco"
+      ]
+    },
+  },
+
+  {
     version: "0.3.47",
     title: "Contas a Receber — recálculo, boleto e CNAB 400 Bradesco",
     description:
