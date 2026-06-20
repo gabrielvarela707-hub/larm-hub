@@ -6,6 +6,47 @@
 
 const SYSTEM_RELEASES = [
   {
+    version: "0.3.52",
+    title: "Contas a Receber — geração segura do boleto Bradesco",
+    description:
+      "Corrige o fluxo de geração do boleto para não abrir uma aba vazia antes da validação e melhora as mensagens de erro bancário.",
+    frontend_version: "0.3.52",
+    backend_version: "0.3.52",
+    released_at: "2026-06-20T23:20:00.000Z",
+    changes: [
+      "A nova aba do boleto passa a ser aberta somente depois que a API retornar um documento válido.",
+      "Em caso de erro 400, o motivo passa a aparecer no próprio modal, ao lado da ação de gerar boleto.",
+      "O botão apresenta estado Gerando boleto e impede cliques repetidos durante a requisição.",
+      "A API passa a informar claramente dados ausentes do cliente ou da configuração Bradesco.",
+      "O boleto recalculado passa a usar o valor final salvo no recálculo, e não o valor original da parcela.",
+      "Adicionado log técnico da falha com parcela, tenant e código de validação, sem expor dados bancários sensíveis.",
+      "Nenhuma estrutura do banco de dados foi alterada."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "Contas a Receber",
+        "Pré-visualização HTML do boleto"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Validação de boleto Bradesco"
+      ],
+      database: [
+        "Sem alteração estrutural",
+        "com_parcelas",
+        "fin_cobranca_bancaria_config"
+      ],
+      integrations: [
+        "Bradesco",
+        "Boleto",
+        "CNAB 400"
+      ],
+    },
+  },
+
+  {
     version: "0.3.51",
     title: "Cadastros no menu e recálculo por índice econômico",
     description:

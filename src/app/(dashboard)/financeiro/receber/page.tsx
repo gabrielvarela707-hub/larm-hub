@@ -276,6 +276,8 @@ export default function ContasReceberPage() {
   const [configError, setConfigError] = useState('')
   const [remittanceLoading, setRemittanceLoading] = useState(false)
   const [returnLoading, setReturnLoading] = useState(false)
+  const [boletoLoadingId, setBoletoLoadingId] = useState<string | null>(null)
+  const [boletoError, setBoletoError] = useState('')
 
   const topScrollRef = useRef<HTMLDivElement | null>(null)
   const tableScrollRef = useRef<HTMLDivElement | null>(null)
@@ -402,6 +404,7 @@ export default function ContasReceberPage() {
     setRecalcForm(form)
     setRecalcData(null)
     setRecalcSaved(false)
+    setBoletoError('')
     setRecalcError('')
     await previewRecalculation(row.id, form)
   }
@@ -419,6 +422,7 @@ export default function ContasReceberPage() {
   const updateRecalcForm = (patch: Partial<RecalcForm>) => {
     setRecalcForm(current => current ? { ...current, ...patch } : current)
     setRecalcSaved(false)
+    setBoletoError('')
   }
 
   const previewRecalculation = async (id = recalcRow?.id, form = recalcForm) => {
@@ -463,27 +467,35 @@ export default function ContasReceberPage() {
   const generateBoleto = async (row: ParcelaReceber, fromRecalculation = false) => {
     setError('')
     setSuccess('')
-    const popup = window.open('', '_blank')
-    if (popup) popup.document.write('<p style="font-family:Arial;padding:20px">Gerando boleto...</p>')
+    setBoletoError('')
+    setBoletoLoadingId(row.id)
     try {
+      // Primeiro valida e gera no backend. A nova aba só é criada depois de
+      // receber um HTML válido, evitando a aba branca que abria e fechava no erro.
       const response = await apiClient.post(`/financeiro/contas-receber/${row.id}/bradesco/boleto`)
       const html = response.data?.data?.html
       if (!html) throw new Error('O banco não retornou o boleto para impressão.')
-      if (popup) {
-        popup.document.open()
-        popup.document.write(html)
-        popup.document.close()
-      } else {
-        const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
-        window.open(url, '_blank')
-      }
+
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.target = '_blank'
+      link.rel = 'noopener noreferrer'
+      link.style.display = 'none'
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+
       setSuccess(response.data?.data?.homologado ? 'Boleto gerado.' : 'Boleto de homologação gerado. Valide antes do uso em produção.')
       await load()
     } catch (requestError: unknown) {
-      popup?.close()
       const message = requestErrorMessage(requestError, 'Não foi possível gerar o boleto.')
-      if (fromRecalculation) setRecalcError(message)
+      if (fromRecalculation) setBoletoError(message)
       else setError(message)
+    } finally {
+      setBoletoLoadingId(null)
     }
   }
 
@@ -721,7 +733,7 @@ export default function ContasReceberPage() {
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-1.5">
                         {row.status === 'atrasada' && <button type="button" onClick={() => openRecalculate(row)} className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700 hover:bg-amber-100"><Calculator className="h-3 w-3" /> Recalcular</button>}
-                        {eligible && <button type="button" onClick={() => generateBoleto(row)} className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-100"><Printer className="h-3 w-3" /> Boleto</button>}
+                        {eligible && <button type="button" disabled={boletoLoadingId === row.id} onClick={() => generateBoleto(row)} className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-wait disabled:opacity-60">{boletoLoadingId === row.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Printer className="h-3 w-3" />} {boletoLoadingId === row.id ? 'Gerando...' : 'Boleto'}</button>}
                       </div>
                       {row.indice_nome || row.indice_codigo_legado ? <p className="mt-2 text-[9px] text-slate-400">Índice: {row.indice_nome || row.indice_codigo_legado}</p> : null}
                     </td>
@@ -768,10 +780,11 @@ export default function ContasReceberPage() {
               </>
             )}
             {recalcSaved && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">Recálculo salvo. O boleto já pode ser gerado com o valor atualizado.</div>}
+            {boletoError && <Notice type="error">{boletoError}</Notice>}
             <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4">
               <button type="button" onClick={() => setRecalcRow(null)} className={cancelButtonClass}>Fechar</button>
               <button type="button" disabled={!recalcData || recalcSaving || recalcLoading || recalcSaved} onClick={saveRecalculation} className={primaryButtonClass}>{recalcSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {recalcSaved ? 'Recálculo salvo' : 'Salvar recálculo'}</button>
-              <button type="button" disabled={!recalcSaved || recalcSaving || recalcLoading} onClick={() => generateBoleto(recalcRow, true)} title={recalcSaved ? 'Gerar boleto com o valor recalculado' : 'Salve o recálculo antes de gerar o boleto'} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"><Printer className="h-4 w-4" /> Gerar boleto</button>
+              <button type="button" disabled={!recalcSaved || recalcSaving || recalcLoading || boletoLoadingId === recalcRow.id} onClick={() => generateBoleto(recalcRow, true)} title={recalcSaved ? 'Gerar boleto com o valor recalculado' : 'Salve o recálculo antes de gerar o boleto'} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">{boletoLoadingId === recalcRow.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} {boletoLoadingId === recalcRow.id ? 'Gerando boleto...' : 'Gerar boleto'}</button>
             </div>
           </div>
         </Modal>
