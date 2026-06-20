@@ -6,6 +6,46 @@
 
 const SYSTEM_RELEASES = [
   {
+    version: "0.3.51",
+    title: "Cadastros no menu e recálculo por índice econômico",
+    description:
+      "Restaura o grupo Cadastros no topo do menu e corrige a localização dos valores mensais de IPCA/IGP-M usados no recálculo de parcelas.",
+    frontend_version: "0.3.51",
+    backend_version: "0.3.51",
+    released_at: "2026-06-20T22:50:00.000Z",
+    changes: [
+      "O grupo Cadastros volta a aparecer acima do Financeiro, substituindo o nome Cadastros Auxiliares.",
+      "Clientes, Fornecedores, Atualização de Índices, Plano de Contas e Tipo de Documento ficam centralizados em Cadastros.",
+      "Os itens de Cadastros foram organizados em ordem alfabética.",
+      "Fornecedores deixa de aparecer duplicado dentro do menu Financeiro.",
+      "O recálculo passa a localizar IPCA e IGP-M pelo código econômico normalizado, mesmo quando o contrato referencia um cadastro anterior do mesmo índice.",
+      "A leitura das referências mensais foi protegida contra diferenças de formatação de data do PostgreSQL.",
+      "O IPCA de abril de 2026 passa a ser reconhecido no cálculo de contratos IPCA2 quando já estiver cadastrado em Atualização de Índices.",
+      "Nenhuma regra de multa, mora, desconto, boleto ou valor de índice foi alterada."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "Sidebar centralizada de Cadastros"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Motor de recálculo de recebíveis"
+      ],
+      database: [
+        "Sem alteração estrutural",
+        "fin_indice_tipos",
+        "fin_indice_valores"
+      ],
+      integrations: [
+        "Atualização de Índices",
+        "Contas a Receber"
+      ]
+    },
+  },
+
+  {
     version: "0.3.50",
     title: "Contas a Receber — gerar boleto após salvar recálculo",
     description:
