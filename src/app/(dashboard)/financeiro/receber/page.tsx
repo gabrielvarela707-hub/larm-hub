@@ -472,7 +472,14 @@ export default function ContasReceberPage() {
     try {
       // Primeiro valida e gera no backend. A nova aba só é criada depois de
       // receber um HTML válido, evitando a aba branca que abria e fechava no erro.
-      const response = await apiClient.post(`/financeiro/contas-receber/${row.id}/bradesco/boleto`)
+      const response = await apiClient.post(
+        `/financeiro/contas-receber/${row.id}/bradesco/boleto`,
+        {
+          data_recalculo: fromRecalculation
+            ? (recalcData?.data_calculo || row.data_recalculo || undefined)
+            : (row.data_recalculo || undefined),
+        },
+      )
       const html = response.data?.data?.html
       if (!html) throw new Error('O banco não retornou o boleto para impressão.')
 

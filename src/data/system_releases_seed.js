@@ -6,6 +6,45 @@
 
 const SYSTEM_RELEASES = [
   {
+    version: "0.3.54",
+    title: "Contas a Receber — boleto usa a data do recálculo recém-salvo",
+    description:
+      "Corrige definitivamente a validação do boleto vencido, aceitando a data recalculada enviada pelo modal somente quando já existe recálculo persistido na parcela.",
+    frontend_version: "0.3.54",
+    backend_version: "0.3.54",
+    released_at: "2026-06-20T23:58:00.000Z",
+    changes: [
+      "O frontend envia ao endpoint do boleto a mesma data exibida no recálculo salvo.",
+      "O backend prioriza a data persistida e usa a data enviada pelo modal como fallback seguro quando a parcela já possui valor recalculado e data de salvamento.",
+      "Adicionada compatibilidade com registros em que data_recalculo não foi retornada corretamente pelo driver, mas recalculado_em e valor_recalculado foram gravados.",
+      "A data efetiva validada passa diretamente para a montagem do boleto e da remessa.",
+      "Em caso de nova rejeição, o log passa a registrar as datas consideradas para facilitar o diagnóstico sem expor dados bancários.",
+      "Nenhuma migration de banco ou regra de cálculo financeiro foi alterada."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "Contas a Receber",
+        "Modal de recálculo"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Validação de boleto Bradesco"
+      ],
+      database: [
+        "Sem alteração estrutural",
+        "com_parcelas"
+      ],
+      integrations: [
+        "Bradesco",
+        "Boleto",
+        "CNAB 400"
+      ],
+    },
+  },
+
+  {
     version: "0.3.52",
     title: "Contas a Receber — geração segura do boleto Bradesco",
     description:
