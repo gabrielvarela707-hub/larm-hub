@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Map, Users, FileText, DollarSign,
   BarChart3, Building2, Bot, Settings, MapPin,
   Globe, HardHat, ChevronDown, ChevronRight,
-  TrendingUp, ChevronLeft, LogOut, HelpCircle, Receipt, Tag, MessageSquare, Megaphone, BookMarked, FileCheck, CalendarDays, Percent,
+  TrendingUp, ChevronLeft, LogOut, HelpCircle, Megaphone, BookMarked,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTenantConfig } from '@/lib/tenant-config-store'

@@ -10,6 +10,10 @@ const compat = new FlatCompat({
 })
 
 const eslintConfig = [
+  {
+    // Backend legado mantido no repositório; não faz parte da aplicação Next.js.
+    ignores: ['src/routes/**'],
+  },
   ...compat.extends('next/core-web-vitals', 'next/typescript'),
   {
     rules: {

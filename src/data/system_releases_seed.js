@@ -6,6 +6,38 @@
 
 const SYSTEM_RELEASES = [
   {
+    version: "0.3.57",
+    title: "Frontend — correção do build ESLint",
+    description:
+      "Corrige o bloqueio de publicação do frontend causado pela análise indevida de uma rota legada do backend e remove imports não utilizados.",
+    frontend_version: "0.3.57",
+    backend_version: "0.3.56",
+    released_at: "2026-06-23T20:30:00.000Z",
+    changes: [
+      "O ESLint do frontend passa a ignorar src/routes, diretório que contém código legado do backend e não é importado pela aplicação Next.js.",
+      "Removido o import não utilizado Edit3 da tela de reservas.",
+      "Removidos imports de ícones não utilizados do menu lateral.",
+      "Nenhuma regra financeira, tela ou endpoint foi alterado."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "ESLint Flat Config",
+        "TypeScript"
+      ],
+      backend: [
+        "Sem alteração"
+      ],
+      database: [
+        "Sem alteração"
+      ],
+      integrations: [
+        "Vercel Build"
+      ],
+    },
+  },
+
+  {
     version: "0.3.56",
     title: "Cash Flow diário — edição dos saldos de aplicações",
     description:
