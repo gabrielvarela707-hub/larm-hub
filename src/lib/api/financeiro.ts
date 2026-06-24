@@ -333,6 +333,8 @@ export interface UpdateCashflowValorPayload {
   empresa: Empresa
   ano: number
   mes: number
+  dia?: number
+  visao?: 'mensal' | 'diaria'
   valor: number
 }
 

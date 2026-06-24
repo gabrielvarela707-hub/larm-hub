@@ -213,7 +213,9 @@ export default function CashFlowPage() {
         linha_id: Number(linha.id),
         empresa,
         ano,
-        mes: Number(coluna.mes),
+        mes: visao === 'diaria' ? mes : Number(coluna.mes),
+        dia: visao === 'diaria' ? Number(coluna.dia ?? coluna.key) : undefined,
+        visao,
         valor,
       })
       setEdicaoKey(null)
@@ -470,7 +472,7 @@ export default function CashFlowPage() {
                         const v = Number(getValorColuna(linha, c) || 0)
                         const colorCls = v === 0 ? 'text-zinc-300 dark:text-zinc-600' : isNeg(v) ? 'text-red-500' : 'text-green-600'
                         const cellKey = `${linha.id}-${getColKey(c)}`
-                        const editavel = visao === 'mensal' && Boolean(linha.editavel_saldo)
+                        const editavel = Boolean(linha.editavel_saldo)
                         const editando = editavel && edicaoKey === cellKey
                         return (
                           <td key={getColKey(c)} className={`px-2 py-1.5 text-right font-mono ${colorCls}`}>
@@ -487,7 +489,7 @@ export default function CashFlowPage() {
                                       if (e.key === 'Escape') cancelarEdicaoSaldo()
                                     }}
                                     disabled={edicaoSalvando}
-                                    aria-label={`Editar ${linha.descricao} em ${c.label}, valor em K`}
+                                    aria-label={`Editar ${linha.descricao} em ${visao === 'diaria' ? `dia ${c.label}` : c.label}, valor em K`}
                                     className="w-[68px] rounded border border-amber-400 bg-white px-1.5 py-1 pr-4 text-right text-[11px] text-zinc-800 outline-none focus:ring-2 focus:ring-amber-200 disabled:opacity-60"
                                   />
                                   <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400">K</span>
@@ -529,8 +531,8 @@ export default function CashFlowPage() {
                                   <button
                                     type="button"
                                     onClick={() => iniciarEdicaoSaldo(linha, c, v)}
-                                    title="Editar saldo deste mês"
-                                    aria-label={`Editar ${linha.descricao} em ${c.label}`}
+                                    title={visao === 'diaria' ? 'Editar saldo desta aplicação a partir deste dia' : 'Editar saldo deste mês'}
+                                    aria-label={`Editar ${linha.descricao} em ${visao === 'diaria' ? `dia ${c.label}` : c.label}`}
                                     className="shrink-0 rounded p-1 text-zinc-300 opacity-60 transition hover:bg-amber-50 hover:text-amber-600 group-hover:opacity-100"
                                   >
                                     <Pencil className="h-3 w-3" />
