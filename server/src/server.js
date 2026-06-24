@@ -32,6 +32,7 @@ const reservasPropostasRoutes  = require('./routes/reservas_propostas')
 const corretoresComissoesRoutes = require('./routes/corretores_comissoes')
 const recebiveisRoutes          = require('./routes/recebiveis')
 const indicesEconomicosRoutes   = require('./routes/indices-economicos')
+const cadastrosRoutes           = require('./routes/cadastros')
 
 const app  = express()
 const PORT = process.env.PORT || 3001
@@ -58,7 +59,7 @@ app.use(cors({
 }))
 
 // ─── Parsers ──────────────────────────────────────────────────────────────────
-app.use(express.json({ limit: '10mb' }))
+app.use(express.json({ limit: '30mb' }))
 app.use(express.urlencoded({ extended: true }))
 
 // ─── Logger HTTP ──────────────────────────────────────────────────────────────
@@ -84,6 +85,7 @@ app.use('/',       usersRoutes)
 app.use('/',       tenantConfigRoutes)
 app.use('/',       profilesRoutes)
 app.use('/',       tiposDocumentoRoutes)
+app.use('/',       cadastrosRoutes)
 app.use('/',       auditRoutes)
 app.use('/',       systemRoutes)
 app.use('/crm',    crmRoutes)

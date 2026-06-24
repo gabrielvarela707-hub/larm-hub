@@ -6,6 +6,645 @@
 
 const SYSTEM_RELEASES = [
   {
+    version: "0.3.56",
+    title: "Cash Flow diário — edição dos saldos de aplicações",
+    description:
+      "Habilita a edição direta dos saldos finais das aplicações na visão diária e mantém o valor informado nos dias seguintes do mesmo mês até uma nova posição.",
+    frontend_version: "0.3.56",
+    backend_version: "0.3.56",
+    released_at: "2026-06-21T00:10:00.000Z",
+    changes: [
+      "A visão diária passa a exibir o lápis de edição nas linhas de CDB, LCA, LCI, fundos e demais aplicações configuradas.",
+      "O operador pode informar o saldo da aplicação diretamente em um dia específico do mês.",
+      "O valor editado é carregado automaticamente para os dias seguintes até existir um novo lançamento ou uma nova edição.",
+      "Valores iguais a zero também podem encerrar a posição da aplicação a partir do dia selecionado.",
+      "Criada tabela própria para posições diárias, preservando os valores mensais e os movimentos bancários já existentes.",
+      "As linhas consolidadas de Curto Prazo, Longo Prazo e Aplicações Financeiras continuam calculadas automaticamente."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "Cash Flow diário",
+        "Edição inline em K"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Endpoint PATCH /financeiro/cashflow/valor"
+      ],
+      database: [
+        "fin_cashflow_valores_diarios",
+        "fin_cashflow_linhas"
+      ],
+      integrations: [
+        "Cash Flow",
+        "Movimento Bancário"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.55",
+    title: "Cash Flow diário — saldo de aplicações carregado até o fim do mês",
+    description:
+      "Ajusta a visão diária do Cash Flow para manter o saldo final informado de cada aplicação nos dias seguintes do mesmo mês, até que um novo lançamento substitua a posição.",
+    frontend_version: "0.3.54",
+    backend_version: "0.3.55",
+    released_at: "2026-06-20T23:59:00.000Z",
+    changes: [
+      "O saldo lançado em CDB, LCA, LCI, fundo e demais aplicações passa a ser repetido nos dias seguintes dentro do mesmo mês.",
+      "Quando existir um novo lançamento para a mesma aplicação, o novo valor substitui o anterior a partir daquele dia.",
+      "O carregamento é encerrado no último dia do mês e não é transportado automaticamente para o mês seguinte.",
+      "O total das linhas de aplicações na visão diária passa a representar a última posição do mês, evitando a soma indevida dos saldos repetidos.",
+      "Receitas, despesas, rendimentos, taxas e demais linhas de movimento permanecem com a regra atual.",
+      "Nenhuma migration de banco ou alteração de frontend foi necessária."
+    ],
+    architecture: {
+      frontend: [
+        "Sem alteração nesta versão"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Cash Flow diário"
+      ],
+      database: [
+        "Sem alteração estrutural",
+        "fin_movimento",
+        "fin_bancos_lancamentos",
+        "fin_cashflow_linhas"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Bancos e Contas",
+        "Cash Flow"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.54",
+    title: "Contas a Receber — boleto usa a data do recálculo recém-salvo",
+    description:
+      "Corrige definitivamente a validação do boleto vencido, aceitando a data recalculada enviada pelo modal somente quando já existe recálculo persistido na parcela.",
+    frontend_version: "0.3.54",
+    backend_version: "0.3.54",
+    released_at: "2026-06-20T23:58:00.000Z",
+    changes: [
+      "O frontend envia ao endpoint do boleto a mesma data exibida no recálculo salvo.",
+      "O backend prioriza a data persistida e usa a data enviada pelo modal como fallback seguro quando a parcela já possui valor recalculado e data de salvamento.",
+      "Adicionada compatibilidade com registros em que data_recalculo não foi retornada corretamente pelo driver, mas recalculado_em e valor_recalculado foram gravados.",
+      "A data efetiva validada passa diretamente para a montagem do boleto e da remessa.",
+      "Em caso de nova rejeição, o log passa a registrar as datas consideradas para facilitar o diagnóstico sem expor dados bancários.",
+      "Nenhuma migration de banco ou regra de cálculo financeiro foi alterada."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "Contas a Receber",
+        "Modal de recálculo"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Validação de boleto Bradesco"
+      ],
+      database: [
+        "Sem alteração estrutural",
+        "com_parcelas"
+      ],
+      integrations: [
+        "Bradesco",
+        "Boleto",
+        "CNAB 400"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.53",
+    title: "Contas a Receber — boleto reconhece recálculo salvo",
+    description:
+      "Corrige a validação do boleto Bradesco para usar a data e o valor do recálculo persistido, respeitando a data financeira do Brasil.",
+    frontend_version: "0.3.52",
+    backend_version: "0.3.53",
+    released_at: "2026-06-20T23:45:00.000Z",
+    changes: [
+      "A geração do boleto passa a considerar a data de recálculo salva na parcela e, como fallback, a data registrada na memória JSON do cálculo.",
+      "A comparação de vencimento passa a usar o fuso financeiro America/Sao_Paulo por padrão, evitando rejeição na virada do dia em UTC.",
+      "O valor recalculado salvo continua sendo usado como valor de cobrança do boleto.",
+      "A mesma data recalculada passa a ser usada como novo vencimento do boleto e da remessa.",
+      "Nenhuma estrutura do banco de dados ou regra financeira foi alterada."
+    ],
+    architecture: {
+      frontend: [
+        "Sem alteração nesta versão"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Validação de boleto Bradesco",
+        "Fuso financeiro configurável"
+      ],
+      database: [
+        "Sem alteração estrutural",
+        "com_parcelas"
+      ],
+      integrations: [
+        "Bradesco",
+        "Boleto",
+        "CNAB 400"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.52",
+    title: "Contas a Receber — geração segura do boleto Bradesco",
+    description:
+      "Corrige o fluxo de geração do boleto para não abrir uma aba vazia antes da validação e melhora as mensagens de erro bancário.",
+    frontend_version: "0.3.52",
+    backend_version: "0.3.52",
+    released_at: "2026-06-20T23:20:00.000Z",
+    changes: [
+      "A nova aba do boleto passa a ser aberta somente depois que a API retornar um documento válido.",
+      "Em caso de erro 400, o motivo passa a aparecer no próprio modal, ao lado da ação de gerar boleto.",
+      "O botão apresenta estado Gerando boleto e impede cliques repetidos durante a requisição.",
+      "A API passa a informar claramente dados ausentes do cliente ou da configuração Bradesco.",
+      "O boleto recalculado passa a usar o valor final salvo no recálculo, e não o valor original da parcela.",
+      "Adicionado log técnico da falha com parcela, tenant e código de validação, sem expor dados bancários sensíveis.",
+      "Nenhuma estrutura do banco de dados foi alterada."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "Contas a Receber",
+        "Pré-visualização HTML do boleto"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Validação de boleto Bradesco"
+      ],
+      database: [
+        "Sem alteração estrutural",
+        "com_parcelas",
+        "fin_cobranca_bancaria_config"
+      ],
+      integrations: [
+        "Bradesco",
+        "Boleto",
+        "CNAB 400"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.51",
+    title: "Cadastros no menu e recálculo por índice econômico",
+    description:
+      "Restaura o grupo Cadastros no topo do menu e corrige a localização dos valores mensais de IPCA/IGP-M usados no recálculo de parcelas.",
+    frontend_version: "0.3.51",
+    backend_version: "0.3.51",
+    released_at: "2026-06-20T22:50:00.000Z",
+    changes: [
+      "O grupo Cadastros volta a aparecer acima do Financeiro, substituindo o nome Cadastros Auxiliares.",
+      "Clientes, Fornecedores, Atualização de Índices, Plano de Contas e Tipo de Documento ficam centralizados em Cadastros.",
+      "Os itens de Cadastros foram organizados em ordem alfabética.",
+      "Fornecedores deixa de aparecer duplicado dentro do menu Financeiro.",
+      "O recálculo passa a localizar IPCA e IGP-M pelo código econômico normalizado, mesmo quando o contrato referencia um cadastro anterior do mesmo índice.",
+      "A leitura das referências mensais foi protegida contra diferenças de formatação de data do PostgreSQL.",
+      "O IPCA de abril de 2026 passa a ser reconhecido no cálculo de contratos IPCA2 quando já estiver cadastrado em Atualização de Índices.",
+      "Nenhuma regra de multa, mora, desconto, boleto ou valor de índice foi alterada."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "Sidebar centralizada de Cadastros"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Motor de recálculo de recebíveis"
+      ],
+      database: [
+        "Sem alteração estrutural",
+        "fin_indice_tipos",
+        "fin_indice_valores"
+      ],
+      integrations: [
+        "Atualização de Índices",
+        "Contas a Receber"
+      ]
+    },
+  },
+
+  {
+    version: "0.3.49",
+    title: "Orçamento — total correto do Saldo Final",
+    description:
+      "Corrige o total anual do bloco Saldo Final no Orçamento para exibir o último saldo mensal disponível, sem somar posições mensais.",
+    frontend_version: "0.3.47",
+    backend_version: "0.3.49",
+    released_at: "2026-06-20T21:30:00.000Z",
+    changes: [
+      "O total anual da linha SALDO FINAL deixa de somar os saldos de janeiro a dezembro.",
+      "O total passa a representar o último saldo mensal disponível no ano selecionado.",
+      "A mesma regra foi aplicada às linhas que compõem o bloco de saldos, como Saldos Bancários em C/C, Aplicações Financeiras, Curto Prazo e seus detalhes.",
+      "Receitas, despesas e demais linhas de fluxo continuam usando a soma anual normalmente.",
+      "Nenhum valor mensal, movimento bancário ou orçamento importado foi alterado.",
+      "Versionamento do backend atualizado para 0.3.49."
+    ],
+    architecture: {
+      frontend: [
+        "Sem alteração de interface",
+        "Orçamento v0.3.47"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Regra de totalização por posição financeira"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_orcamento_linhas",
+        "fin_orcamento_valores"
+      ],
+      integrations: [
+        "Orçamento Financeiro",
+        "Cash Flow Orçado"
+      ]
+    },
+  },
+
+  {
+    version: "0.3.48",
+    title: "Contas a Receber — correção de datas no recálculo",
+    description:
+      "Corrige a validação do vencimento no recálculo das parcelas quando o PostgreSQL devolve datas como Date, timestamp ISO ou formato brasileiro.",
+    frontend_version: "0.3.47",
+    backend_version: "0.3.48",
+    released_at: "2026-06-19T23:10:00.000Z",
+    changes: [
+      "Corrigido o erro Vencimento inválida ao abrir ou atualizar o recálculo de parcelas atrasadas.",
+      "A API agora normaliza datas recebidas como DATE do PostgreSQL, objeto Date, timestamp ISO e DD/MM/AAAA.",
+      "A mesma normalização foi aplicada às referências mensais dos índices econômicos.",
+      "A validação de vencimento usada na geração de boleto e remessa Bradesco passa a usar a data normalizada.",
+      "Nenhum valor, índice, parcela ou regra financeira foi alterado.",
+      "Versionamento do backend atualizado para 0.3.48."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "Contas a Receber v0.3.47"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Normalização segura de datas financeiras"
+      ],
+      database: [
+        "PostgreSQL",
+        "com_parcelas",
+        "fin_indice_valores"
+      ],
+      integrations: [
+        "Recálculo de recebíveis",
+        "Cobrança Bradesco"
+      ]
+    },
+  },
+
+  {
+    version: "0.3.47",
+    title: "Contas a Receber — recálculo, boleto e CNAB 400 Bradesco",
+    description:
+      "Adiciona recálculo auditável das parcelas vencidas por índice contratual, emissão de boleto em homologação e geração/processamento de arquivos de cobrança Bradesco CNAB 400.",
+    frontend_version: "0.3.47",
+    backend_version: "0.3.47",
+    released_at: "2026-06-19T22:45:00.000Z",
+    changes: [
+      "Adicionado botão Recalcular em cada parcela atrasada do Contas a Receber.",
+      "O recálculo usa a data escolhida pelo operador, o índice IGPM/IPCA do contrato ou da receita e os valores mensais cadastrados em Atualização de Índices.",
+      "A memória de cálculo mostra referências mensais, defasagem do índice, correção acumulada, multa, mora proporcional aos dias, seguro, outros acréscimos, desconto e valor final.",
+      "O operador pode ajustar percentuais e valores antes de salvar, mantendo a memória completa em recalculo_dados.",
+      "Adicionada configuração de cobrança Bradesco por tenant/empresa, inicialmente em modo de homologação.",
+      "Adicionada emissão de boleto imprimível com linha digitável e código de barras Bradesco.",
+      "Adicionada seleção de parcelas e geração de remessa de cobrança CNAB 400.",
+      "Remessas de homologação usam extensão TST; após confirmação bancária podem ser liberadas como REM.",
+      "Adicionado processamento idempotente de retorno CNAB 400, com registro de todas as ocorrências.",
+      "A ocorrência 06 de liquidação normal baixa automaticamente a parcela como recebida por retorno Bradesco.",
+      "Ocorrências de entrada confirmada, rejeição e baixa bancária atualizam o status do boleto sem criar baixa financeira indevida.",
+      "Adicionadas tabelas de configurações, remessas, retornos e itens, preservando o histórico de conciliação.",
+      "Versionamento atualizado para 0.3.47."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "Modal de recálculo",
+        "Seleção em lote para remessa",
+        "Importação de retorno",
+        "Boleto imprimível"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Motor de recálculo por índice mensal",
+        "Gerador e leitor CNAB 400 Bradesco",
+        "Auditoria de recálculo e conciliação"
+      ],
+      database: [
+        "com_parcelas",
+        "fin_indice_tipos",
+        "fin_indice_valores",
+        "fin_cobranca_bancaria_config",
+        "fin_remessas_cobranca",
+        "fin_remessas_cobranca_itens",
+        "fin_retornos_cobranca",
+        "fin_retornos_cobranca_itens"
+      ],
+      integrations: [
+        "Cobrança Bradesco CNAB 400",
+        "Retorno bancário",
+        "Índices econômicos"
+      ]
+    },
+  },
+
+  {
+    version: "0.3.46",
+    title: "Contas a Receber — tela operacional e conciliação bancária",
+    description:
+      "Substitui a tela mockada de Contas a Receber por uma listagem real de clientes, contratos, receitas e parcelas, com filtros, exportação e preparação para baixa por conciliação bancária.",
+    frontend_version: "0.3.46",
+    backend_version: "0.3.46",
+    released_at: "2026-06-19T21:35:00.000Z",
+    changes: [
+      "Removida a listagem mockada de Contas a Receber.",
+      "A tela passa a consultar com_parcelas, com_contratos, fin_receitas, fin_tipos_receita, cad_clientes e cad_produtos.",
+      "A consulta inicia no primeiro dia do mês atual e permite pesquisar livremente períodos anteriores pelos filtros de vencimento.",
+      "Adicionados filtros por cliente, tipo de receita, obra, status, vencimento e busca por cliente, contrato, receita, unidade ou documento.",
+      "Adicionada paginação, ordenação, cabeçalho travado, barra horizontal superior e setas flutuantes.",
+      "Adicionado Exportar Excel respeitando os filtros ativos.",
+      "O botão Novo Lançamento de Receita foi mantido visível e bloqueado até a definição do formulário pelo cliente.",
+      "Valores importados do Strato usam valor_total_relatorio para evitar somar novamente correção, mora, seguro e demais componentes já consolidados.",
+      "Parcelas recebidas passam a exibir a origem da baixa e, quando vinculadas ao Movimento Bancário, são identificadas como Conciliação bancária.",
+      "Criados movimento_id, origem_baixa, conciliado_em e conciliacao_dados em com_parcelas para suportar o retorno bancário.",
+      "Removido o badge mockado com número 3 do menu Contas a Receber.",
+      "Versionamento atualizado para 0.3.46."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Tabela operacional de Contas a Receber",
+        "TableFloatingNav"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Endpoints paginados e exportação Excel XML",
+        "Migration idempotente para conciliação"
+      ],
+      database: [
+        "com_parcelas",
+        "com_contratos",
+        "fin_receitas",
+        "fin_tipos_receita",
+        "cad_clientes",
+        "cad_pessoas",
+        "cad_produtos",
+        "fin_movimento"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Conciliação bancária preparada",
+        "Relatório Strato"
+      ]
+    },
+  },
+
+
+  {
+    version: "0.3.45",
+    title: "Contas a Receber — vínculo com clientes inativos",
+    description:
+      "Corrige a importação de contratos, receitas e parcelas do Strato para localizar também clientes inativos, preservando o status cadastral e evitando a necessidade de reativação artificial.",
+    frontend_version: "0.3.42",
+    backend_version: "0.3.45",
+    released_at: "2026-06-19T20:58:00.000Z",
+    changes: [
+      "O importador deixa de excluir cad_clientes e cad_pessoas inativos durante o vínculo dos contratos históricos.",
+      "Clientes inativos continuam inativos após a importação; somente o relacionamento com contratos, receitas e parcelas é criado.",
+      "A prévia passa a informar quantos contratos foram vinculados a clientes inativos.",
+      "Mantida a trava contra clientes realmente ausentes ou nomes ambíguos.",
+      "Corrigido o vínculo de ALEXANDRE EMERSON DA SILVA nas unidades R-6, R-7, R-8 e R-9.",
+      "Versionamento atualizado para 0.3.45."
+    ],
+    architecture: {
+      frontend: ["Sem alteração de interface"],
+      backend: ["Node.js", "Seed idempotente", "Vínculo histórico de clientes ativos e inativos"],
+      database: ["cad_clientes", "cad_pessoas", "com_contratos", "fin_receitas", "com_parcelas"],
+      integrations: ["Relatório a Receber Strato — posição 01/06/2026"]
+    },
+  },
+
+  {
+    version: "0.3.44",
+    title: "Contas a Receber — contratos, receitas e parcelas do Strato (Fase 2)",
+    description:
+      "Importa o saldo em aberto do relatório Strato e relaciona clientes já cadastrados com unidades, contratos, receitas e parcelas, sem criar uma segunda tabela de recebimentos.",
+    frontend_version: "0.3.42",
+    backend_version: "0.3.44",
+    released_at: "2026-06-19T22:10:00.000Z",
+    changes: [
+      "A tabela com_parcelas foi preservada e ampliada com vínculos para fin_receitas, com_contrato_itens, cad_produtos/cad_servicos e fin_tipos_receita.",
+      "Criados campos de rastreabilidade do relatório Strato: documento, parcela legada, obra, unidade, índice, composição do valor e data de posição.",
+      "Preparado seed idempotente com modo prévia e execução para o relatório a receber com posição em 01/06/2026.",
+      "Os 126 clientes do relatório são vinculados aos cadastros existentes por nome normalizado exato; a execução é bloqueada quando houver cliente ausente ou ambíguo.",
+      "O relatório gera 137 unidades/produtos, 137 contratos, 251 receitas e 13.502 parcelas em aberto, totalizando R$ 21.031.875,59.",
+      "Cada contrato é relacionado ao cliente, à obra e à unidade; cada natureza de receita gera um item contratual e uma receita própria.",
+      "As parcelas usam o Total do relatório como valor exibido e preservam separadamente convertido, resíduo, moras, desconto, seguro e juros de financiamento.",
+      "Reexecuções não duplicam dados e preservam parcelas já pagas e contratos encerrados/quitados.",
+      "Corrigida a seleção da versão atual do changelog para usar a maior versão semântica, independentemente da ordem do arquivo.",
+      "Versionamento atualizado para 0.3.44."
+    ],
+    architecture: {
+      frontend: [
+        "Sem alteração de interface nesta fase",
+        "Contas a Receber existente passa a consumir com_contratos e com_parcelas importados"
+      ],
+      backend: [
+        "Node.js",
+        "Migration idempotente",
+        "Seed com preview/execute",
+        "Importação em lotes"
+      ],
+      database: [
+        "PostgreSQL",
+        "cad_clientes",
+        "cad_produtos",
+        "com_contratos",
+        "com_contrato_itens",
+        "fin_receitas",
+        "com_parcelas",
+        "fin_tipos_receita"
+      ],
+      integrations: [
+        "Relatório a Receber Strato — posição 01/06/2026",
+        "Obras 7698, 7700 e 7701",
+        "Índices IPCA e IGP-M"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.43",
+    title: "Contas a Receber — base comercial e contratual (Fase 1)",
+    description:
+      "Cria a fundação normalizada para relacionar clientes, produtos, serviços, contratos e receitas antes da evolução das parcelas do Contas a Receber.",
+    frontend_version: "0.3.42",
+    backend_version: "0.3.43",
+    released_at: "2026-06-19T21:15:00.000Z",
+    changes: [
+      "Criadas as tabelas cad_produtos e cad_servicos para o catálogo comercial.",
+      "Criada fin_tipos_receita com os códigos encontrados no relatório legado: Entrada, Parcela, Anual, Renegociação, Intermediária, Taxa, Condomínio, Aditivo, Outros e Comissão.",
+      "Criada fin_receitas como cabeçalho/origem da receita por cliente, contrato, produto ou serviço, sem gerar parcelas nesta fase.",
+      "A tabela com_contratos foi preservada e ampliada com cliente_id, título, tipo de contrato, período, reajuste, obra, unidade e identificação legada.",
+      "Criada com_contrato_itens para permitir vários produtos e/ou serviços dentro do mesmo contrato.",
+      "Contratos existentes tentam ser vinculados a cad_clientes por CPF/CNPJ e, como fallback conservador, por nome exato e único.",
+      "Adicionado seed opcional em modo prévia para importar obras/produtos de tb2_obra e ts1_prod e serviços de ts1_serv.",
+      "A tabela com_parcelas não foi duplicada; ela será evoluída na Fase 2 para receber o vínculo com fin_receitas e os dados completos do relatório a receber.",
+      "Versionamento atualizado para 0.3.43."
+    ],
+    architecture: {
+      frontend: [
+        "Sem alteração de interface nesta fase",
+        "Contas a Receber atual preservado"
+      ],
+      backend: [
+        "Node.js",
+        "Migration idempotente",
+        "Seed legado com preview/execute"
+      ],
+      database: [
+        "PostgreSQL",
+        "cad_clientes",
+        "cad_produtos",
+        "cad_servicos",
+        "com_contratos",
+        "com_contrato_itens",
+        "fin_tipos_receita",
+        "fin_receitas",
+        "com_parcelas"
+      ],
+      integrations: [
+        "tb2_obra",
+        "ts1_prod",
+        "ts1_serv",
+        "Relatório a Receber Strato"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.42",
+    title: "Contas a Pagar — restauração das formas de pagamento",
+    description:
+      "Restaura as modalidades antigas no lançamento de Contas a Pagar e mantém o preenchimento inteligente exclusivamente para PIX, Boleto, TED e DOC.",
+    frontend_version: "0.3.42",
+    backend_version: "0.3.42",
+    released_at: "2026-06-19T19:40:00.000Z",
+    changes: [
+      "Restauradas as opções Transferência, Débito automático, Dinheiro, Cartão e Outro no campo Forma de pagamento / modalidade.",
+      "PIX continua carregando automaticamente a chave cadastrada do fornecedor.",
+      "TED e DOC continuam carregando banco, código, agência, conta, dígito e tipo de conta do fornecedor.",
+      "Boleto continua permitindo linha digitável e upload de múltiplos PDFs ou imagens.",
+      "As modalidades restauradas permanecem simples e não abrem campos adicionais nem executam preenchimento automático.",
+      "O backend passa a preservar todas as modalidades aceitas sem descartar as opções restauradas.",
+      "Uploads novos de boleto são processados somente quando a modalidade selecionada é Boleto.",
+      "Versionamento atualizado para 0.3.42."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Contas a Pagar v0.3.42"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro v0.3.42"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_lancamentos_cp",
+        "fin_lancamentos_cp_boletos",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "PIX",
+        "Boleto",
+        "TED",
+        "DOC"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.41",
+    title: "Contas a Pagar — modalidade, dados do fornecedor e múltiplos boletos",
+    description:
+      "Melhora a edição de lançamentos de Contas a Pagar com acesso direto ao fornecedor e instruções específicas para PIX, Boleto, TED e DOC.",
+    frontend_version: "0.3.41",
+    backend_version: "0.3.41",
+    released_at: "2026-06-19T18:10:00.000Z",
+    changes: [
+      "Adicionado botão Editar fornecedor ao lado de Novo fornecedor no formulário de Contas a Pagar.",
+      "A modalidade PIX passa a preencher automaticamente a chave PIX cadastrada no fornecedor, preservando uma cópia no lançamento.",
+      "As modalidades TED e DOC passam a preencher banco, código, agência, conta, dígito e tipo de conta do fornecedor.",
+      "A modalidade Boleto recebeu campo de linha digitável e upload de múltiplos arquivos PDF ou imagem.",
+      "Criada tabela fin_lancamentos_cp_boletos para armazenar vários boletos vinculados ao mesmo lançamento.",
+      "Boletos existentes podem ser abertos ou removidos durante a edição do lançamento.",
+      "A API passa a aceitar até 30MB por requisição, mantendo limite individual de 6MB e total de 20MB para os novos boletos.",
+      "Versionamento atualizado para 0.3.41; ao atingir 0.3.99, a próxima versão será 0.4.0."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Contas a Pagar v0.3.41"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro v0.3.41"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_lancamentos_cp",
+        "fin_lancamentos_cp_boletos",
+        "fin_fornecedores",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Cadastro de Fornecedores",
+        "PIX",
+        "Boleto",
+        "TED",
+        "DOC"
+      ],
+    },
+  },
+
+  {
     version: "0.0.1",
     title: "Base de versionamento e auditoria operacional",
     description:
@@ -2037,556 +2676,6 @@ const SYSTEM_RELEASES = [
         "Movimento Bancário Realizado",
         "Movimento Bancário Orçado",
         "Orçamento Financeiro",
-        "Changelog versionado no banco"
-      ],
-    },
-  },
-
-  {
-    version: "0.3.24",
-    title: "Financeiro — padronização em K e correção do tema automático",
-    description:
-      "Ajustes visuais no Cash Flow e Orçamento para exibir valores abreviados somente em milhares e impedir que o tema escuro do navegador altere automaticamente as cores das telas.",
-    frontend_version: "0.3.24",
-    backend_version: "0.3.23",
-    released_at: "2026-06-14T22:30:00.000Z",
-    changes: [
-      "Cash Flow mensal, diário, cartões e totais passam a exibir valores abreviados somente com K, sem usar M.",
-      "Orçamento previsto, realizado, meses e totais passam a usar a mesma padronização em K.",
-      "Tailwind configurado para ativar o tema escuro somente por classe explícita, evitando cores cinzas aplicadas pelo prefers-color-scheme do navegador.",
-      "Nenhuma regra financeira, API ou estrutura de banco foi alterada nesta versão.",
-      "Atualizada versão técnica do frontend para 0.3.24, mantendo o backend funcional em 0.3.23."
-    ],
-    architecture: {
-      frontend: [
-        "Next.js App Router",
-        "React",
-        "TypeScript",
-        "TailwindCSS",
-        "Financeiro v0.3.24"
-      ],
-      backend: [
-        "Node.js",
-        "Express.js",
-        "JWT",
-        "REST API Financeiro v0.3.23"
-      ],
-      database: [
-        "PostgreSQL",
-        "hub_system_releases"
-      ],
-      integrations: [
-        "Cash Flow",
-        "Orçamento Financeiro",
-        "Changelog versionado no banco"
-      ],
-    },
-  },
-
-  {
-    version: "0.3.25",
-    title: "Financeiro — terceiro nível do plano de contas no Cash Flow",
-    description:
-      "Inclui no Cash Flow as contas analíticas de terceiro nível, relacionando a Natureza Financeira do grupo com a Conta Contábil do Movimento Bancário e preservando os totais já existentes.",
-    frontend_version: "0.3.24",
-    backend_version: "0.3.25",
-    released_at: "2026-06-14T23:30:00.000Z",
-    changes: [
-      "Cash Flow passa a inserir contas analíticas como 4.5.7 logo abaixo da respectiva conta pai 4.5.",
-      "O vínculo usa o Plano de Contas e combina Natureza Financeira do grupo com a descrição normalizada da Conta Contábil do Movimento Bancário.",
-      "Descrições com ou sem acento, como SEGURANÇA E VIGILÂNCIA e SEGURANCA E VIGILANCIA, passam a ser reconhecidas como a mesma conta.",
-      "Códigos hierárquicos com três ou mais níveis passam a ser preservados integralmente; 4.5.7 não é mais reduzido para 4.5.",
-      "Corrigida também a normalização de códigos como 4.10, que não podem ser tratados como número decimal nem reduzidos para 4.1.",
-      "O detalhamento ao clicar em uma conta analítica consulta tanto movimentos gravados diretamente no terceiro nível quanto movimentos gravados no pai com a Conta Contábil correspondente.",
-      "Os valores analíticos são apenas demonstrativos e não são somados novamente aos totais do Cash Flow, evitando duplicidade.",
-      "Nenhuma migration de banco ou reimportação dos movimentos é necessária.",
-      "Atualizada versão técnica do backend para 0.3.25."
-    ],
-    architecture: {
-      frontend: [
-        "Next.js App Router",
-        "React",
-        "TypeScript",
-        "TailwindCSS",
-        "Financeiro v0.3.24"
-      ],
-      backend: [
-        "Node.js",
-        "Express.js",
-        "JWT",
-        "REST API Financeiro v0.3.25"
-      ],
-      database: [
-        "PostgreSQL",
-        "fin_cashflow_linhas",
-        "fin_cashflow_valores",
-        "fin_movimento",
-        "fin_plano_contas",
-        "hub_system_releases"
-      ],
-      integrations: [
-        "Cash Flow",
-        "Movimento Bancário",
-        "Plano de Contas",
-        "Changelog versionado no banco"
-      ],
-    },
-  },
-
-  {
-    version: "0.3.26",
-    title: "Financeiro — plano de contas completo na visão diária do Cash Flow",
-    description:
-      "Substitui o resumo de cinco linhas da visão diária pela mesma estrutura hierárquica da visão mensal, distribuindo os movimentos por dia, conta financeira e conta analítica sem alterar os totais existentes.",
-    frontend_version: "0.3.24",
-    backend_version: "0.3.26",
-    released_at: "2026-06-14T23:55:00.000Z",
-    changes: [
-      "A visão diária do Cash Flow passa a exibir todas as linhas do plano de contas já utilizadas na visão mensal.",
-      "Receitas, deduções, despesas, resultado financeiro, geração de caixa, investimentos, distribuição de lucros e sucessão passam a ser calculados individualmente para cada dia do mês selecionado.",
-      "Contas analíticas de terceiro nível, como 4.5.4 e 4.5.7, também aparecem na visão diária abaixo da respectiva conta pai.",
-      "Movimentos com Natureza Financeira inválida, como #N/A, passam a ser vinculados pela Conta Contábil quando esta identifica de forma inequívoca uma conta analítica do plano.",
-      "Lançamentos bancários internos sem movimento vinculado passam a ser distribuídos nas contas financeiras correspondentes, preservando taxas, rendimentos e aplicações.",
-      "Mantidas ao final da tabela as linhas de Contas a Pagar Futuro, Contas a Receber Futuro e Saldo do Dia que já existiam na visão diária.",
-      "O saldo inicial e o saldo final diário passam a ser encadeados a partir dos saldos bancários iniciais e dos movimentos realizados anteriores ao mês selecionado.",
-      "O detalhamento de contas de segundo nível passa a aceitar também movimentos registrados diretamente em contas filhas, sem confundir códigos como 4.1 e 4.10.",
-      "Nenhuma migration ou reimportação de dados é necessária.",
-      "Atualizada versão técnica do backend para 0.3.26."
-    ],
-    architecture: {
-      frontend: [
-        "Next.js App Router",
-        "React",
-        "TypeScript",
-        "TailwindCSS",
-        "Financeiro v0.3.24"
-      ],
-      backend: [
-        "Node.js",
-        "Express.js",
-        "JWT",
-        "REST API Financeiro v0.3.26"
-      ],
-      database: [
-        "PostgreSQL",
-        "fin_cashflow_linhas",
-        "fin_movimento",
-        "fin_plano_contas",
-        "fin_bancos_contas",
-        "fin_bancos_lancamentos",
-        "hub_system_releases"
-      ],
-      integrations: [
-        "Cash Flow Diário",
-        "Movimento Bancário",
-        "Plano de Contas",
-        "Contas a Pagar e Receber",
-        "Changelog versionado no banco"
-      ],
-    },
-  },
-
-
-  {
-    version: "0.3.27",
-    title: "Contas a Pagar — impostos retidos por parcela",
-    description:
-      "Adiciona ao Novo Lançamento de Contas a Pagar o detalhamento de impostos retidos na fonte por parcela, com cálculo semelhante ao desconto e persistência completa no backend.",
-    frontend_version: "0.3.27",
-    backend_version: "0.3.27",
-    released_at: "2026-06-14T23:59:00.000Z",
-    changes: [
-      "Adicionado o item Impostos retidos ao lado do campo Desconto em cada parcela do Novo Lançamento.",
-      "Ao abrir o item, passam a ser exibidos campos monetários para IPI, ISS, ICMS, PIS, COFINS, CSL/CSLL, IRRF e INSS.",
-      "O total dos impostos retidos é calculado automaticamente e subtraído do valor final da parcela, com o mesmo comportamento financeiro do desconto.",
-      "Os valores de retenção passam a ser preservados ao salvar, consultar e editar lançamentos de Contas a Pagar.",
-      "A listagem passa a informar o total de impostos retidos quando houver retenção na parcela.",
-      "A exportação de Contas a Pagar passa a incluir a coluna Impostos Retidos.",
-      "Criada migration idempotente para adicionar os campos de retenção em fin_parcelas_cp sem alterar registros existentes.",
-      "Parcelas já pagas continuam protegidas contra alteração durante a edição do lançamento.",
-      "Atualizada versão técnica do frontend e backend para 0.3.27."
-    ],
-    architecture: {
-      frontend: [
-        "Next.js App Router",
-        "React",
-        "TypeScript",
-        "TailwindCSS",
-        "Contas a Pagar v0.3.27"
-      ],
-      backend: [
-        "Node.js",
-        "Express.js",
-        "JWT",
-        "REST API Financeiro v0.3.27"
-      ],
-      database: [
-        "PostgreSQL",
-        "fin_lancamentos_cp",
-        "fin_parcelas_cp",
-        "hub_system_releases"
-      ],
-      integrations: [
-        "Contas a Pagar",
-        "Movimento Bancário",
-        "Exportação Excel",
-        "Changelog versionado no banco"
-      ],
-    },
-  },
-
-
-  {
-    version: "0.3.28",
-    title: "Cash Flow — edição on-line dos saldos finais",
-    description:
-      "Permite editar diretamente na visão mensal os saldos bancários e aplicações exibidos após SALDO FINAL, com recálculo automático dos subtotais e do saldo final.",
-    frontend_version: "0.3.28",
-    backend_version: "0.3.28",
-    released_at: "2026-06-15T00:34:39.000Z",
-    changes: [
-      "Adicionado ícone de lápis nas células mensais editáveis da seção de saldos finais do Cash Flow.",
-      "A edição ocorre na própria célula, com valor informado em K, botões de salvar e cancelar e suporte às teclas Enter e Escape.",
-      "Saldos Bancários em C/C e as contas individuais de aplicações de curto e longo prazo passam a aceitar ajuste manual mensal.",
-      "Curto Prazo, Longo Prazo e Aplicações Financeiras continuam calculados automaticamente e não podem ser alterados diretamente.",
-      "Ao salvar um saldo, o backend recalcula os subtotais de aplicações e o SALDO FINAL, preservando a consistência da seção.",
-      "Ajustes em empresas individuais sincronizam a linha correspondente no CONSOLIDADO pela soma das empresas; ajustes feitos diretamente no CONSOLIDADO permanecem como correção manual.",
-      "Valores zerados também podem ser editados pelo lápis, sem necessidade de acessar outra tela.",
-      "Nenhuma migration ou reimportação de dados é necessária.",
-      "Atualizada versão técnica do frontend e backend para 0.3.28."
-    ],
-    architecture: {
-      frontend: [
-        "Next.js App Router",
-        "React",
-        "TypeScript",
-        "TailwindCSS",
-        "Cash Flow v0.3.28"
-      ],
-      backend: [
-        "Node.js",
-        "Express.js",
-        "JWT",
-        "REST API Financeiro v0.3.28"
-      ],
-      database: [
-        "PostgreSQL",
-        "fin_cashflow_linhas",
-        "fin_cashflow_valores",
-        "hub_system_releases"
-      ],
-      integrations: [
-        "Cash Flow mensal",
-        "Edição inline de saldos",
-        "Consolidado financeiro",
-        "Changelog versionado no banco"
-      ],
-    },
-  },
-
-
-  {
-    version: "0.3.29",
-    title: "Configurações — atualização mensal de IGP-M e IPCA",
-    description:
-      "Adiciona em Configurações o cadastro mensal de IGP-M e IPCA, com mês de referência e histórico por tenant, preparando a base para futuros cálculos de correção e juros de boletos.",
-    frontend_version: "0.3.29",
-    backend_version: "0.3.29",
-    released_at: "2026-06-15T01:14:10.000Z",
-    changes: [
-      "Criado o item Atualização IGPM/IPCA dentro da tela de Configurações.",
-      "Adicionados campos para Mês de referência, IGP-M percentual e IPCA percentual, aceitando também índices negativos.",
-      "Criado histórico mensal com exibição do mês, valores dos dois índices, usuário responsável e data da última atualização.",
-      "Adicionada edição de meses já cadastrados; salvar novamente o mesmo mês atualiza o registro existente sem duplicidade.",
-      "Criada a tabela fin_indices_economicos, separada por tenant e com unicidade por mês de referência.",
-      "Criadas rotas GET e POST /financeiro/indices-economicos para consulta e atualização dos índices.",
-      "Registrados created_by e updated_by para rastreabilidade das alterações.",
-      "A estrutura fica preparada para uso futuro na correção e nos juros de boletos, sem ativar cálculos automáticos nesta versão.",
-      "Atualizada versão técnica do frontend e backend para 0.3.29."
-    ],
-    architecture: {
-      frontend: [
-        "Next.js App Router",
-        "React",
-        "TypeScript",
-        "TailwindCSS",
-        "Configurações v0.3.29"
-      ],
-      backend: [
-        "Node.js",
-        "Express.js",
-        "JWT",
-        "REST API Financeiro v0.3.29"
-      ],
-      database: [
-        "PostgreSQL",
-        "fin_indices_economicos",
-        "hub_users",
-        "hub_system_releases"
-      ],
-      integrations: [
-        "Configurações",
-        "Base futura para boletos",
-        "Histórico mensal de índices",
-        "Changelog versionado no banco"
-      ],
-    },
-  },
-
-
-  {
-    version: "0.3.30",
-    title: "Cadastros Auxiliares — IGP-M, IPCA, INCC e histórico inicial",
-    description:
-      "Move a atualização de índices econômicos para Cadastros Auxiliares, inclui INCC mensal e acumulado de 12 meses e adiciona seed histórico de janeiro de 2025 a maio de 2026 conforme os valores fornecidos.",
-    frontend_version: "0.3.30",
-    backend_version: "0.3.30",
-    released_at: "2026-06-15T01:45:00.000Z",
-    changes: [
-      "Removido o item Atualização IGPM/IPCA da tela de Configurações e criado o item Atualização de Índices dentro de Cadastros Auxiliares.",
-      "Criada página própria em /cadastros/atualizacao-indices, mantendo mês de referência, edição e histórico mensal.",
-      "Adicionado o campo INCC mensal ao cadastro e ao histórico de índices econômicos.",
-      "Adicionado o campo opcional INCC acumulado em 12 meses para preservar os dados históricos apresentados pelo cliente.",
-      "Atualizada a tabela fin_indices_economicos com as colunas incc e incc_acumulado_12m sem recriar ou apagar registros existentes.",
-      "Criado seed idempotente com IGP-M e IPCA de janeiro de 2025 a maio de 2026 e INCC de maio de 2025 a maio de 2026.",
-      "O seed aplica os índices a todos os tenants e atualiza meses existentes sem criar duplicidade.",
-      "Mantida a estrutura preparada para futuros cálculos de correção monetária e boletos, sem ativar cálculo automático nesta versão.",
-      "Atualizada versão técnica do frontend e backend para 0.3.30."
-    ],
-    architecture: {
-      frontend: [
-        "Next.js App Router",
-        "React",
-        "TypeScript",
-        "TailwindCSS",
-        "Cadastros Auxiliares v0.3.30"
-      ],
-      backend: [
-        "Node.js",
-        "Express.js",
-        "JWT",
-        "REST API Financeiro v0.3.30",
-        "Seed idempotente de índices"
-      ],
-      database: [
-        "PostgreSQL",
-        "fin_indices_economicos",
-        "hub_tenants",
-        "hub_system_releases"
-      ],
-      integrations: [
-        "Histórico mensal de IGP-M",
-        "Histórico mensal de IPCA",
-        "Histórico mensal e acumulado de INCC",
-        "Base futura para boletos"
-      ],
-    },
-  },
-
-
-  {
-    version: "0.3.31",
-    title: "Cadastros Auxiliares — índices flexíveis, IPC/INPC e retenções ajustadas",
-    description:
-      "Transforma o cadastro de índices econômicos em uma estrutura flexível, inclui IPC e INPC com histórico inicial e remove IPI e ICMS da tela de impostos retidos do Novo Lançamento.",
-    frontend_version: "0.3.31",
-    backend_version: "0.3.31",
-    released_at: "2026-06-17T16:30:00.000Z",
-    changes: [
-      "Substituído o formulário fixo de IGP-M, IPCA e INCC por um cadastro flexível, permitindo criar qualquer índice com código, nome e fonte.",
-      "Criadas as tabelas fin_indice_tipos e fin_indice_valores para separar o catálogo de índices dos valores mensais e permitir futuras utilizações em boletos e correções financeiras.",
-      "Mantida compatibilidade com as rotas antigas de índices durante o deploy e preservada a tabela fin_indices_economicos existente.",
-      "A migration copia os dados atuais de IGP-M, IPCA e INCC para o novo modelo sem apagar ou recriar o histórico anterior.",
-      "Adicionados os campos Variação mensal, Variação no período e Acumulado em 12 meses por índice e mês de referência.",
-      "Incluído seed do IPC/FIPE de janeiro de 2025 a maio de 2026 conforme a série fornecida pelo cliente.",
-      "Incluído seed do INPC de junho de 2025 a maio de 2026 com variação mensal, variação no período e acumulado em 12 meses.",
-      "Mantidos no seed os históricos existentes de IGP-M, IPCA e INCC.",
-      "Removidos IPI e ICMS da área de impostos retidos no Novo Lançamento de Contas a Pagar.",
-      "Mantidos ISS, PIS, COFINS, CSL/CSLL, IRRF e INSS com o mesmo cálculo de desconto no valor final da parcela.",
-      "As colunas antigas de IPI e ICMS no banco foram preservadas para não causar perda de histórico ou quebra de compatibilidade.",
-      "Nenhum cálculo automático de correção de boletos foi ativado nesta versão.",
-      "Atualizada versão técnica do frontend e backend para 0.3.31."
-    ],
-    architecture: {
-      frontend: [
-        "Next.js App Router",
-        "React",
-        "TypeScript",
-        "TailwindCSS",
-        "Cadastros Auxiliares v0.3.31",
-        "Contas a Pagar v0.3.31"
-      ],
-      backend: [
-        "Node.js",
-        "Express.js",
-        "JWT",
-        "REST API Financeiro v0.3.31",
-        "Seed idempotente de índices"
-      ],
-      database: [
-        "PostgreSQL",
-        "fin_indice_tipos",
-        "fin_indice_valores",
-        "fin_indices_economicos preservada",
-        "fin_parcelas_cp",
-        "hub_system_releases"
-      ],
-      integrations: [
-        "Histórico flexível de índices econômicos",
-        "IPC/FIPE",
-        "INPC",
-        "Base futura para boletos",
-        "Contas a Pagar"
-      ],
-    },
-  },
-
-
-  {
-    version: "0.3.32",
-    title: "Contas a Pagar — bloqueio de documentos duplicados",
-    description:
-      "Impede o cadastro ou a edição de lançamentos repetidos pela combinação fornecedor, tipo de documento e número do documento, preservando os registros antigos e adicionando proteção também no PostgreSQL.",
-    frontend_version: "0.3.31",
-    backend_version: "0.3.32",
-    released_at: "2026-06-17T18:30:00.000Z",
-    changes: [
-      "Adicionada validação no POST /financeiro/lancamentos-cp para barrar lançamentos com o mesmo fornecedor, tipo de documento e número do documento.",
-      "Adicionada a mesma validação na edição do lançamento, desconsiderando somente o próprio registro que está sendo alterado.",
-      "O número do documento é comparado de forma normalizada, ignorando espaços, pontos, barras e hífens para evitar duplicidades por diferença de formatação.",
-      "A API retorna HTTP 409 com a mensagem clara de documento duplicado, exibida pelo formulário atual de Contas a Pagar.",
-      "Criada migration com trigger no PostgreSQL para proteger também inclusões diretas, importações e tentativas simultâneas.",
-      "Criado índice de apoio para a consulta da combinação fornecedor, tipo de documento e número normalizado.",
-      "Duplicidades antigas são apenas identificadas e informadas durante a migration; nenhum lançamento existente é apagado ou alterado automaticamente.",
-      "Atualizada versão técnica do backend para 0.3.32; o frontend permanece em 0.3.31 por já exibir as mensagens retornadas pela API."
-    ],
-    architecture: {
-      frontend: [
-        "Next.js App Router",
-        "React",
-        "TypeScript",
-        "Contas a Pagar v0.3.31"
-      ],
-      backend: [
-        "Node.js",
-        "Express.js",
-        "JWT",
-        "REST API Financeiro v0.3.32"
-      ],
-      database: [
-        "PostgreSQL",
-        "fin_lancamentos_cp",
-        "Trigger de prevenção de duplicidade",
-        "Índice de documento normalizado",
-        "hub_system_releases"
-      ],
-      integrations: [
-        "Contas a Pagar",
-        "Validação transacional",
-        "Proteção contra concorrência",
-        "Changelog versionado no banco"
-      ],
-    },
-  },
-
-
-  {
-    version: "0.3.33",
-    title: "Financeiro — substituição auditável dos movimentos 2026 e plano de contas",
-    description:
-      "Substitui com segurança os movimentos realizado e orçado de 2026 a partir das planilhas atualizadas, atualiza o plano de contas usando o código como chave e mantém backup interno com rollback transacional.",
-    frontend_version: "0.3.31",
-    backend_version: "0.3.33",
-    released_at: "2026-06-17T21:00:00.000Z",
-    changes: [
-      "Criado processo único para pré-validar e substituir os movimentos realizado e orçado de 2026.",
-      "O plano de contas passa a ser atualizado pela coluna COD da aba Estrutura, sem usar descrições como chave e preservando os IDs existentes.",
-      "Contas presentes na nova estrutura são atualizadas e reativadas; códigos antigos ausentes ficam inativos em vez de serem apagados.",
-      "O movimento realizado continua limitado até 28/06/2026, mantendo a separação dos movimentos futuros já adotada no projeto.",
-      "Movimentos vinculados a Contas a Pagar ou a lançamentos bancários do sistema são preservados durante a substituição.",
-      "O movimento orçado é recarregado integralmente para 2026 e os valores agregados de fin_orcamento_valores são recalculados.",
-      "Criadas as tabelas fin_importacao_lotes e fin_importacao_backup para registrar cada execução e guardar cópia dos registros substituídos.",
-      "Adicionados lote, arquivo, linha e hash de origem nos movimentos importados para rastreabilidade futura.",
-      "A execução valida quantidade, entradas e saídas após a gravação; qualquer divergência provoca rollback automático.",
-      "Adicionados comandos separados de preview e execução para evitar substituições sem conferência prévia.",
-      "Atualizada versão técnica do backend para 0.3.33; o frontend permanece em 0.3.31."
-    ],
-    architecture: {
-      frontend: [
-        "Next.js App Router",
-        "React",
-        "TypeScript",
-        "Sem alteração nesta versão"
-      ],
-      backend: [
-        "Node.js",
-        "Express.js",
-        "Python ETL financeiro",
-        "Transação PostgreSQL",
-        "Auditoria de importação"
-      ],
-      database: [
-        "PostgreSQL",
-        "fin_movimento",
-        "fin_orcamento_movimento",
-        "fin_orcamento_valores",
-        "fin_plano_contas",
-        "fin_importacao_lotes",
-        "fin_importacao_backup",
-        "hub_system_releases"
-      ],
-      integrations: [
-        "Movimento Bancário realizado 2026",
-        "Movimento Bancário orçado 2026",
-        "Cash Flow",
-        "Orçamento",
-        "Changelog versionado no banco"
-      ],
-    },
-  },
-
-
-  {
-    version: "0.3.34",
-    title: "Contas a Pagar — documento individual por parcela",
-    description:
-      "Permite informar tipo e número de documento em cada parcela do lançamento, mantendo o documento principal como preenchimento inicial e preservando os dados específicos na edição, listagem, exportação e baixa.",
-    frontend_version: "0.3.34",
-    backend_version: "0.3.34",
-    released_at: "2026-06-17T23:30:00.000Z",
-    changes: [
-      "Adicionados os campos Tipo de documento da parcela e Número do documento da parcela em cada item de Parcelas e Vencimentos.",
-      "Ao criar ou alterar o documento principal, as parcelas ainda não personalizadas recebem automaticamente os mesmos valores.",
-      "Cada parcela pode manter tipo e número próprios, permitindo documentos diferentes dentro do mesmo lançamento.",
-      "A edição do lançamento carrega novamente os documentos individuais de cada parcela sem sobrescrever os dados personalizados.",
-      "A listagem, os filtros, a pesquisa e a exportação de Contas a Pagar passam a considerar primeiro o documento da parcela e usar o documento principal como fallback.",
-      "A baixa da parcela envia ao Movimento Bancário o número específico da parcela quando informado.",
-      "Criada migration idempotente para adicionar tipo_documento_id e numero_documento em fin_parcelas_cp e preencher os registros antigos com o documento principal.",
-      "Parcelas já pagas continuam protegidas durante a edição, preservando também seus documentos.",
-      "Atualizada versão técnica do frontend e backend para 0.3.34."
-    ],
-    architecture: {
-      frontend: [
-        "Next.js App Router",
-        "React",
-        "TypeScript",
-        "Contas a Pagar v0.3.34"
-      ],
-      backend: [
-        "Node.js",
-        "Express.js",
-        "REST API Financeiro v0.3.34"
-      ],
-      database: [
-        "PostgreSQL",
-        "fin_lancamentos_cp",
-        "fin_parcelas_cp",
-        "fin_tipos_documento",
-        "hub_system_releases"
-      ],
-      integrations: [
-        "Movimento Bancário",
-        "Exportação Excel",
         "Changelog versionado no banco"
       ],
     },

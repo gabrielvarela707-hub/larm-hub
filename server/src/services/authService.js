@@ -61,6 +61,55 @@ function mergeProfilePermissions(profileRows = []) {
   return merged
 }
 
+async function loadProfileRows(userId, tenantId) {
+  const { rows } = await query(
+    `SELECT p.id, p.name, p.color, p.permissions
+       FROM hub_user_profiles up
+       JOIN hub_profiles p ON p.id = up.profile_id
+      WHERE up.user_id = $1
+        AND p.tenant_id = $2
+      ORDER BY p.name`,
+    [userId, tenantId]
+  )
+  return rows
+}
+
+function buildSessionUser(user, profileRows = [], requestedPortal = null) {
+  return {
+    id:         user.id,
+    name:       user.name,
+    email:      user.email,
+    role:       user.role,
+    avatarUrl:  user.avatar_url || null,
+    tenantId:   user.tenant_id,
+    tenantName: user.tenant_name,
+    tenantSlug: user.tenant_slug,
+    hubType:    requestedPortal || user.hub_type,
+    allowedHubs: normalizeAllowedHubs(user.allowed_hubs),
+    mustChangePassword: user.must_change_password || false,
+    profiles: profileRows.map(p => ({ id: p.id, name: p.name, color: p.color })),
+    permissions: mergeProfilePermissions(profileRows),
+  }
+}
+
+async function getSessionUser(userId, requestedPortal = null) {
+  const { rows } = await query(
+    `SELECT u.id, u.name, u.email, u.role, u.avatar_url, u.tenant_id,
+            u.allowed_hubs, u.must_change_password, u.is_active,
+            t.slug AS tenant_slug, t.name AS tenant_name, t.hub_type
+       FROM hub_users u
+       JOIN hub_tenants t ON t.id = u.tenant_id
+      WHERE u.id = $1`,
+    [userId]
+  )
+
+  const user = rows[0]
+  if (!user || !user.is_active) return null
+
+  const profileRows = await loadProfileRows(user.id, user.tenant_id)
+  return buildSessionUser(user, profileRows, requestedPortal)
+}
+
 // ─── Login ─────────────────────────────────────────────────────────────────────
 
 async function login(email, password, ip, userAgent, requestedHub = null) {
@@ -111,16 +160,7 @@ async function login(email, password, ip, userAgent, requestedHub = null) {
   }
 
   // 5. Busca perfis/permissões vinculados ao usuário
-  const { rows: profileRows } = await query(
-    `SELECT p.id, p.name, p.color, p.permissions
-       FROM hub_user_profiles up
-       JOIN hub_profiles p ON p.id = up.profile_id
-      WHERE up.user_id = $1
-        AND p.tenant_id = $2
-      ORDER BY p.name`,
-    [user.id, user.tenant_id]
-  )
-  const permissions = mergeProfilePermissions(profileRows)
+  const profileRows = await loadProfileRows(user.id, user.tenant_id)
 
   // 6. Gera tokens
   const accessToken  = generateAccessToken(user)
@@ -149,21 +189,7 @@ async function login(email, password, ip, userAgent, requestedHub = null) {
     data: {
       accessToken,
       refreshToken,
-      user: {
-        id:         user.id,
-        name:       user.name,
-        email:      user.email,
-        role:       user.role,
-        avatarUrl:  user.avatar_url,
-        tenantId:   user.tenant_id,
-        tenantName: user.tenant_name,
-        tenantSlug: user.tenant_slug,
-        hubType:    requestedPortal || user.hub_type,     // 'santa_clara' | 'larm'
-        allowedHubs,
-        mustChangePassword: user.must_change_password || false,
-        profiles: profileRows.map(p => ({ id: p.id, name: p.name, color: p.color })),
-        permissions,
-      },
+      user: buildSessionUser(user, profileRows, requestedPortal),
     },
   }
 }
@@ -204,7 +230,13 @@ async function refreshAccessToken(refreshToken) {
     tenant_id: record.tenant_id,
   })
 
-  return { ok: true, data: { accessToken: newAccessToken } }
+  // Recarrega perfis e permissões atuais para não manter dados antigos no navegador.
+  const sessionUser = await getSessionUser(record.user_id)
+  if (!sessionUser) {
+    return { ok: false, message: 'Usuário inativo ou não encontrado' }
+  }
+
+  return { ok: true, data: { accessToken: newAccessToken, user: sessionUser } }
 }
 
 // ─── Logout ────────────────────────────────────────────────────────────────────
@@ -241,4 +273,4 @@ async function logout(refreshToken, ip, userAgent) {
   return { ok: true, message: 'Logout realizado com sucesso' }
 }
 
-module.exports = { login, refreshAccessToken, logout }
+module.exports = { login, refreshAccessToken, logout, getSessionUser }

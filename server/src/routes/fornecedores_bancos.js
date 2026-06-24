@@ -8,6 +8,7 @@ const { query, transaction } = require("../config/database");
 const { authenticate } = require("../middleware/authenticate");
 const logger = require("../config/logger");
 const { PLANO_CONTAS_SEED } = require("../data/plano_contas_seed");
+const { syncFornecedorPessoa } = require("../services/cadastroPessoaService");
 
 const router = express.Router();
 router.use(authenticate);
@@ -679,7 +680,10 @@ router.get("/fornecedores/select", async (req, res) => {
   }
   try {
     const { rows } = await query(
-      `SELECT id, razao_social, nome_fantasia, cnpj_cpf, empresa FROM fin_fornecedores ${where} ORDER BY razao_social`,
+      `SELECT id, razao_social, nome_fantasia, cnpj_cpf, empresa,
+              chave_pix, banco_nome, codigo_banco, agencia, conta, digito, tipo_conta
+         FROM fin_fornecedores ${where}
+        ORDER BY razao_social`,
       params,
     );
     return res.json({ ok: true, data: rows });
@@ -853,26 +857,29 @@ router.post("/fornecedores/importar", async (req, res) => {
           ];
 
           if (existingId) {
-            await client.query(
+            const updated = await client.query(
               `UPDATE fin_fornecedores SET
                  razao_social=$1, nome_fantasia=$2, cnpj_cpf=$3, tipo_pessoa=$4, categoria=$5,
                  email=$6, telefone=$7, empresa=$8, cep=$9, endereco=$10, cidade_uf=$11,
                  banco_nome=$12, codigo_banco=$13, agencia=$14, conta=$15, digito=$16,
                  tipo_conta=$17, chave_pix=$18, obs=$19, ativo=$20, updated_at=NOW()
-               WHERE id=$21`,
+               WHERE id=$21 RETURNING *`,
               [...values, existingId],
             );
+            await syncFornecedorPessoa(client, updated.rows[0], { fillOnly: false });
             result.updated += 1;
           } else {
-            await client.query(
+            const inserted = await client.query(
               `INSERT INTO fin_fornecedores
                  (razao_social, nome_fantasia, cnpj_cpf, tipo_pessoa, categoria,
                   email, telefone, empresa, cep, endereco, cidade_uf,
                   banco_nome, codigo_banco, agencia, conta, digito, tipo_conta, chave_pix, obs, ativo)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+               RETURNING *`,
               values,
             );
-            if (fornecedorNameKey) existingNameKeys.set(fornecedorNameKey, true);
+            await syncFornecedorPessoa(client, inserted.rows[0], { fillOnly: false });
+            if (fornecedorNameKey) existingNameKeys.set(fornecedorNameKey, inserted.rows[0].id);
             result.created += 1;
           }
 
@@ -944,36 +951,40 @@ router.post("/fornecedores", async (req, res) => {
     return res.status(400).json({ ok: false, message: "empresa obrigatória" });
 
   try {
-    const { rows } = await query(
-      `INSERT INTO fin_fornecedores
-         (razao_social, nome_fantasia, cnpj_cpf, tipo_pessoa, categoria,
-          email, telefone, empresa, cep, endereco, cidade_uf,
-          banco_nome, codigo_banco, agencia, conta, digito, tipo_conta, chave_pix, obs)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
-       RETURNING *`,
-      [
-        razao_social,
-        nome_fantasia,
-        cnpj_cpf,
-        tipo_pessoa,
-        categoria,
-        email,
-        telefone,
-        empresa.toUpperCase(),
-        cep,
-        endereco,
-        cidade_uf,
-        banco_nome,
-        codigo_banco,
-        agencia,
-        conta,
-        digito,
-        tipo_conta,
-        chave_pix,
-        obs,
-      ],
-    );
-    return res.status(201).json({ ok: true, data: rows[0] });
+    const saved = await transaction(async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO fin_fornecedores
+           (razao_social, nome_fantasia, cnpj_cpf, tipo_pessoa, categoria,
+            email, telefone, empresa, cep, endereco, cidade_uf,
+            banco_nome, codigo_banco, agencia, conta, digito, tipo_conta, chave_pix, obs)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+         RETURNING *`,
+        [
+          razao_social,
+          nome_fantasia,
+          cnpj_cpf,
+          tipo_pessoa,
+          categoria,
+          email,
+          telefone,
+          empresa.toUpperCase(),
+          cep,
+          endereco,
+          cidade_uf,
+          banco_nome,
+          codigo_banco,
+          agencia,
+          conta,
+          digito,
+          tipo_conta,
+          chave_pix,
+          obs,
+        ],
+      );
+      const pessoa = await syncFornecedorPessoa(client, rows[0], { fillOnly: false });
+      return { ...rows[0], pessoa_id: pessoa?.id || rows[0].pessoa_id };
+    });
+    return res.status(201).json({ ok: true, data: saved });
   } catch (err) {
     if (err.code === "23505")
       return res
@@ -1008,40 +1019,45 @@ router.put("/fornecedores/:id", async (req, res) => {
     ativo,
   } = req.body;
   try {
-    const { rows } = await query(
-      `UPDATE fin_fornecedores SET
-         razao_social=$1, nome_fantasia=$2, cnpj_cpf=$3, tipo_pessoa=$4, categoria=$5,
-         email=$6, telefone=$7, empresa=$8, cep=$9, endereco=$10, cidade_uf=$11,
-         banco_nome=$12, codigo_banco=$13, agencia=$14, conta=$15, digito=$16, tipo_conta=$17, chave_pix=$18,
-         obs=$19, ativo=$20, updated_at=NOW()
-       WHERE id=$21 RETURNING *`,
-      [
-        razao_social,
-        nome_fantasia,
-        cnpj_cpf,
-        tipo_pessoa,
-        categoria,
-        email,
-        telefone,
-        empresa?.toUpperCase(),
-        cep,
-        endereco,
-        cidade_uf,
-        banco_nome,
-        codigo_banco,
-        agencia,
-        conta,
-        digito,
-        tipo_conta,
-        chave_pix,
-        obs,
-        ativo ?? true,
-        req.params.id,
-      ],
-    );
-    if (!rows.length)
+    const saved = await transaction(async (client) => {
+      const { rows } = await client.query(
+        `UPDATE fin_fornecedores SET
+           razao_social=$1, nome_fantasia=$2, cnpj_cpf=$3, tipo_pessoa=$4, categoria=$5,
+           email=$6, telefone=$7, empresa=$8, cep=$9, endereco=$10, cidade_uf=$11,
+           banco_nome=$12, codigo_banco=$13, agencia=$14, conta=$15, digito=$16, tipo_conta=$17, chave_pix=$18,
+           obs=$19, ativo=$20, updated_at=NOW()
+         WHERE id=$21 RETURNING *`,
+        [
+          razao_social,
+          nome_fantasia,
+          cnpj_cpf,
+          tipo_pessoa,
+          categoria,
+          email,
+          telefone,
+          empresa?.toUpperCase(),
+          cep,
+          endereco,
+          cidade_uf,
+          banco_nome,
+          codigo_banco,
+          agencia,
+          conta,
+          digito,
+          tipo_conta,
+          chave_pix,
+          obs,
+          ativo ?? true,
+          req.params.id,
+        ],
+      );
+      if (!rows.length) return null;
+      const pessoa = await syncFornecedorPessoa(client, rows[0], { fillOnly: false });
+      return { ...rows[0], pessoa_id: pessoa?.id || rows[0].pessoa_id };
+    });
+    if (!saved)
       return res.status(404).json({ ok: false, message: "Não encontrado" });
-    return res.json({ ok: true, data: rows[0] });
+    return res.json({ ok: true, data: saved });
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message });
   }
@@ -1792,6 +1808,141 @@ router.get("/lancamentos-cp/exportar", async (req, res) => {
   }
 });
 
+
+const CP_MODALIDADES_PAGAMENTO = new Set([
+  "PIX",
+  "BOLETO",
+  "TED",
+  "DOC",
+  "TRANSFERENCIA",
+  "DEBITO_AUTOMATICO",
+  "DINHEIRO",
+  "CARTAO",
+  "OUTRO",
+]);
+
+function normalizeModalidadePagamento(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return CP_MODALIDADES_PAGAMENTO.has(normalized) ? normalized : null;
+}
+
+function normalizeBoletoArquivo(file) {
+  if (!file || typeof file !== "object") return null;
+  const nome = String(file.nome || file.name || "").trim().slice(0, 255);
+  const mime = String(file.mime || file.type || "").trim().slice(0, 120);
+  const arquivoBase64 = String(file.arquivo_base64 || file.base64 || "").trim();
+  const permitido = mime === "application/pdf" || mime.startsWith("image/");
+  if (!nome || !arquivoBase64 || !permitido) return null;
+
+  const tamanhoInformado = Number(file.tamanho_bytes || file.size || 0);
+  const tamanhoEstimado = Math.ceil((arquivoBase64.length * 3) / 4);
+  const tamanhoBytes = Number.isFinite(tamanhoInformado) && tamanhoInformado > 0
+    ? Math.max(Math.trunc(tamanhoInformado), tamanhoEstimado)
+    : tamanhoEstimado;
+
+  if (tamanhoBytes > 6 * 1024 * 1024) {
+    const err = new Error(`O boleto ${nome} ultrapassa o limite de 6MB.`);
+    err.statusCode = 413;
+    throw err;
+  }
+
+  return { nome, mime, arquivo_base64: arquivoBase64, tamanho_bytes: tamanhoBytes };
+}
+
+async function preparePaymentSnapshot(client, body) {
+  const modalidade = normalizeModalidadePagamento(body.modalidade_pagamento);
+  let fornecedor = {};
+
+  if (body.fornecedor_id) {
+    const { rows } = await client.query(
+      `SELECT chave_pix, banco_nome, codigo_banco, agencia, conta, digito, tipo_conta
+         FROM fin_fornecedores
+        WHERE id = $1`,
+      [body.fornecedor_id],
+    );
+    fornecedor = rows[0] || {};
+  }
+
+  return {
+    modalidade_pagamento: modalidade,
+    chave_pix_pagamento:
+      modalidade === "PIX"
+        ? String(body.chave_pix_pagamento || fornecedor.chave_pix || "").trim() || null
+        : null,
+    banco_pagamento_nome:
+      modalidade === "TED" || modalidade === "DOC"
+        ? String(body.banco_pagamento_nome || fornecedor.banco_nome || "").trim() || null
+        : null,
+    banco_pagamento_codigo:
+      modalidade === "TED" || modalidade === "DOC"
+        ? String(body.banco_pagamento_codigo || fornecedor.codigo_banco || "").trim() || null
+        : null,
+    agencia_pagamento:
+      modalidade === "TED" || modalidade === "DOC"
+        ? String(body.agencia_pagamento || fornecedor.agencia || "").trim() || null
+        : null,
+    conta_pagamento:
+      modalidade === "TED" || modalidade === "DOC"
+        ? String(body.conta_pagamento || fornecedor.conta || "").trim() || null
+        : null,
+    digito_pagamento:
+      modalidade === "TED" || modalidade === "DOC"
+        ? String(body.digito_pagamento || fornecedor.digito || "").trim() || null
+        : null,
+    tipo_conta_pagamento:
+      modalidade === "TED" || modalidade === "DOC"
+        ? String(body.tipo_conta_pagamento || fornecedor.tipo_conta || "").trim() || null
+        : null,
+    linha_digitavel_boleto:
+      modalidade === "BOLETO"
+        ? String(body.linha_digitavel_boleto || "").trim() || null
+        : null,
+  };
+}
+
+async function insertBoletos(client, lancamentoId, files) {
+  const sourceFiles = Array.isArray(files) ? files : [];
+  const normalized = sourceFiles.map(normalizeBoletoArquivo).filter(Boolean);
+  if (normalized.length !== sourceFiles.length) {
+    const err = new Error("Um ou mais boletos são inválidos. Envie somente PDF ou imagem.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const totalBytes = normalized.reduce((sum, file) => sum + Number(file.tamanho_bytes || 0), 0);
+  if (totalBytes > 20 * 1024 * 1024) {
+    const err = new Error("O total dos boletos enviados ultrapassa o limite de 20MB.");
+    err.statusCode = 413;
+    throw err;
+  }
+
+  for (const file of normalized) {
+    await client.query(
+      `INSERT INTO fin_lancamentos_cp_boletos
+         (lancamento_id, nome, mime, tamanho_bytes, arquivo_base64)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [lancamentoId, file.nome, file.mime, file.tamanho_bytes, file.arquivo_base64],
+    );
+  }
+}
+
+// GET /lancamentos-cp/:id/boletos/:boletoId — abre um boleto anexado
+router.get("/lancamentos-cp/:id/boletos/:boletoId", async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT id, nome, mime, tamanho_bytes, arquivo_base64
+         FROM fin_lancamentos_cp_boletos
+        WHERE id = $1 AND lancamento_id = $2`,
+      [req.params.boletoId, req.params.id],
+    );
+    if (!rows.length)
+      return res.status(404).json({ ok: false, message: "Boleto não encontrado" });
+    return res.json({ ok: true, data: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
 // GET /lancamentos-cp/:id (com parcelas)
 router.get("/lancamentos-cp/:id", async (req, res) => {
   try {
@@ -1819,7 +1970,14 @@ router.get("/lancamentos-cp/:id", async (req, res) => {
         ORDER BY p.numero`,
       [req.params.id],
     );
-    return res.json({ ok: true, data: { ...lanc, parcelas } });
+    const { rows: boletos } = await query(
+      `SELECT id, nome, mime, tamanho_bytes, created_at
+         FROM fin_lancamentos_cp_boletos
+        WHERE lancamento_id = $1
+        ORDER BY id`,
+      [req.params.id],
+    );
+    return res.json({ ok: true, data: { ...lanc, parcelas, boletos } });
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message });
   }
@@ -1926,6 +2084,16 @@ router.post("/lancamentos-cp", async (req, res) => {
     obra,
     n_cheque,
     obs,
+    modalidade_pagamento,
+    chave_pix_pagamento,
+    banco_pagamento_nome,
+    banco_pagamento_codigo,
+    agencia_pagamento,
+    conta_pagamento,
+    digito_pagamento,
+    tipo_conta_pagamento,
+    linha_digitavel_boleto,
+    boletos_novos = [],
     parcelas, // array [{ vencimento, valor }] — opcional, gera automaticamente se omitido
   } = req.body;
 
@@ -1959,6 +2127,19 @@ router.post("/lancamentos-cp", async (req, res) => {
       });
     }
 
+    const payment = await preparePaymentSnapshot(client, {
+      fornecedor_id,
+      modalidade_pagamento,
+      chave_pix_pagamento,
+      banco_pagamento_nome,
+      banco_pagamento_codigo,
+      agencia_pagamento,
+      conta_pagamento,
+      digito_pagamento,
+      tipo_conta_pagamento,
+      linha_digitavel_boleto,
+    });
+
     // Insere lançamento
     const {
       rows: [lanc],
@@ -1967,8 +2148,13 @@ router.post("/lancamentos-cp", async (req, res) => {
          (empresa, fornecedor_id, banco_conta_id, conta_contabil, descricao_conta,
           historico, tipo_documento_id, produto_servico, nf_doc, documento_nome, documento_mime, documento_base64,
           dt_emissao, valor_total, qtd_parcelas,
-          centro_custo, obra, n_cheque, obs)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+          centro_custo, obra, n_cheque, obs,
+          modalidade_pagamento, chave_pix_pagamento,
+          banco_pagamento_nome, banco_pagamento_codigo, agencia_pagamento,
+          conta_pagamento, digito_pagamento, tipo_conta_pagamento,
+          linha_digitavel_boleto)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+               $20,$21,$22,$23,$24,$25,$26,$27,$28)
        RETURNING *`,
       [
         empresa.toUpperCase(),
@@ -1990,8 +2176,21 @@ router.post("/lancamentos-cp", async (req, res) => {
         obra,
         n_cheque,
         obs,
+        payment.modalidade_pagamento,
+        payment.chave_pix_pagamento,
+        payment.banco_pagamento_nome,
+        payment.banco_pagamento_codigo,
+        payment.agencia_pagamento,
+        payment.conta_pagamento,
+        payment.digito_pagamento,
+        payment.tipo_conta_pagamento,
+        payment.linha_digitavel_boleto,
       ],
     );
+
+    if (payment.modalidade_pagamento === "BOLETO") {
+      await insertBoletos(client, lanc.id, boletos_novos);
+    }
 
     // Gera parcelas
     const n = parseInt(qtd_parcelas) || 1;
@@ -2065,7 +2264,7 @@ router.post("/lancamentos-cp", async (req, res) => {
         message: duplicateCpMessage(),
       });
     }
-    return res.status(500).json({ ok: false, message: err.message });
+    return res.status(err.statusCode || 500).json({ ok: false, message: err.message });
   } finally {
     client.release();
   }
@@ -2093,6 +2292,17 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
     obra,
     n_cheque,
     obs,
+    modalidade_pagamento,
+    chave_pix_pagamento,
+    banco_pagamento_nome,
+    banco_pagamento_codigo,
+    agencia_pagamento,
+    conta_pagamento,
+    digito_pagamento,
+    tipo_conta_pagamento,
+    linha_digitavel_boleto,
+    boletos_novos = [],
+    boletos_removidos = [],
     parcelas = [],
   } = req.body;
 
@@ -2139,6 +2349,19 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
       });
     }
 
+    const payment = await preparePaymentSnapshot(client, {
+      fornecedor_id,
+      modalidade_pagamento,
+      chave_pix_pagamento,
+      banco_pagamento_nome,
+      banco_pagamento_codigo,
+      agencia_pagamento,
+      conta_pagamento,
+      digito_pagamento,
+      tipo_conta_pagamento,
+      linha_digitavel_boleto,
+    });
+
     const { rows: paidRows } = await client.query(
       `SELECT COUNT(*)::int AS total
          FROM fin_parcelas_cp
@@ -2171,8 +2394,17 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
               obra=$17,
               n_cheque=$18,
               obs=$19,
+              modalidade_pagamento=$20,
+              chave_pix_pagamento=$21,
+              banco_pagamento_nome=$22,
+              banco_pagamento_codigo=$23,
+              agencia_pagamento=$24,
+              conta_pagamento=$25,
+              digito_pagamento=$26,
+              tipo_conta_pagamento=$27,
+              linha_digitavel_boleto=$28,
               updated_at=NOW()
-        WHERE id=$20
+        WHERE id=$29
         RETURNING *`,
       [
         String(empresa).toUpperCase(),
@@ -2194,9 +2426,32 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
         obra || null,
         n_cheque || null,
         obs || null,
+        payment.modalidade_pagamento,
+        payment.chave_pix_pagamento,
+        payment.banco_pagamento_nome,
+        payment.banco_pagamento_codigo,
+        payment.agencia_pagamento,
+        payment.conta_pagamento,
+        payment.digito_pagamento,
+        payment.tipo_conta_pagamento,
+        payment.linha_digitavel_boleto,
         req.params.id,
       ],
     );
+
+    const boletoIdsRemover = Array.isArray(boletos_removidos)
+      ? boletos_removidos.map(Number).filter(Number.isInteger)
+      : [];
+    if (boletoIdsRemover.length) {
+      await client.query(
+        `DELETE FROM fin_lancamentos_cp_boletos
+          WHERE lancamento_id = $1 AND id = ANY($2::bigint[])`,
+        [req.params.id, boletoIdsRemover],
+      );
+    }
+    if (payment.modalidade_pagamento === "BOLETO") {
+      await insertBoletos(client, req.params.id, boletos_novos);
+    }
 
     const n = parseInt(qtd_parcelas) || 1;
     const vlr = parseMoney(valor_total);
@@ -2386,8 +2641,16 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
       [req.params.id],
     );
 
+    const { rows: updatedBoletos } = await client.query(
+      `SELECT id, nome, mime, tamanho_bytes, created_at
+         FROM fin_lancamentos_cp_boletos
+        WHERE lancamento_id = $1
+        ORDER BY id`,
+      [req.params.id],
+    );
+
     await client.query("COMMIT");
-    return res.json({ ok: true, data: { ...lanc, parcelas: updatedParcelas } });
+    return res.json({ ok: true, data: { ...lanc, parcelas: updatedParcelas, boletos: updatedBoletos } });
   } catch (err) {
     await client.query("ROLLBACK");
     if (isDuplicateCpDocumentError(err)) {
@@ -2397,7 +2660,7 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
         message: duplicateCpMessage(),
       });
     }
-    return res.status(500).json({ ok: false, message: err.message });
+    return res.status(err.statusCode || 500).json({ ok: false, message: err.message });
   } finally {
     client.release();
   }

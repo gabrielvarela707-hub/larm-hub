@@ -1,6 +1,6 @@
 {
   "name": "larmhub-api",
-  "version": "0.3.34",
+  "version": "0.3.56",
   "description": "API backend LarmHub / Santa Clara HUB",
   "main": "src/server.js",
   "scripts": {
@@ -32,7 +32,16 @@
     "db:migrate:substituicao-movimentos-2026": "node scripts/migrate_substituicao_movimentos_2026.js",
     "db:preview:substituir-movimentos:2026": "python3 scripts/substituir_movimentos_2026.py scripts/imports/movimento-bancario-2026-atualizado.xlsx scripts/imports/movimento-bancario-2026-orcado-atualizado.xlsx --ano=2026 --ate=2026-06-28 --preview",
     "db:substituir:movimentos:2026": "python3 scripts/substituir_movimentos_2026.py scripts/imports/movimento-bancario-2026-atualizado.xlsx scripts/imports/movimento-bancario-2026-orcado-atualizado.xlsx --ano=2026 --ate=2026-06-28 --execute",
-    "db:migrate:documentos-parcelas-cp": "node scripts/migrate_documentos_parcelas_cp.js"
+    "db:migrate:documentos-parcelas-cp": "node scripts/migrate_documentos_parcelas_cp.js",
+    "db:migrate:cadastros": "node scripts/migrate_cadastros_pessoas_clientes.js",
+    "db:seed:cadastros": "node scripts/seed_cadastros_clientes_fornecedores.js",
+    "db:migrate:modalidade-pagamento-cp": "node scripts/migrate_modalidade_pagamento_cp.js",
+    "db:migrate:receitas-fase2": "node scripts/migrate_receitas_parcelas_fase2.js",
+    "db:preview:recebiveis:strato": "node scripts/seed_recebiveis_relatorio_strato.js --preview",
+    "db:seed:recebiveis:strato": "node scripts/seed_recebiveis_relatorio_strato.js --execute",
+    "db:migrate:contas-receber-operacional": "node scripts/migrate_contas_receber_operacional.js",
+    "db:migrate:recebiveis-bradesco": "node scripts/migrate_recalculo_bradesco_recebiveis.js",
+    "db:migrate:cashflow-diario": "node scripts/migrate_cashflow_valores_diarios.js"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.750.0",

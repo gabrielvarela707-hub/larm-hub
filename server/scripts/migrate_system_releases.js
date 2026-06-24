@@ -36,7 +36,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_system_releases_current_unique ON hub_syst
 `
 
 async function seedReleases() {
-  const current = SYSTEM_RELEASES[SYSTEM_RELEASES.length - 1]
+  const parseVersion = value => String(value || '').split('.').map(part => Number(part) || 0)
+  const compareVersions = (a, b) => {
+    const av = parseVersion(a.version)
+    const bv = parseVersion(b.version)
+    for (let i = 0; i < Math.max(av.length, bv.length); i++) {
+      const diff = (av[i] || 0) - (bv[i] || 0)
+      if (diff !== 0) return diff
+    }
+    return 0
+  }
+  const current = [...SYSTEM_RELEASES].sort(compareVersions).at(-1)
 
   await pool.query('BEGIN')
 

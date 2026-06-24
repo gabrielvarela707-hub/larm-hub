@@ -6,7 +6,16 @@
 const express = require('express')
 const { query, transaction } = require('../config/database')
 const { authenticate } = require('../middleware/authenticate')
+const logger = require('../config/logger')
 const { logAudit } = require('../services/auditService')
+const {
+  buildBoletoData,
+  buildBoletoHtml,
+  buildRemittance,
+  nossoNumeroDv,
+  parseReturn,
+  onlyDigits,
+} = require('../services/bradescoCnab400')
 
 const router = express.Router()
 router.use(authenticate)
@@ -212,6 +221,1216 @@ router.patch('/contratos/:id/status', async (req, res) => {
   if (!c) return res.status(404).json({ ok: false, message: 'Contrato não encontrado' })
   return res.json({ ok: true, data: mapContrato(c) })
 })
+
+
+function xmlEscape(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function sendExcelXml(res, filename, sheetName, columns, rows) {
+  const header = columns
+    .map(column => `<Cell><Data ss:Type="String">${xmlEscape(column.header)}</Data></Cell>`)
+    .join('')
+  const body = rows.map(row => {
+    const cells = columns.map(column => {
+      const raw = typeof column.value === 'function' ? column.value(row) : row[column.key]
+      const value = raw === null || raw === undefined ? '' : raw
+      const numeric = typeof value === 'number' && Number.isFinite(value)
+      return `<Cell><Data ss:Type="${numeric ? 'Number' : 'String'}">${xmlEscape(value)}</Data></Cell>`
+    }).join('')
+    return `<Row>${cells}</Row>`
+  }).join('')
+  const xml = `<?xml version="1.0"?>\n<?mso-application progid="Excel.Sheet"?>\n<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="${xmlEscape(sheetName).slice(0, 31) || 'Export'}"><Table><Row>${header}</Row>${body}</Table></Worksheet></Workbook>`
+  res.setHeader('Content-Type', 'application/vnd.ms-excel; charset=utf-8')
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+  return res.send(xml)
+}
+
+function firstDayOfCurrentMonth() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+}
+
+function contasReceberValorSql(alias = 'p') {
+  return `CASE
+    WHEN ${alias}.valor_recalculado IS NOT NULL THEN ${alias}.valor_recalculado
+    WHEN ${alias}.origem = 'strato_receber' AND ${alias}.valor_total_relatorio IS NOT NULL
+      THEN ${alias}.valor_total_relatorio
+    ELSE COALESCE(${alias}.valor_nominal, 0)
+      + COALESCE(${alias}.valor_correcao, 0)
+      + COALESCE(${alias}.valor_multa, 0)
+      + COALESCE(${alias}.valor_juros_mora, 0)
+      + COALESCE(${alias}.valor_outros_acrescimos, 0)
+      + COALESCE(${alias}.valor_seguro, 0)
+      - COALESCE(${alias}.valor_desconto, 0)
+  END`
+}
+
+function buildContasReceberFilters(req, { defaultCurrentMonth = true } = {}) {
+  const {
+    busca,
+    cliente_id,
+    tipo_receita_id,
+    obra_id,
+    status,
+    venc_inicio,
+    venc_fim,
+  } = req.query
+
+  const where = ['p.tenant_id = $1']
+  const params = [req.user.tenant_id]
+
+  if (busca) {
+    params.push(`%${String(busca).trim()}%`)
+    const token = `$${params.length}`
+    where.push(`(
+      COALESCE(cp.nome, cp.razao_social, c.comprador_nome, '') ILIKE ${token}
+      OR COALESCE(cp.cpf_cnpj, c.comprador_cpf, '') ILIKE ${token}
+      OR COALESCE(c.numero, '') ILIKE ${token}
+      OR COALESCE(c.titulo, '') ILIKE ${token}
+      OR COALESCE(r.titulo, '') ILIKE ${token}
+      OR COALESCE(r.numero_documento, p.documento_legado, '') ILIKE ${token}
+      OR COALESCE(unidade.nome, '') ILIKE ${token}
+      OR COALESCE(obra.nome, '') ILIKE ${token}
+      OR COALESCE(c.unidade_codigo_legado, '') ILIKE ${token}
+    )`)
+  }
+
+  if (cliente_id) {
+    params.push(Number(cliente_id))
+    where.push(`c.cliente_id = $${params.length}`)
+  }
+
+  if (tipo_receita_id) {
+    params.push(Number(tipo_receita_id))
+    where.push(`p.tipo_receita_id = $${params.length}`)
+  }
+
+  if (obra_id) {
+    params.push(Number(obra_id))
+    where.push(`COALESCE(obra.id, unidade.produto_pai_id, unidade.id) = $${params.length}`)
+  }
+
+  if (status && status !== 'todos') {
+    const normalized = String(status).toLowerCase()
+    if (normalized === 'em_aberto') {
+      where.push(`p.status IN ('aberta', 'atrasada')`)
+    } else if (['aberta', 'atrasada', 'paga', 'cancelada'].includes(normalized)) {
+      params.push(normalized)
+      where.push(`p.status = $${params.length}`)
+    }
+  }
+
+  const startDate = venc_inicio || (defaultCurrentMonth ? firstDayOfCurrentMonth() : null)
+  if (startDate) {
+    params.push(startDate)
+    where.push(`p.vencimento >= $${params.length}`)
+  }
+  if (venc_fim) {
+    params.push(venc_fim)
+    where.push(`p.vencimento <= $${params.length}`)
+  }
+
+  return { where, params, appliedStartDate: startDate || null }
+}
+
+const CONTAS_RECEBER_FROM = `
+  FROM com_parcelas p
+  JOIN com_contratos c ON c.id = p.contrato_id
+  LEFT JOIN cad_clientes cl ON cl.id = c.cliente_id
+  LEFT JOIN cad_pessoas cp ON cp.id = cl.pessoa_id
+  LEFT JOIN fin_receitas r ON r.id = p.receita_id
+  LEFT JOIN fin_tipos_receita tr ON tr.id = p.tipo_receita_id
+  LEFT JOIN cad_produtos unidade ON unidade.id = p.produto_id
+  LEFT JOIN cad_produtos obra ON obra.id = unidade.produto_pai_id
+  LEFT JOIN fin_movimento fm ON fm.id = p.movimento_id
+  LEFT JOIN fin_indice_tipos idx ON idx.id = COALESCE(r.indice_reajuste_id, c.indice_reajuste_id)
+`
+
+const CONTAS_RECEBER_SELECT = `
+  SELECT
+    p.id,
+    p.contrato_id,
+    p.receita_id,
+    p.numero,
+    p.tipo,
+    p.status,
+    p.vencimento,
+    p.pago_em,
+    p.forma_pagamento,
+    p.observacoes_baixa,
+    p.origem,
+    p.documento_legado,
+    p.documento_base_legado,
+    p.parcela_numero_legado,
+    p.parcela_total_legado,
+    p.obra_codigo_legado,
+    p.unidade_codigo_legado,
+    p.indice_codigo_legado,
+    p.movimento_id,
+    p.origem_baixa,
+    p.conciliado_em,
+    COALESCE(p.valor_nominal, 0)::float AS valor_nominal,
+    COALESCE(p.valor_convertido, 0)::float AS valor_convertido,
+    COALESCE(p.valor_correcao, 0)::float AS valor_correcao,
+    COALESCE(p.valor_multa, 0)::float AS valor_multa,
+    COALESCE(p.valor_juros_mora, 0)::float AS valor_juros_mora,
+    COALESCE(p.valor_outros_acrescimos, 0)::float AS valor_outros_acrescimos,
+    COALESCE(p.valor_seguro, 0)::float AS valor_seguro,
+    COALESCE(p.valor_desconto, 0)::float AS valor_desconto,
+    p.valor_recalculado::float AS valor_recalculado,
+    p.data_recalculo,
+    p.recalculado_em,
+    p.recalculo_dados,
+    p.nosso_numero,
+    p.nosso_numero_dv,
+    p.controle_participante,
+    p.linha_digitavel,
+    p.codigo_barras,
+    p.boleto_status,
+    p.boleto_emitido_em,
+    ${contasReceberValorSql('p')}::float AS valor_total,
+    COALESCE(p.valor_pago, 0)::float AS valor_pago,
+    c.numero AS contrato_numero,
+    c.titulo AS contrato_titulo,
+    c.tipo_contrato,
+    c.cliente_id,
+    c.obra_codigo_legado AS contrato_obra_codigo,
+    c.unidade_codigo_legado AS contrato_unidade_codigo,
+    COALESCE(cp.nome, cp.razao_social, c.comprador_nome) AS cliente_nome,
+    COALESCE(cp.cpf_cnpj, c.comprador_cpf) AS cliente_documento,
+    COALESCE(cp.email, c.comprador_email) AS cliente_email,
+    COALESCE(cp.celular, cp.telefone, c.comprador_phone) AS cliente_telefone,
+    cp.cep AS cliente_cep,
+    cp.logradouro AS cliente_logradouro,
+    cp.numero AS cliente_numero,
+    cp.complemento AS cliente_complemento,
+    cp.bairro AS cliente_bairro,
+    cp.cidade AS cliente_cidade,
+    cp.uf AS cliente_uf,
+    COALESCE(cl.ativo, TRUE) AS cliente_ativo,
+    COALESCE(r.indice_reajuste_id, c.indice_reajuste_id) AS indice_reajuste_id,
+    idx.codigo AS indice_codigo,
+    idx.nome AS indice_nome,
+    r.titulo AS receita_titulo,
+    r.numero_documento AS receita_documento,
+    tr.nome AS tipo_receita_nome,
+    tr.codigo AS tipo_receita_codigo,
+    COALESCE(obra.id, CASE WHEN unidade.tipo='obra' THEN unidade.id END) AS obra_id,
+    COALESCE(obra.nome, CASE WHEN unidade.tipo='obra' THEN unidade.nome END, 'Obra ' || COALESCE(p.obra_codigo_legado::text, c.obra_codigo_legado::text, '')) AS obra_nome,
+    unidade.id AS unidade_id,
+    COALESCE(c.unidade_codigo_legado, p.unidade_codigo_legado, unidade.nome) AS unidade_nome,
+    fm.data AS movimento_data,
+    fm.banco AS movimento_banco,
+    fm.historico AS movimento_historico
+  ${CONTAS_RECEBER_FROM}
+`
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONTAS A RECEBER OPERACIONAL
+// ─────────────────────────────────────────────────────────────────────────────
+
+// GET /financeiro/contas-receber/filtros
+router.get('/financeiro/contas-receber/filtros', async (req, res) => {
+  try {
+    const [clientes, tipos, obras] = await Promise.all([
+      query(
+        `SELECT cl.id, COALESCE(p.nome, p.razao_social) AS nome, p.cpf_cnpj, cl.ativo
+           FROM cad_clientes cl
+           JOIN cad_pessoas p ON p.id = cl.pessoa_id
+          WHERE EXISTS (SELECT 1 FROM com_contratos c WHERE c.cliente_id=cl.id AND c.tenant_id=$1)
+          ORDER BY COALESCE(p.nome, p.razao_social)`,
+        [req.user.tenant_id],
+      ),
+      query(
+        `SELECT id, codigo, nome
+           FROM fin_tipos_receita
+          WHERE tenant_id=$1 AND ativo IS TRUE
+          ORDER BY nome`,
+        [req.user.tenant_id],
+      ),
+      query(
+        `SELECT id, codigo, nome
+           FROM cad_produtos
+          WHERE tenant_id=$1 AND tipo='obra'
+          ORDER BY nome`,
+        [req.user.tenant_id],
+      ),
+    ])
+
+    return res.json({
+      ok: true,
+      data: {
+        clientes: clientes.rows,
+        tipos_receita: tipos.rows,
+        obras: obras.rows,
+      },
+    })
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: error.message })
+  }
+})
+
+// GET /financeiro/contas-receber
+router.get('/financeiro/contas-receber', async (req, res) => {
+  await query(`SELECT fn_parcelas_atualiza_atraso()`, []).catch(() => {})
+
+  const page = Math.max(1, Number(req.query.page || 1))
+  const limit = Math.min(200, Math.max(10, Number(req.query.limit || 50)))
+  const offset = (page - 1) * limit
+  const { where, params, appliedStartDate } = buildContasReceberFilters(req)
+  const whereSql = `WHERE ${where.join(' AND ')}`
+
+  const sortMap = {
+    cliente: 'cliente_nome',
+    contrato: 'contrato_numero',
+    receita: 'receita_titulo',
+    parcela: 'p.numero',
+    valor: 'valor_total',
+    vencimento: 'p.vencimento',
+    recebimento: 'p.pago_em',
+    status: 'p.status',
+  }
+  const sort = sortMap[req.query.sort] || 'p.vencimento'
+  const direction = String(req.query.direction).toLowerCase() === 'desc' ? 'DESC' : 'ASC'
+
+  try {
+    const dataParams = [...params, limit, offset]
+    const dataSql = `${CONTAS_RECEBER_SELECT}
+      ${whereSql}
+      ORDER BY ${sort} ${direction} NULLS LAST, p.id
+      LIMIT $${dataParams.length - 1} OFFSET $${dataParams.length}`
+
+    const summarySql = `
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE p.status IN ('aberta','atrasada'))::int AS total_em_aberto,
+        COUNT(*) FILTER (WHERE p.status='atrasada')::int AS total_atrasadas,
+        COUNT(*) FILTER (WHERE p.status='paga')::int AS total_pagas,
+        COALESCE(SUM(${contasReceberValorSql('p')}) FILTER (WHERE p.status IN ('aberta','atrasada')), 0)::float AS valor_em_aberto,
+        COALESCE(SUM(${contasReceberValorSql('p')}) FILTER (WHERE p.status='atrasada'), 0)::float AS valor_atrasado,
+        COALESCE(SUM(COALESCE(NULLIF(p.valor_pago, 0), ${contasReceberValorSql('p')})) FILTER (WHERE p.status='paga'), 0)::float AS valor_recebido
+      ${CONTAS_RECEBER_FROM}
+      ${whereSql}`
+
+    const [dataResult, summaryResult] = await Promise.all([
+      query(dataSql, dataParams),
+      query(summarySql, params),
+    ])
+
+    const summary = summaryResult.rows[0] || {}
+    return res.json({
+      ok: true,
+      data: dataResult.rows,
+      total: Number(summary.total || 0),
+      page,
+      limit,
+      pages: Math.max(1, Math.ceil(Number(summary.total || 0) / limit)),
+      default_vencimento_inicio: appliedStartDate,
+      summary,
+    })
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: error.message })
+  }
+})
+
+// GET /financeiro/contas-receber/exportar
+router.get('/financeiro/contas-receber/exportar', async (req, res) => {
+  const { where, params } = buildContasReceberFilters(req)
+  const whereSql = `WHERE ${where.join(' AND ')}`
+
+  try {
+    const { rows } = await query(
+      `${CONTAS_RECEBER_SELECT}
+       ${whereSql}
+       ORDER BY p.vencimento ASC NULLS LAST, cliente_nome, contrato_numero, p.numero`,
+      params,
+    )
+
+    return sendExcelXml(res, 'contas-a-receber.xls', 'Contas a Receber', [
+      { header: 'Cliente', key: 'cliente_nome' },
+      { header: 'CPF/CNPJ', key: 'cliente_documento' },
+      { header: 'Contrato', key: 'contrato_numero' },
+      { header: 'Receita', key: 'receita_titulo' },
+      { header: 'Tipo de Receita', key: 'tipo_receita_nome' },
+      { header: 'Obra', key: 'obra_nome' },
+      { header: 'Unidade', key: 'unidade_nome' },
+      { header: 'Documento', value: row => row.receita_documento || row.documento_legado || '' },
+      { header: 'Parcela', value: row => `${row.parcela_numero_legado || row.numero || ''}/${row.parcela_total_legado || ''}` },
+      { header: 'Valor', key: 'valor_total' },
+      { header: 'Vencimento', key: 'vencimento' },
+      { header: 'Recebimento', key: 'pago_em' },
+      { header: 'Valor Recebido', key: 'valor_pago' },
+      { header: 'Status', key: 'status' },
+      { header: 'Forma de Pagamento', key: 'forma_pagamento' },
+      { header: 'Origem da Baixa', key: 'origem_baixa' },
+      { header: 'Banco Conciliado', key: 'movimento_banco' },
+    ], rows)
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: error.message })
+  }
+})
+
+
+const FINANCIAL_TIMEZONE = process.env.FINANCIAL_TIMEZONE || 'America/Sao_Paulo'
+
+function isoToday() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: FINANCIAL_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function normalizeDateOnly(value, field = 'data') {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) throw new Error(`${field} inválida`)
+    return value.toISOString().slice(0, 10)
+  }
+
+  const text = String(value ?? '').trim()
+  let raw = ''
+
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (isoMatch) {
+    raw = `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`
+  } else {
+    const brMatch = text.match(/^(\d{2})\/(\d{2})\/(\d{4})/)
+    if (brMatch) {
+      raw = `${brMatch[3]}-${brMatch[2]}-${brMatch[1]}`
+    } else {
+      const parsed = new Date(text)
+      if (Number.isNaN(parsed.getTime())) throw new Error(`${field} inválida`)
+      raw = parsed.toISOString().slice(0, 10)
+    }
+  }
+
+  const date = new Date(`${raw}T00:00:00.000Z`)
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== raw) {
+    throw new Error(`${field} inválida`)
+  }
+  return raw
+}
+
+function parseIsoDate(value, field = 'data') {
+  const raw = normalizeDateOnly(value, field)
+  return new Date(`${raw}T00:00:00.000Z`)
+}
+
+function dateToIso(date) {
+  return normalizeDateOnly(date)
+}
+
+function firstOfMonth(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1))
+}
+
+function addMonths(date, count) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + count, 1))
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100
+}
+
+function finiteNumber(value, fallback = 0) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
+}
+
+function normalizeIndexCode(code) {
+  return String(code || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+}
+
+function legacyIndexInfo(code) {
+  const normalized = normalizeIndexCode(code)
+  return {
+    code: normalized.replace(/\d+$/g, ''),
+    lagMonths: Math.max(0, Number((normalized.match(/(\d+)$/) || [])[1] || 0)),
+  }
+}
+
+async function getBradescoConfig(tenantId, client = null, { forUpdate = false } = {}) {
+  const runner = client || { query }
+  const lock = client && forUpdate ? ' FOR UPDATE' : ''
+  const { rows: [config] } = await runner.query(
+    `SELECT * FROM fin_cobranca_bancaria_config
+      WHERE tenant_id=$1 AND banco_codigo='237' AND ativo IS TRUE
+      ORDER BY CASE WHEN empresa='LARM' THEN 0 ELSE 1 END, id
+      LIMIT 1${lock}`,
+    [tenantId],
+  )
+  return config || null
+}
+
+async function getReceivableParcel(id, tenantId, client = null, { forUpdate = false } = {}) {
+  const runner = client || { query }
+  const lock = client && forUpdate ? ' FOR UPDATE OF p' : ''
+  const { rows: [row] } = await runner.query(
+    `${CONTAS_RECEBER_SELECT}
+      WHERE p.id=$1 AND p.tenant_id=$2${lock}`,
+    [id, tenantId],
+  )
+  return row || null
+}
+
+async function calculateReceivable(parcel, tenantId, body = {}) {
+  const targetDate = parseIsoDate(body.data_calculo || isoToday(), 'Data do cálculo')
+  const dueDate = parseIsoDate(parcel.vencimento, 'Vencimento')
+  const daysLate = Math.max(0, Math.floor((targetDate.getTime() - dueDate.getTime()) / 86400000))
+  const config = await getBradescoConfig(tenantId).catch(() => null)
+
+  let indexType = null
+  let lagMonths = 0
+  const legacy = legacyIndexInfo(parcel.indice_codigo_legado)
+  if (parcel.indice_reajuste_id) {
+    const { rows: [row] } = await query(
+      `SELECT id, codigo, nome, fonte FROM fin_indice_tipos WHERE id=$1 AND tenant_id=$2`,
+      [parcel.indice_reajuste_id, tenantId],
+    )
+    indexType = row || null
+  }
+
+  if (!indexType && legacy.code) {
+    const { rows: [row] } = await query(
+      `SELECT id, codigo, nome, fonte
+         FROM fin_indice_tipos
+        WHERE tenant_id=$1
+          AND REGEXP_REPLACE(UPPER(codigo), '[^A-Z0-9]', '', 'g')=$2
+        ORDER BY ativo DESC, updated_at DESC, id DESC
+        LIMIT 1`,
+      [tenantId, legacy.code],
+    )
+    indexType = row || null
+  }
+  lagMonths = legacy.lagMonths
+
+  const correctionMonths = []
+  let cursor = addMonths(firstOfMonth(dueDate), 1)
+  const targetMonth = firstOfMonth(targetDate)
+  while (cursor <= targetMonth && correctionMonths.length < 240) {
+    correctionMonths.push(new Date(cursor))
+    cursor = addMonths(cursor, 1)
+  }
+
+  const references = correctionMonths.map(month => dateToIso(addMonths(month, -lagMonths)))
+  let indexValues = []
+  if (indexType && references.length) {
+    // Usa o código econômico como chave principal, e não somente o ID gravado
+    // no contrato. Isso mantém o recálculo compatível com contratos importados
+    // antes da consolidação dos cadastros de índices e evita falso "ausente"
+    // quando o mesmo IPCA/IGPM foi recadastrado no tenant.
+    const lookupCode = legacy.code || normalizeIndexCode(indexType.codigo)
+    const { rows } = await query(
+      `SELECT DISTINCT ON (v.referencia)
+              TO_CHAR(v.referencia, 'YYYY-MM-DD') AS referencia,
+              v.variacao_mensal::float,
+              v.variacao_periodo::float,
+              v.acumulado_12m::float
+         FROM fin_indice_valores v
+         JOIN fin_indice_tipos t
+           ON t.id = v.indice_tipo_id
+          AND t.tenant_id = v.tenant_id
+        WHERE v.tenant_id=$1
+          AND (
+            REGEXP_REPLACE(UPPER(t.codigo), '[^A-Z0-9]', '', 'g')=$2
+            OR v.indice_tipo_id=$4
+          )
+          AND v.referencia = ANY($3::date[])
+        ORDER BY v.referencia,
+                 CASE WHEN v.indice_tipo_id=$4 THEN 0 ELSE 1 END,
+                 v.updated_at DESC,
+                 v.id DESC`,
+      [tenantId, lookupCode, references, indexType.id],
+    )
+    indexValues = rows
+  }
+
+  const byReference = new Map(indexValues.map(row => [normalizeDateOnly(row.referencia, 'Referência do índice'), row]))
+  let factor = 1
+  const monthlyDetails = correctionMonths.map((month, index) => {
+    const reference = references[index]
+    const value = byReference.get(reference)
+    const variation = value ? finiteNumber(value.variacao_mensal) : null
+    if (variation !== null) factor *= 1 + (variation / 100)
+    return {
+      mes_correcao: dateToIso(month),
+      referencia_indice: reference,
+      variacao_mensal: variation,
+      encontrado: Boolean(value),
+    }
+  })
+
+  const calculatedIndexPercent = (factor - 1) * 100
+  const indexPercent = body.percentual_indice === undefined || body.percentual_indice === ''
+    ? calculatedIndexPercent
+    : finiteNumber(body.percentual_indice)
+
+  const baseValue = finiteNumber(parcel.valor_convertido) > 0
+    ? finiteNumber(parcel.valor_convertido)
+    : finiteNumber(parcel.valor_nominal || parcel.valor_total)
+  const correctionValue = roundMoney(baseValue * indexPercent / 100)
+  const correctedSubtotal = roundMoney(baseValue + correctionValue)
+  const finePercent = daysLate > 0
+    ? finiteNumber(body.percentual_multa, finiteNumber(config?.multa_percentual_padrao, 2))
+    : 0
+  const moraPercentMonth = daysLate > 0
+    ? finiteNumber(body.percentual_mora_mes, finiteNumber(config?.mora_percentual_mes_padrao, 1))
+    : 0
+  const fineValue = roundMoney(correctedSubtotal * finePercent / 100)
+  const moraValue = roundMoney(correctedSubtotal * moraPercentMonth / 100 * (daysLate / 30))
+  const otherAdditions = roundMoney(finiteNumber(body.outros_acrescimos, parcel.valor_outros_acrescimos || 0))
+  const insurance = roundMoney(finiteNumber(body.seguro, parcel.valor_seguro || 0))
+  const discount = roundMoney(finiteNumber(body.desconto, parcel.valor_desconto || 0))
+  const finalValue = Math.max(0, roundMoney(correctedSubtotal + fineValue + moraValue + otherAdditions + insurance - discount))
+  const missingReferences = monthlyDetails.filter(item => !item.encontrado).map(item => item.referencia_indice)
+
+  return {
+    parcela_id: parcel.id,
+    cliente_nome: parcel.cliente_nome,
+    contrato_numero: parcel.contrato_numero,
+    vencimento: normalizeDateOnly(parcel.vencimento, 'Vencimento'),
+    data_calculo: dateToIso(targetDate),
+    dias_atraso: daysLate,
+    valor_base: roundMoney(baseValue),
+    indice: indexType ? {
+      id: indexType.id,
+      codigo: indexType.codigo,
+      nome: indexType.nome,
+      fonte: indexType.fonte,
+      defasagem_meses: lagMonths,
+    } : null,
+    percentual_indice_calculado: Number(calculatedIndexPercent.toFixed(8)),
+    percentual_indice_aplicado: Number(indexPercent.toFixed(8)),
+    valor_correcao: correctionValue,
+    valor_corrigido: correctedSubtotal,
+    percentual_multa: finePercent,
+    valor_multa: fineValue,
+    percentual_mora_mes: moraPercentMonth,
+    valor_juros_mora: moraValue,
+    valor_outros_acrescimos: otherAdditions,
+    valor_seguro: insurance,
+    valor_desconto: discount,
+    valor_final: finalValue,
+    meses: monthlyDetails,
+    referencias_ausentes: missingReferences,
+    avisos: [
+      !indexType && correctionMonths.length ? 'O contrato não possui um índice econômico localizado; a correção monetária ficou zerada.' : null,
+      missingReferences.length ? `Faltam valores mensais do índice para: ${missingReferences.join(', ')}.` : null,
+    ].filter(Boolean),
+  }
+}
+
+function ensureAdmin(req, res) {
+  if (ADMIN_ROLES.has(req.user.role)) return true
+  res.status(403).json({ ok: false, message: 'Sem permissão para esta operação.' })
+  return false
+}
+
+// POST /financeiro/contas-receber/:id/recalculo/preview
+router.post('/financeiro/contas-receber/:id/recalculo/preview', async (req, res) => {
+  try {
+    const parcel = await getReceivableParcel(req.params.id, req.user.tenant_id)
+    if (!parcel) return res.status(404).json({ ok: false, message: 'Parcela não encontrada.' })
+    if (!['aberta', 'atrasada'].includes(parcel.status)) {
+      return res.status(409).json({ ok: false, message: 'Somente parcelas em aberto podem ser recalculadas.' })
+    }
+    const calculation = await calculateReceivable(parcel, req.user.tenant_id, req.body || {})
+    return res.json({ ok: true, data: calculation })
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message })
+  }
+})
+
+// POST /financeiro/contas-receber/:id/recalcular
+router.post('/financeiro/contas-receber/:id/recalcular', async (req, res) => {
+  if (!ensureAdmin(req, res)) return
+  try {
+    const parcel = await getReceivableParcel(req.params.id, req.user.tenant_id)
+    if (!parcel) return res.status(404).json({ ok: false, message: 'Parcela não encontrada.' })
+    if (!['aberta', 'atrasada'].includes(parcel.status)) {
+      return res.status(409).json({ ok: false, message: 'Somente parcelas em aberto podem ser recalculadas.' })
+    }
+    const calculation = await calculateReceivable(parcel, req.user.tenant_id, req.body || {})
+    const { rows: [updated] } = await query(
+      `UPDATE com_parcelas
+          SET valor_correcao=$1,
+              valor_multa=$2,
+              valor_juros_mora=$3,
+              valor_outros_acrescimos=$4,
+              valor_seguro=$5,
+              valor_desconto=$6,
+              valor_recalculado=$7,
+              data_recalculo=$8,
+              recalculado_em=NOW(),
+              recalculado_por=$9,
+              recalculo_dados=$10::jsonb,
+              linha_digitavel=NULL,
+              codigo_barras=NULL,
+              boleto_status=CASE WHEN boleto_status='liquidado' THEN boleto_status ELSE 'recalculado' END,
+              updated_at=NOW()
+        WHERE id=$11 AND tenant_id=$12
+        RETURNING *`,
+      [
+        calculation.valor_correcao,
+        calculation.valor_multa,
+        calculation.valor_juros_mora,
+        calculation.valor_outros_acrescimos,
+        calculation.valor_seguro,
+        calculation.valor_desconto,
+        calculation.valor_final,
+        calculation.data_calculo,
+        req.user.id,
+        JSON.stringify(calculation),
+        req.params.id,
+        req.user.tenant_id,
+      ],
+    )
+    await logAudit({
+      userId: req.user.id,
+      tenantId: req.user.tenant_id,
+      action: 'parcela_receber_recalculada',
+      module: 'recebiveis',
+      entityType: 'com_parcelas',
+      entityId: updated.id,
+      meta: calculation,
+    }).catch(() => {})
+    return res.json({ ok: true, data: calculation })
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message })
+  }
+})
+
+// GET /financeiro/contas-receber/bradesco/config
+router.get('/financeiro/contas-receber/bradesco/config', async (req, res) => {
+  try {
+    const config = await getBradescoConfig(req.user.tenant_id)
+    return res.json({ ok: true, data: config })
+  } catch (error) {
+    return res.status(500).json({ ok: false, message: error.message })
+  }
+})
+
+// PUT /financeiro/contas-receber/bradesco/config
+router.put('/financeiro/contas-receber/bradesco/config', async (req, res) => {
+  if (!ensureAdmin(req, res)) return
+  const body = req.body || {}
+  const required = ['beneficiario_nome', 'agencia', 'conta', 'carteira']
+  const missing = required.filter(field => !String(body[field] || '').trim())
+  if (missing.length) return res.status(400).json({ ok: false, message: `Preencha: ${missing.join(', ')}.` })
+
+  try {
+    const { rows: [config] } = await query(
+      `INSERT INTO fin_cobranca_bancaria_config (
+         tenant_id, empresa, banco_codigo, banco_nome, codigo_empresa,
+         beneficiario_nome, beneficiario_documento, agencia, agencia_dv,
+         conta, conta_dv, carteira, especie_documento,
+         cep, logradouro, numero, complemento, bairro, cidade, uf,
+         local_pagamento, instrucoes, multa_percentual_padrao,
+         mora_percentual_mes_padrao, homologado, ativo, created_by, updated_by
+       ) VALUES (
+         $1,$2,'237','BRADESCO',$3,$4,$5,$6,$7,$8,$9,$10,$11,
+         $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,TRUE,$24,$24
+       )
+       ON CONFLICT (tenant_id, banco_codigo, empresa)
+       DO UPDATE SET
+         codigo_empresa=EXCLUDED.codigo_empresa,
+         beneficiario_nome=EXCLUDED.beneficiario_nome,
+         beneficiario_documento=EXCLUDED.beneficiario_documento,
+         agencia=EXCLUDED.agencia,
+         agencia_dv=EXCLUDED.agencia_dv,
+         conta=EXCLUDED.conta,
+         conta_dv=EXCLUDED.conta_dv,
+         carteira=EXCLUDED.carteira,
+         especie_documento=EXCLUDED.especie_documento,
+         cep=EXCLUDED.cep,
+         logradouro=EXCLUDED.logradouro,
+         numero=EXCLUDED.numero,
+         complemento=EXCLUDED.complemento,
+         bairro=EXCLUDED.bairro,
+         cidade=EXCLUDED.cidade,
+         uf=EXCLUDED.uf,
+         local_pagamento=EXCLUDED.local_pagamento,
+         instrucoes=EXCLUDED.instrucoes,
+         multa_percentual_padrao=EXCLUDED.multa_percentual_padrao,
+         mora_percentual_mes_padrao=EXCLUDED.mora_percentual_mes_padrao,
+         homologado=EXCLUDED.homologado,
+         ativo=TRUE,
+         updated_by=EXCLUDED.updated_by,
+         updated_at=NOW()
+       RETURNING *`,
+      [
+        req.user.tenant_id,
+        String(body.empresa || 'LARM').trim().toUpperCase(),
+        String(body.codigo_empresa || '').trim() || null,
+        String(body.beneficiario_nome).trim(),
+        onlyDigits(body.beneficiario_documento) || null,
+        onlyDigits(body.agencia),
+        String(body.agencia_dv || '').trim() || null,
+        onlyDigits(body.conta),
+        String(body.conta_dv || '').trim() || null,
+        onlyDigits(body.carteira),
+        onlyDigits(body.especie_documento || '01'),
+        onlyDigits(body.cep) || null,
+        body.logradouro || null,
+        body.numero || null,
+        body.complemento || null,
+        body.bairro || null,
+        body.cidade || null,
+        String(body.uf || '').trim().toUpperCase() || null,
+        body.local_pagamento || null,
+        body.instrucoes || null,
+        finiteNumber(body.multa_percentual_padrao, 2),
+        finiteNumber(body.mora_percentual_mes_padrao, 1),
+        Boolean(body.homologado),
+        req.user.id,
+      ],
+    )
+    return res.json({ ok: true, data: config })
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message })
+  }
+})
+
+async function assignOurNumber(client, config, parcel) {
+  if (parcel.nosso_numero) {
+    const dv = parcel.nosso_numero_dv || nossoNumeroDv(config.carteira, parcel.nosso_numero)
+    return { nossoNumero: parcel.nosso_numero, nossoDv: dv, control: parcel.controle_participante }
+  }
+
+  let sequence = Number(config.nosso_numero_sequencia || 1)
+  let nossoNumero
+  for (let attempts = 0; attempts < 100; attempts += 1) {
+    nossoNumero = String(sequence).padStart(11, '0').slice(-11)
+    const { rowCount } = await client.query(
+      `SELECT 1 FROM com_parcelas WHERE tenant_id=$1 AND nosso_numero=$2 LIMIT 1`,
+      [parcel.tenant_id || config.tenant_id, nossoNumero],
+    )
+    if (!rowCount) break
+    sequence += 1
+  }
+  const control = String(parcel.controle_participante || `CR${String(parcel.id).replace(/-/g, '').toUpperCase()}`).slice(0, 25)
+  const nossoDv = nossoNumeroDv(config.carteira, nossoNumero)
+  await client.query(
+    `UPDATE com_parcelas
+        SET nosso_numero=$1, nosso_numero_dv=$2, controle_participante=$3, updated_at=NOW()
+      WHERE id=$4 AND tenant_id=$5`,
+    [nossoNumero, nossoDv, control, parcel.id, config.tenant_id],
+  )
+  await client.query(
+    `UPDATE fin_cobranca_bancaria_config
+        SET nosso_numero_sequencia=$1, updated_at=NOW()
+      WHERE id=$2`,
+    [sequence + 1, config.id],
+  )
+  config.nosso_numero_sequencia = sequence + 1
+  return { nossoNumero, nossoDv, control }
+}
+
+function boletoValidationError(message, code, fields = []) {
+  const error = new Error(message)
+  error.code = code
+  error.fields = fields
+  return error
+}
+
+function validateBradescoConfigForBoleto(config) {
+  if (!config) throw boletoValidationError('Configure a cobrança Bradesco antes de gerar boletos.', 'BRADESCO_CONFIG_NOT_FOUND')
+  const required = [
+    ['beneficiario_nome', 'beneficiário'],
+    ['beneficiario_documento', 'CPF/CNPJ do beneficiário'],
+    ['agencia', 'agência'],
+    ['conta', 'conta'],
+    ['carteira', 'carteira'],
+  ]
+  const missing = required.filter(([field]) => !String(config[field] || '').trim()).map(([, label]) => label)
+  if (missing.length) {
+    throw boletoValidationError(`Configuração Bradesco incompleta: informe ${missing.join(', ')}.`, 'BRADESCO_CONFIG_INCOMPLETE', missing)
+  }
+}
+
+function getRecalculationData(parcel) {
+  if (parcel?.recalculo_dados && typeof parcel.recalculo_dados === 'object') return parcel.recalculo_dados
+  if (typeof parcel?.recalculo_dados === 'string') {
+    try { return JSON.parse(parcel.recalculo_dados) } catch { return {} }
+  }
+  return {}
+}
+
+function getSavedRecalculationDate(parcel) {
+  const recalculationData = getRecalculationData(parcel)
+  const candidates = [
+    parcel?.data_recalculo,
+    recalculationData?.data_calculo,
+    recalculationData?.receber_ate,
+  ]
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    try { return normalizeDateOnly(candidate, 'Data do recálculo') } catch { /* tenta o próximo valor persistido */ }
+  }
+  return null
+}
+
+function getRequestedRecalculationDate(body = {}) {
+  const candidates = [body?.data_recalculo, body?.data_calculo, body?.receber_ate]
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    try { return normalizeDateOnly(candidate, 'Data do recálculo solicitada') } catch { /* tenta o próximo valor */ }
+  }
+  return null
+}
+
+function resolveBillingDueDate(parcel, body = {}) {
+  const today = isoToday()
+  const originalDueDate = normalizeDateOnly(parcel.vencimento, 'Vencimento')
+  if (originalDueDate >= today) {
+    return { dueDate: originalDueDate, source: 'vencimento_original' }
+  }
+
+  const savedDate = getSavedRecalculationDate(parcel)
+  const requestedDate = getRequestedRecalculationDate(body)
+  const recalculatedValue = finiteNumber(parcel.valor_recalculado, 0)
+  const hasSavedRecalculation = recalculatedValue > 0 && Boolean(parcel.recalculado_em)
+
+  if (savedDate && savedDate >= today && recalculatedValue > 0) {
+    return { dueDate: savedDate, source: 'recalculo_salvo' }
+  }
+
+  // Fallback seguro para o fluxo imediatamente após salvar o recálculo.
+  // O frontend envia a mesma data exibida no cálculo, mas ela só é aceita
+  // quando já existe um recálculo persistido para a parcela.
+  if (requestedDate && requestedDate >= today && hasSavedRecalculation) {
+    return { dueDate: requestedDate, source: 'recalculo_solicitado' }
+  }
+
+  // Compatibilidade com registros antigos em que a coluna data_recalculo não
+  // foi preenchida, mas o recálculo foi efetivamente salvo no dia atual.
+  if (hasSavedRecalculation) {
+    try {
+      const recalculatedAtDate = normalizeDateOnly(parcel.recalculado_em, 'Data em que o recálculo foi salvo')
+      if (recalculatedAtDate >= today) {
+        return { dueDate: recalculatedAtDate, source: 'data_salvamento_recalculo' }
+      }
+    } catch { /* mantém a validação abaixo */ }
+  }
+
+  const error = boletoValidationError(
+    'Parcela vencida: recalcule para uma data atual ou futura antes de gerar o boleto/remessa.',
+    'PARCEL_RECALCULATION_REQUIRED',
+    ['data_recalculo', 'valor_recalculado'],
+  )
+  error.validation = {
+    hoje: today,
+    vencimento_original: originalDueDate,
+    data_recalculo_salva: savedDate,
+    data_recalculo_solicitada: requestedDate,
+    valor_recalculado: recalculatedValue,
+    recalculado_em: parcel.recalculado_em || null,
+    boleto_status: parcel.boleto_status || null,
+  }
+  throw error
+}
+
+function validateParcelForBilling(parcel, body = {}) {
+  if (!['aberta', 'atrasada'].includes(parcel.status)) {
+    throw boletoValidationError('A parcela não está em aberto.', 'PARCEL_NOT_OPEN')
+  }
+
+  const billingDate = resolveBillingDueDate(parcel, body)
+
+  const missingCustomer = []
+  if (!String(parcel.cliente_nome || '').trim()) missingCustomer.push('nome do cliente')
+  if (!onlyDigits(parcel.cliente_documento)) missingCustomer.push('CPF/CNPJ do cliente')
+  if (!onlyDigits(parcel.cliente_cep)) missingCustomer.push('CEP do cliente')
+  if (!String(parcel.cliente_logradouro || '').trim()) missingCustomer.push('endereço do cliente')
+  if (missingCustomer.length) {
+    throw boletoValidationError(
+      `Não foi possível gerar o boleto. Complete no cadastro do cliente: ${missingCustomer.join(', ')}.`,
+      'CUSTOMER_BILLING_DATA_INCOMPLETE',
+      missingCustomer,
+    )
+  }
+
+  return billingDate
+}
+
+function parcelForBank(parcel, assigned, billingDueDate = null) {
+  const due = billingDueDate || normalizeDateOnly(parcel.vencimento, 'Vencimento')
+  const recalculatedValue = Number(parcel.valor_recalculado)
+  const billingAmount = Number.isFinite(recalculatedValue) && recalculatedValue > 0
+    ? recalculatedValue
+    : finiteNumber(parcel.valor_total)
+  return {
+    ...parcel,
+    tenant_id: parcel.tenant_id,
+    nosso_numero: assigned.nossoNumero,
+    nosso_numero_dv: assigned.nossoDv,
+    controle_participante: assigned.control,
+    vencimento_boleto: due,
+    documento: parcel.receita_documento || parcel.documento_legado || parcel.contrato_numero || String(parcel.id).slice(0, 10),
+    valor_total: billingAmount,
+    mora_dia: roundMoney(billingAmount * finiteNumber(parcel.recalculo_dados?.percentual_mora_mes, 0) / 100 / 30),
+    multa_percentual: finiteNumber(parcel.recalculo_dados?.percentual_multa, 0),
+  }
+}
+
+// POST /financeiro/contas-receber/:id/bradesco/boleto
+router.post('/financeiro/contas-receber/:id/bradesco/boleto', async (req, res) => {
+  if (!ensureAdmin(req, res)) return
+  try {
+    const result = await transaction(async client => {
+      const config = await getBradescoConfig(req.user.tenant_id, client, { forUpdate: true })
+      validateBradescoConfigForBoleto(config)
+      const parcel = await getReceivableParcel(req.params.id, req.user.tenant_id, client, { forUpdate: true })
+      if (!parcel) throw new Error('Parcela não encontrada.')
+      parcel.tenant_id = req.user.tenant_id
+      const billingDate = validateParcelForBilling(parcel, req.body || {})
+      const assigned = await assignOurNumber(client, config, parcel)
+      const bankParcel = parcelForBank(parcel, assigned, billingDate.dueDate)
+      const boleto = buildBoletoData(config, bankParcel)
+      const html = buildBoletoHtml(config, bankParcel)
+      await client.query(
+        `UPDATE com_parcelas
+            SET linha_digitavel=$1, codigo_barras=$2, boleto_status='emitido', boleto_emitido_em=NOW(), updated_at=NOW()
+          WHERE id=$3 AND tenant_id=$4`,
+        [boleto.digitableLine, boleto.barcode, parcel.id, req.user.tenant_id],
+      )
+      return { html, boleto, homologado: config.homologado }
+    })
+    return res.json({ ok: true, data: result })
+  } catch (error) {
+    logger.warn('Falha ao gerar boleto Bradesco', {
+      tenant_id: req.user?.tenant_id,
+      parcela_id: req.params.id,
+      code: error.code || 'BOLETO_GENERATION_FAILED',
+      message: error.message,
+      validation: error.validation || undefined,
+    })
+    return res.status(400).json({
+      ok: false,
+      code: error.code || 'BOLETO_GENERATION_FAILED',
+      message: error.message,
+      fields: Array.isArray(error.fields) ? error.fields : [],
+      validation: error.validation || undefined,
+    })
+  }
+})
+
+// POST /financeiro/contas-receber/bradesco/remessa
+router.post('/financeiro/contas-receber/bradesco/remessa', async (req, res) => {
+  if (!ensureAdmin(req, res)) return
+  const ids = Array.from(new Set(Array.isArray(req.body?.parcela_ids) ? req.body.parcela_ids.filter(Boolean) : []))
+  if (!ids.length) return res.status(400).json({ ok: false, message: 'Selecione ao menos uma parcela.' })
+
+  try {
+    const result = await transaction(async client => {
+      const config = await getBradescoConfig(req.user.tenant_id, client, { forUpdate: true })
+      if (!config) throw new Error('Configure a cobrança Bradesco antes de gerar a remessa.')
+      if (!config.codigo_empresa) throw new Error('Informe o código da empresa no Bradesco.')
+
+      const { rows } = await client.query(
+        `${CONTAS_RECEBER_SELECT}
+          WHERE p.tenant_id=$1 AND p.id = ANY($2::uuid[])
+          ORDER BY p.vencimento, p.id
+          FOR UPDATE OF p`,
+        [req.user.tenant_id, ids],
+      )
+      if (rows.length !== ids.length) throw new Error('Uma ou mais parcelas selecionadas não foram localizadas.')
+
+      const bankItems = []
+      for (const parcel of rows) {
+        parcel.tenant_id = req.user.tenant_id
+        const billingDate = validateParcelForBilling(parcel)
+        const assigned = await assignOurNumber(client, config, parcel)
+        bankItems.push(parcelForBank(parcel, assigned, billingDate.dueDate))
+      }
+
+      const remittanceNumber = Number(config.remessa_sequencia || 1)
+      const generated = buildRemittance(config, bankItems, remittanceNumber, new Date())
+      const crypto = require('crypto')
+      const hash = crypto.createHash('sha256').update(generated.content, 'latin1').digest('hex')
+      const total = roundMoney(bankItems.reduce((sum, item) => sum + finiteNumber(item.valor_total), 0))
+      const { rows: [batch] } = await client.query(
+        `INSERT INTO fin_remessas_cobranca (
+           tenant_id, config_id, banco_codigo, numero, nome_arquivo, status,
+           homologacao, quantidade_titulos, valor_total, sha256, conteudo, gerada_por
+         ) VALUES ($1,$2,'237',$3,$4,'gerada',$5,$6,$7,$8,$9,$10)
+         RETURNING *`,
+        [req.user.tenant_id, config.id, remittanceNumber, generated.filename, !config.homologado, bankItems.length, total, hash, generated.content, req.user.id],
+      )
+      for (const item of bankItems) {
+        await client.query(
+          `INSERT INTO fin_remessas_cobranca_itens (
+             remessa_id, tenant_id, parcela_id, nosso_numero, nosso_numero_dv,
+             controle_participante, valor, vencimento
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [batch.id, req.user.tenant_id, item.id, item.nosso_numero, item.nosso_numero_dv, item.controle_participante, item.valor_total, item.vencimento_boleto],
+        )
+        await client.query(
+          `UPDATE com_parcelas SET boleto_status='remessa_gerada', updated_at=NOW() WHERE id=$1`,
+          [item.id],
+        )
+      }
+      await client.query(
+        `UPDATE fin_cobranca_bancaria_config SET remessa_sequencia=$1, updated_at=NOW() WHERE id=$2`,
+        [remittanceNumber + 1, config.id],
+      )
+      return { ...generated, total, batchId: batch.id }
+    })
+
+    res.setHeader('Content-Type', 'text/plain; charset=ISO-8859-1')
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`)
+    res.setHeader('X-Remessa-Id', result.batchId)
+    return res.send(Buffer.from(result.content, 'latin1'))
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message })
+  }
+})
+
+// POST /financeiro/contas-receber/bradesco/retorno
+router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
+  if (!ensureAdmin(req, res)) return
+  const filename = String(req.body?.filename || 'retorno.ret').slice(0, 160)
+  const content = String(req.body?.content || '')
+  if (!content) return res.status(400).json({ ok: false, message: 'Arquivo de retorno vazio.' })
+
+  try {
+    const parsed = parseReturn(content)
+    const existing = await query(
+      `SELECT id, nome_arquivo, created_at FROM fin_retornos_cobranca WHERE tenant_id=$1 AND sha256=$2`,
+      [req.user.tenant_id, parsed.sha256],
+    )
+    if (existing.rowCount) {
+      return res.json({ ok: true, duplicated: true, message: 'Este retorno já foi processado.', data: existing.rows[0] })
+    }
+
+    const result = await transaction(async client => {
+      const config = await getBradescoConfig(req.user.tenant_id, client)
+      const { rows: [batch] } = await client.query(
+        `INSERT INTO fin_retornos_cobranca (
+           tenant_id, config_id, banco_codigo, nome_arquivo, data_arquivo,
+           quantidade_registros, sha256, conteudo, processado_por
+         ) VALUES ($1,$2,'237',$3,$4,$5,$6,$7,$8)
+         RETURNING *`,
+        [req.user.tenant_id, config?.id || null, filename, parsed.header.fileDate, parsed.recordCount, parsed.sha256, content, req.user.id],
+      )
+
+      let reconciled = 0
+      let notFound = 0
+      let paidTotal = 0
+      const occurrences = {}
+
+      for (const item of parsed.details) {
+        occurrences[item.occurrence] = (occurrences[item.occurrence] || 0) + 1
+        const { rows: matches } = await client.query(
+          `SELECT p.id, p.status, ri.id AS remessa_item_id
+             FROM com_parcelas p
+             LEFT JOIN fin_remessas_cobranca_itens ri
+               ON ri.parcela_id=p.id AND ri.tenant_id=p.tenant_id
+            WHERE p.tenant_id=$1
+              AND (
+                (NULLIF($2,'') IS NOT NULL AND p.nosso_numero=$2)
+                OR (NULLIF($3,'') IS NOT NULL AND p.controle_participante=$3)
+              )
+            ORDER BY ri.created_at DESC NULLS LAST
+            LIMIT 1`,
+          [req.user.tenant_id, item.nossoNumero, item.participantControl],
+        )
+        const match = matches[0]
+        let processingStatus = 'nao_localizado'
+        if (match) {
+          reconciled += 1
+          processingStatus = 'localizado'
+          if (item.occurrence === '02') {
+            await client.query(
+              `UPDATE com_parcelas SET boleto_status='registrado', updated_at=NOW() WHERE id=$1`,
+              [match.id],
+            )
+            processingStatus = 'entrada_confirmada'
+          } else if (item.occurrence === '03') {
+            await client.query(
+              `UPDATE com_parcelas SET boleto_status='rejeitado', updated_at=NOW() WHERE id=$1`,
+              [match.id],
+            )
+            processingStatus = 'rejeitado'
+          } else if (item.occurrence === '06') {
+            const paidValue = finiteNumber(item.paidAmount, item.titleAmount)
+            paidTotal += paidValue
+            await client.query(
+              `UPDATE com_parcelas
+                  SET status='paga',
+                      pago_em=COALESCE($1::date,$2::date,CURRENT_DATE),
+                      valor_pago=$3,
+                      forma_pagamento='Boleto',
+                      origem_baixa='retorno_bradesco',
+                      conciliado_em=NOW(),
+                      boleto_status='liquidado',
+                      conciliacao_dados=COALESCE(conciliacao_dados,'{}'::jsonb) || $4::jsonb,
+                      updated_at=NOW()
+                WHERE id=$5`,
+              [item.creditDate, item.occurrenceDate, paidValue, JSON.stringify({ banco: '237', arquivo: filename, ocorrencia: item.occurrence, nosso_numero: item.nossoNumero, valor_pago: paidValue }), match.id],
+            )
+            processingStatus = 'liquidado'
+          } else if (['09', '10'].includes(item.occurrence)) {
+            await client.query(
+              `UPDATE com_parcelas SET boleto_status='baixado_banco', updated_at=NOW() WHERE id=$1`,
+              [match.id],
+            )
+            processingStatus = 'baixado_banco'
+          }
+        } else {
+          notFound += 1
+        }
+
+        await client.query(
+          `INSERT INTO fin_retornos_cobranca_itens (
+             retorno_id, tenant_id, parcela_id, remessa_item_id,
+             nosso_numero, nosso_numero_dv, controle_participante,
+             ocorrencia, ocorrencia_descricao, data_ocorrencia, data_credito,
+             data_vencimento, valor_titulo, valor_pago, valor_juros,
+             valor_desconto, motivos_rejeicao, status_processamento, dados
+           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)`,
+          [batch.id, req.user.tenant_id, match?.id || null, match?.remessa_item_id || null, item.nossoNumero, item.nossoNumeroDv, item.participantControl, item.occurrence, item.occurrenceLabel, item.occurrenceDate, item.creditDate, item.dueDate, item.titleAmount, item.paidAmount, item.interestAmount, item.discount, item.rejectionReasons, processingStatus, JSON.stringify(item)],
+        )
+      }
+
+      await client.query(
+        `UPDATE fin_retornos_cobranca
+            SET quantidade_conciliada=$1, quantidade_nao_localizada=$2, valor_liquidado=$3
+          WHERE id=$4`,
+        [reconciled, notFound, roundMoney(paidTotal), batch.id],
+      )
+      return {
+        id: batch.id,
+        arquivo: filename,
+        registros: parsed.recordCount,
+        titulos: parsed.details.length,
+        conciliados: reconciled,
+        nao_localizados: notFound,
+        valor_liquidado: roundMoney(paidTotal),
+        ocorrencias: occurrences,
+      }
+    })
+
+    return res.json({ ok: true, data: result })
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message })
+  }
+})
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PARCELAS

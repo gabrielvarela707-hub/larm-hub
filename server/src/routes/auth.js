@@ -65,8 +65,10 @@ router.post('/logout', async (req, res) => {
 
 // ─── GET /auth/me ─────────────────────────────────────────────────────────────
 
-router.get('/me', authenticate, (req, res) => {
-  return res.json({ ok: true, data: { user: req.user } })
+router.get('/me', authenticate, async (req, res) => {
+  const user = await authService.getSessionUser(req.user.id)
+  if (!user) return res.status(401).json({ ok: false, message: 'Usuário inativo ou não encontrado' })
+  return res.json({ ok: true, data: { user } })
 })
 
 

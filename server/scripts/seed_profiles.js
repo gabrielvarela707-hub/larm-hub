@@ -15,7 +15,9 @@ const logger = require('../src/config/logger')
 const ALL_MODS = [
   'dashboard','empreendimentos','mapa',
   'crm','simulador','contratos','landing','landing_pages','automacoes',
-  'fin_receber','fin_pagar','fin_boletos','fin_split','fin_sped',
+  'fin_cashflow','fin_orcamento','fin_movimento_orcado','fin_movimento',
+  'fin_receber','fin_pagar','fin_fornecedores','fin_bancos','fin_boletos','fin_split','fin_sped',
+  'cadastros_tipo_documento','cadastros_plano_contas','cadastros_indices_economicos','cadastros_clientes',
   'obras','relatorios','controladoria','ia',
   'configuracoes','usuarios',
 ]
