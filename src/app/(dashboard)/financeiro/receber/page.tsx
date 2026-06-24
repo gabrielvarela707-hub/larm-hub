@@ -20,6 +20,7 @@ import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 
 type StatusReceber = 'aberta' | 'atrasada' | 'paga' | 'cancelada'
+type EmpresaCobranca = 'LARM' | 'LUCKY'
 type SortKey = 'cliente' | 'contrato' | 'receita' | 'parcela' | 'valor' | 'vencimento' | 'recebimento' | 'status'
 type SortDirection = 'asc' | 'desc'
 
@@ -71,6 +72,7 @@ type ParcelaReceber = {
   nosso_numero?: string | null
   linha_digitavel?: string | null
   boleto_status?: string | null
+  empresa_cobranca?: EmpresaCobranca | null
 }
 
 type Summary = {
@@ -84,7 +86,8 @@ type Summary = {
 }
 
 type FilterOption = { id: number; nome: string; codigo?: string; cpf_cnpj?: string; ativo?: boolean }
-type FilterData = { clientes: FilterOption[]; tipos_receita: FilterOption[]; obras: FilterOption[] }
+type BillingCompanyOption = { codigo: EmpresaCobranca; nome: string; obras: number[] }
+type FilterData = { clientes: FilterOption[]; tipos_receita: FilterOption[]; obras: FilterOption[]; empresas_cobranca: BillingCompanyOption[] }
 
 type Recalculation = {
   parcela_id: string
@@ -124,7 +127,7 @@ type RecalcForm = {
 
 type BradescoConfig = {
   id?: number
-  empresa: string
+  empresa: EmpresaCobranca
   codigo_empresa: string
   beneficiario_nome: string
   beneficiario_documento: string
@@ -158,29 +161,34 @@ const EMPTY_SUMMARY: Summary = {
   valor_recebido: 0,
 }
 
-const EMPTY_CONFIG: BradescoConfig = {
-  empresa: 'LARM',
-  codigo_empresa: '00000000000004352309',
-  beneficiario_nome: 'LARM PARTICIPACOES LTDA',
-  beneficiario_documento: '59786491000190',
-  agencia: '2370',
-  agencia_dv: '',
-  conta: '27458',
-  conta_dv: '5',
-  carteira: '09',
-  especie_documento: '01',
-  cep: '',
-  logradouro: '',
-  numero: '',
-  complemento: '',
-  bairro: '',
-  cidade: '',
-  uf: '',
-  local_pagamento: 'PAGÁVEL PREFERENCIALMENTE NA REDE BRADESCO OU EM QUALQUER BANCO ATÉ O VENCIMENTO.',
-  instrucoes: 'APÓS O VENCIMENTO, RECALCULAR O TÍTULO ANTES DA EMISSÃO.',
-  multa_percentual_padrao: 2,
-  mora_percentual_mes_padrao: 1,
-  homologado: false,
+const DEFAULT_LOCAL_PAGAMENTO = 'PAGÁVEL PREFERENCIALMENTE NA REDE BRADESCO OU EM QUALQUER BANCO ATÉ O VENCIMENTO.'
+const DEFAULT_INSTRUCOES = 'APÓS O VENCIMENTO, RECALCULAR O TÍTULO ANTES DA EMISSÃO.'
+
+function emptyBradescoConfig(empresa: EmpresaCobranca): BradescoConfig {
+  return {
+    empresa,
+    codigo_empresa: '',
+    beneficiario_nome: '',
+    beneficiario_documento: '',
+    agencia: '',
+    agencia_dv: '',
+    conta: '',
+    conta_dv: '',
+    carteira: '09',
+    especie_documento: '01',
+    cep: '',
+    logradouro: '',
+    numero: '',
+    complemento: '',
+    bairro: '',
+    cidade: '',
+    uf: '',
+    local_pagamento: DEFAULT_LOCAL_PAGAMENTO,
+    instrucoes: DEFAULT_INSTRUCOES,
+    multa_percentual_padrao: 2,
+    mora_percentual_mes_padrao: 1,
+    homologado: false,
+  }
 }
 
 function firstDayOfCurrentMonth() {
@@ -242,7 +250,7 @@ function filenameFromDisposition(value?: string) {
 export default function ContasReceberPage() {
   const [rows, setRows] = useState<ParcelaReceber[]>([])
   const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY)
-  const [filters, setFilters] = useState<FilterData>({ clientes: [], tipos_receita: [], obras: [] })
+  const [filters, setFilters] = useState<FilterData>({ clientes: [], tipos_receita: [], obras: [], empresas_cobranca: [] })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -255,6 +263,7 @@ export default function ContasReceberPage() {
   const [clienteId, setClienteId] = useState('')
   const [tipoReceitaId, setTipoReceitaId] = useState('')
   const [obraId, setObraId] = useState('')
+  const [empresa, setEmpresa] = useState<EmpresaCobranca | ''>('')
   const [vencimentoInicio, setVencimentoInicio] = useState(firstDayOfCurrentMonth())
   const [vencimentoFim, setVencimentoFim] = useState('')
   const [status, setStatus] = useState('todos')
@@ -270,7 +279,7 @@ export default function ContasReceberPage() {
   const [recalcError, setRecalcError] = useState('')
 
   const [configOpen, setConfigOpen] = useState(false)
-  const [config, setConfig] = useState<BradescoConfig>(EMPTY_CONFIG)
+  const [config, setConfig] = useState<BradescoConfig>(() => emptyBradescoConfig('LARM'))
   const [configLoading, setConfigLoading] = useState(false)
   const [configSaving, setConfigSaving] = useState(false)
   const [configError, setConfigError] = useState('')
@@ -291,12 +300,13 @@ export default function ContasReceberPage() {
     cliente_id: clienteId || undefined,
     tipo_receita_id: tipoReceitaId || undefined,
     obra_id: obraId || undefined,
+    empresa: empresa || undefined,
     venc_inicio: vencimentoInicio || undefined,
     venc_fim: vencimentoFim || undefined,
     status,
     sort,
     direction,
-  }), [page, limit, busca, clienteId, tipoReceitaId, obraId, vencimentoInicio, vencimentoFim, status, sort, direction])
+  }), [page, limit, busca, clienteId, tipoReceitaId, obraId, empresa, vencimentoInicio, vencimentoFim, status, sort, direction])
 
   const eligibleIds = useMemo(() => rows.filter(row => ['aberta', 'atrasada'].includes(row.status)).map(row => row.id), [rows])
   const allEligibleSelected = eligibleIds.length > 0 && eligibleIds.every(id => selected.has(id))
@@ -309,9 +319,15 @@ export default function ContasReceberPage() {
   const loadFilters = useCallback(async () => {
     try {
       const response = await apiClient.get('/financeiro/contas-receber/filtros')
-      setFilters(response.data?.data || { clientes: [], tipos_receita: [], obras: [] })
+      const data = response.data?.data || {}
+      setFilters({
+        clientes: Array.isArray(data.clientes) ? data.clientes : [],
+        tipos_receita: Array.isArray(data.tipos_receita) ? data.tipos_receita : [],
+        obras: Array.isArray(data.obras) ? data.obras : [],
+        empresas_cobranca: Array.isArray(data.empresas_cobranca) ? data.empresas_cobranca : [],
+      })
     } catch {
-      setFilters({ clientes: [], tipos_receita: [], obras: [] })
+      setFilters({ clientes: [], tipos_receita: [], obras: [], empresas_cobranca: [] })
     }
   }, [])
 
@@ -351,6 +367,7 @@ export default function ContasReceberPage() {
     setClienteId('')
     setTipoReceitaId('')
     setObraId('')
+    setEmpresa('')
     setVencimentoInicio(firstDayOfCurrentMonth())
     setVencimentoFim('')
     setStatus('todos')
@@ -567,19 +584,27 @@ export default function ContasReceberPage() {
     }
   }
 
-  const openConfig = async () => {
-    setConfigOpen(true)
+  const loadBankConfig = async (company: EmpresaCobranca) => {
     setConfigLoading(true)
     setConfigError('')
+    setConfig(emptyBradescoConfig(company))
     try {
-      const response = await apiClient.get('/financeiro/contas-receber/bradesco/config')
-      setConfig({ ...EMPTY_CONFIG, ...(response.data?.data || {}) })
+      const response = await apiClient.get('/financeiro/contas-receber/bradesco/config', {
+        params: { empresa: company },
+      })
+      setConfig({ ...emptyBradescoConfig(company), ...(response.data?.data || {}), empresa: company })
     } catch (requestError: unknown) {
-      setConfigError(requestErrorMessage(requestError, 'Não foi possível carregar a configuração bancária.'))
-      setConfig(EMPTY_CONFIG)
+      setConfigError(requestErrorMessage(requestError, `Não foi possível carregar a configuração bancária da ${company}.`))
+      setConfig(emptyBradescoConfig(company))
     } finally {
       setConfigLoading(false)
     }
+  }
+
+  const openConfig = () => {
+    const company: EmpresaCobranca = empresa || 'LARM'
+    setConfigOpen(true)
+    void loadBankConfig(company)
   }
 
   const saveConfig = async () => {
@@ -587,11 +612,11 @@ export default function ContasReceberPage() {
     setConfigError('')
     try {
       const response = await apiClient.put('/financeiro/contas-receber/bradesco/config', config)
-      setConfig({ ...EMPTY_CONFIG, ...(response.data?.data || {}) })
-      setSuccess('Configuração Bradesco salva.')
+      setConfig({ ...emptyBradescoConfig(config.empresa), ...(response.data?.data || {}), empresa: config.empresa })
+      setSuccess(`Configuração Bradesco da ${config.empresa} salva.`)
       setConfigOpen(false)
     } catch (requestError: unknown) {
-      setConfigError(requestErrorMessage(requestError, 'Não foi possível salvar a configuração bancária.'))
+      setConfigError(requestErrorMessage(requestError, `Não foi possível salvar a configuração bancária da ${config.empresa}.`))
     } finally {
       setConfigSaving(false)
     }
@@ -639,7 +664,7 @@ export default function ContasReceberPage() {
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-8 gap-3">
           <FilterField label="Busca" className="xl:col-span-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -656,6 +681,15 @@ export default function ContasReceberPage() {
             <select value={tipoReceitaId} onChange={event => { setTipoReceitaId(event.target.value); setPage(1) }} className={inputClass}>
               <option value="">Todos tipos</option>
               {filters.tipos_receita.map(option => <option key={option.id} value={option.id}>{option.nome}</option>)}
+            </select>
+          </FilterField>
+          <FilterField label="Empresa">
+            <select value={empresa} onChange={event => { setEmpresa(event.target.value as EmpresaCobranca | ''); setPage(1) }} className={inputClass}>
+              <option value="">LARM e LUCKY</option>
+              {(filters.empresas_cobranca.length ? filters.empresas_cobranca : [
+                { codigo: 'LARM' as EmpresaCobranca, nome: 'LARM PARTICIPAÇÕES LTDA', obras: [7700, 7701] },
+                { codigo: 'LUCKY' as EmpresaCobranca, nome: 'LUCKY CAPITAL EMPREENDIMENTOS LTDA', obras: [7698] },
+              ]).map(option => <option key={option.codigo} value={option.codigo}>{option.codigo}</option>)}
             </select>
           </FilterField>
           <FilterField label="Obra">
@@ -730,7 +764,7 @@ export default function ContasReceberPage() {
                     <td className="px-3 py-3"><p className="font-semibold text-slate-800 truncate" title={row.cliente_nome || ''}>{row.cliente_nome || 'Cliente não informado'}</p><div className="mt-1 flex items-center gap-1.5"><span className="text-[10px] text-slate-400">{row.cliente_documento || 'Sem documento'}</span>{row.cliente_ativo === false && <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500">inativo</span>}</div></td>
                     <td className="px-3 py-3"><p className="font-medium text-slate-700 truncate" title={row.contrato_titulo || ''}>{row.contrato_numero || '—'}</p><p className="mt-1 text-[10px] text-slate-400 truncate" title={row.contrato_titulo || ''}>{row.contrato_titulo || 'Contrato'}</p></td>
                     <td className="px-3 py-3"><p className="font-medium text-slate-700 truncate" title={row.receita_titulo || ''}>{row.receita_titulo || row.tipo_receita_nome || 'Receita'}</p><p className="mt-1 text-[10px] text-slate-400">{row.tipo_receita_nome || row.tipo || '—'}</p></td>
-                    <td className="px-3 py-3"><p className="text-slate-700 truncate" title={row.obra_nome || ''}>{row.obra_nome || '—'}</p><p className="mt-1 text-[10px] text-slate-400 truncate" title={row.unidade_nome || ''}>Unidade: {row.unidade_nome || '—'}</p></td>
+                    <td className="px-3 py-3"><div className="mb-1 flex items-center gap-1.5"><span className={cn('rounded-full border px-1.5 py-0.5 text-[9px] font-semibold', row.empresa_cobranca === 'LUCKY' ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-blue-200 bg-blue-50 text-blue-700')}>{row.empresa_cobranca || 'SEM EMPRESA'}</span></div><p className="text-slate-700 truncate" title={row.obra_nome || ''}>{row.obra_nome || '—'}</p><p className="mt-1 text-[10px] text-slate-400 truncate" title={row.unidade_nome || ''}>Unidade: {row.unidade_nome || '—'}</p></td>
                     <td className="px-3 py-3 text-slate-600 truncate" title={row.receita_documento || row.documento_legado || ''}>{row.receita_documento || row.documento_legado || '—'}</td>
                     <td className="px-3 py-3 text-center text-slate-600 whitespace-nowrap">{row.parcela_numero_legado || row.numero || '—'}{row.parcela_total_legado ? `/${row.parcela_total_legado}` : ''}</td>
                     <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-800 whitespace-nowrap"><p>{formatCurrency(row.valor_total)}</p>{row.valor_recalculado != null && <p className="mt-1 text-[9px] font-normal text-blue-600" title={`Recalculado para ${formatDate(row.data_recalculo)}`}>recalculado</p>}</td>
@@ -802,9 +836,10 @@ export default function ContasReceberPage() {
           {configLoading ? <div className="py-12 text-center text-slate-400"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Carregando...</div> : (
             <div className="space-y-4">
               {configError && <Notice type="error">{configError}</Notice>}
+              {!config.id && config.empresa === 'LUCKY' && <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs text-violet-800"><strong>Configuração LUCKY ainda não cadastrada.</strong> Preencha somente os dados bancários reais fornecidos pelo Bradesco. Os dados da LARM não serão copiados.</div>}
               {!config.homologado && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><strong>Modo de homologação:</strong> as remessas serão geradas com extensão <code>.TST</code> e os boletos terão marca de homologação. Marque como homologado somente após validação pelo Bradesco.</div>}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <Field label="Empresa"><input value={config.empresa} onChange={event => setConfig({ ...config, empresa: event.target.value })} className={inputClass} /></Field>
+                <Field label="Empresa"><select value={config.empresa} onChange={event => void loadBankConfig(event.target.value as EmpresaCobranca)} className={inputClass}><option value="LARM">LARM</option><option value="LUCKY">LUCKY</option></select></Field>
                 <Field label="Código da empresa Bradesco" className="md:col-span-2"><input value={config.codigo_empresa || ''} maxLength={20} onChange={event => setConfig({ ...config, codigo_empresa: event.target.value })} className={inputClass} /></Field>
                 <Field label="Carteira"><input value={config.carteira} onChange={event => setConfig({ ...config, carteira: event.target.value })} className={inputClass} /></Field>
                 <Field label="Beneficiário" className="md:col-span-3"><input value={config.beneficiario_nome} onChange={event => setConfig({ ...config, beneficiario_nome: event.target.value })} className={inputClass} /></Field>
@@ -826,7 +861,7 @@ export default function ContasReceberPage() {
                 <Field label="Instruções" className="md:col-span-4"><textarea rows={3} value={config.instrucoes || ''} onChange={event => setConfig({ ...config, instrucoes: event.target.value })} className={`${inputClass} h-auto py-2`} /></Field>
               </div>
               <label className="flex items-start gap-2 rounded-xl border border-slate-200 p-3 text-xs text-slate-700"><input type="checkbox" className="mt-0.5" checked={Boolean(config.homologado)} onChange={event => setConfig({ ...config, homologado: event.target.checked })} /><span><strong>Configuração homologada pelo Bradesco.</strong><br />Ao marcar, as remessas passam de <code>.TST</code> para <code>.REM</code> e a marca de homologação sai do boleto.</span></label>
-              <div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onClick={() => setConfigOpen(false)} className={cancelButtonClass}>Cancelar</button><button type="button" onClick={saveConfig} disabled={configSaving} className={primaryButtonClass}>{configSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Salvar configuração</button></div>
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-4"><button type="button" onClick={() => setConfigOpen(false)} className={cancelButtonClass}>Cancelar</button><button type="button" onClick={saveConfig} disabled={configSaving || configLoading} className={primaryButtonClass}>{configSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Salvar configuração</button></div>
             </div>
           )}
         </Modal>
