@@ -6,33 +6,93 @@
 
 const SYSTEM_RELEASES = [
   {
-    version: "0.3.57",
-    title: "Frontend — correção do build ESLint",
+    version: "0.3.61",
+    title: "Contas a Receber — correção pelo schema real do Movimento Bancário",
     description:
-      "Corrige o bloqueio de publicação do frontend causado pela análise indevida de uma rota legada do backend e remove imports não utilizados.",
-    frontend_version: "0.3.57",
-    backend_version: "0.3.56",
-    released_at: "2026-06-23T20:30:00.000Z",
+      "Corrige a prévia da posição de recebíveis usando a estrutura real da tabela legada fin_movimento, que não possui tenant_id.",
+    frontend_version: "0.3.59",
+    backend_version: "0.3.61",
+    released_at: "2026-06-24T12:25:00.000Z",
     changes: [
-      "O ESLint do frontend passa a ignorar src/routes, diretório que contém código legado do backend e não é importado pela aplicação Next.js.",
-      "Removido o import não utilizado Edit3 da tela de reservas.",
-      "Removidos imports de ícones não utilizados do menu lateral.",
-      "Nenhuma regra financeira, tela ou endpoint foi alterado."
+      "Removida a referência inválida a fin_movimento.tenant_id.",
+      "Os parâmetros da consulta passam a ser montados dinamicamente, sem parâmetros ausentes ou sem tipo.",
+      "O tenant permanece obrigatório nas parcelas e na tabela de auditoria, que realmente possuem tenant_id.",
+      "A estrutura foi conferida contra o dump PostgreSQL atual: fin_movimento contém id, data, empresa, entradas e historico.",
+      "Nenhuma parcela, baixa ou boleto é alterado durante a instalação; a execução continua dependendo do comando explícito do seed."
+    ],
+    architecture: {
+      frontend: ["Sem alteração nesta versão"],
+      backend: ["Node.js", "Seed de posição de recebíveis"],
+      database: ["Sem alteração estrutural", "fin_movimento global", "com_parcelas por tenant"],
+      integrations: ["PostgreSQL", "Contas a Receber", "LARM", "LUCKY"],
+    },
+  },
+
+  {
+    version: "0.3.60",
+    title: "Contas a Receber — primeira tentativa de correção da prévia",
+    description:
+      "Registra a primeira tentativa de correção da tipagem dos parâmetros; substituída pela versão 0.3.61 após a conferência do schema real.",
+    frontend_version: "0.3.59",
+    backend_version: "0.3.60",
+    released_at: "2026-06-24T12:30:00.000Z",
+    changes: [
+      "Corrigido o erro PostgreSQL could not determine data type of parameter $1 na prévia do seed de recebíveis.",
+      "A tentativa de aplicar tenant diretamente em fin_movimento foi revista na versão 0.3.61, pois a tabela legada não possui essa coluna.",
+      "A separação por tenant permanece nas parcelas e na auditoria, não na tabela global de Movimento Bancário.",
+      "Nenhuma parcela, valor, baixa, boleto ou configuração bancária é alterada pela instalação do arquivo."
+    ],
+    architecture: {
+      frontend: ["Sem alteração nesta versão"],
+      backend: ["Node.js", "Seed de posição de recebíveis"],
+      database: ["Sem alteração estrutural", "fin_movimento", "com_parcelas"],
+      integrations: ["PostgreSQL", "Contas a Receber", "LARM", "LUCKY"],
+    },
+  },
+
+  {
+    version: "0.3.58",
+    title: "Contas a Receber — separação LARM e LUCKY",
+    description:
+      "Corrige a seleção da empresa bancária por obra, preserva os vínculos corretos dos lotes e adiciona um seed seguro para normalizar Contas a Receber até 23/06/2026.",
+    frontend_version: "0.3.58",
+    backend_version: "0.3.58",
+    released_at: "2026-06-23T23:30:00.000Z",
+    changes: [
+      "Confirmado no banco convertido que a obra 7698 pertence à LUCKY, com 99 contratos/lotes e 10.025 parcelas.",
+      "Confirmado que a obra 7700 pertence à LARM, com 37 contratos/lotes e 3.448 parcelas; a obra 7701 permanece vinculada à LARM como contrato de aluguel.",
+      "A emissão de boleto e o recálculo passam a selecionar a configuração Bradesco pela obra da parcela, sem priorizar automaticamente a LARM.",
+      "Remessas passam a bloquear a mistura de parcelas LARM e LUCKY no mesmo arquivo.",
+      "A API de Contas a Receber passa a informar empresa_cobranca e permite filtrar/exportar por LARM ou LUCKY.",
+      "Criado seed idempotente para normalizar obra, unidade, produto, contrato, receita e parcela, além de atualizar os status em aberto/atrasado até a data informada.",
+      "Boletos antigos da obra 7698 sem identificação de configuração LUCKY são liberados para reemissão somente quando não foram remetidos, pagos ou liquidados.",
+      "Boletos e remessas novos passam a registrar empresa e configuração bancária nos metadados da parcela, evitando correções indevidas em futuras execuções do seed.",
+      "Os dados bancários da LUCKY não são copiados nem inventados; a emissão fica bloqueada até o cadastro da configuração real da empresa."
     ],
     architecture: {
       frontend: [
         "Next.js App Router",
-        "ESLint Flat Config",
-        "TypeScript"
+        "Contas a Receber v0.3.58"
       ],
       backend: [
-        "Sem alteração"
+        "Node.js",
+        "Express.js",
+        "Cobrança Bradesco por empresa",
+        "Seed com prévia e execução idempotente"
       ],
       database: [
-        "Sem alteração"
+        "com_contratos",
+        "com_parcelas",
+        "fin_receitas",
+        "cad_produtos",
+        "fin_cobranca_bancaria_config",
+        "hub_system_releases"
       ],
       integrations: [
-        "Vercel Build"
+        "Bradesco CNAB 400",
+        "LARM",
+        "LUCKY",
+        "Legado Strato"
       ],
     },
   },
@@ -76,6 +136,45 @@ const SYSTEM_RELEASES = [
   },
 
   {
+    version: "0.3.55",
+    title: "Cash Flow diário — saldo de aplicações carregado até o fim do mês",
+    description:
+      "Ajusta a visão diária do Cash Flow para manter o saldo final informado de cada aplicação nos dias seguintes do mesmo mês, até que um novo lançamento substitua a posição.",
+    frontend_version: "0.3.54",
+    backend_version: "0.3.55",
+    released_at: "2026-06-20T23:59:00.000Z",
+    changes: [
+      "O saldo lançado em CDB, LCA, LCI, fundo e demais aplicações passa a ser repetido nos dias seguintes dentro do mesmo mês.",
+      "Quando existir um novo lançamento para a mesma aplicação, o novo valor substitui o anterior a partir daquele dia.",
+      "O carregamento é encerrado no último dia do mês e não é transportado automaticamente para o mês seguinte.",
+      "O total das linhas de aplicações na visão diária passa a representar a última posição do mês, evitando a soma indevida dos saldos repetidos.",
+      "Receitas, despesas, rendimentos, taxas e demais linhas de movimento permanecem com a regra atual.",
+      "Nenhuma migration de banco ou alteração de frontend foi necessária."
+    ],
+    architecture: {
+      frontend: [
+        "Sem alteração nesta versão"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Cash Flow diário"
+      ],
+      database: [
+        "Sem alteração estrutural",
+        "fin_movimento",
+        "fin_bancos_lancamentos",
+        "fin_cashflow_linhas"
+      ],
+      integrations: [
+        "Movimento Bancário",
+        "Bancos e Contas",
+        "Cash Flow"
+      ],
+    },
+  },
+
+  {
     version: "0.3.54",
     title: "Contas a Receber — boleto usa a data do recálculo recém-salvo",
     description:
@@ -101,6 +200,43 @@ const SYSTEM_RELEASES = [
         "Node.js",
         "Express.js",
         "Validação de boleto Bradesco"
+      ],
+      database: [
+        "Sem alteração estrutural",
+        "com_parcelas"
+      ],
+      integrations: [
+        "Bradesco",
+        "Boleto",
+        "CNAB 400"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.53",
+    title: "Contas a Receber — boleto reconhece recálculo salvo",
+    description:
+      "Corrige a validação do boleto Bradesco para usar a data e o valor do recálculo persistido, respeitando a data financeira do Brasil.",
+    frontend_version: "0.3.52",
+    backend_version: "0.3.53",
+    released_at: "2026-06-20T23:45:00.000Z",
+    changes: [
+      "A geração do boleto passa a considerar a data de recálculo salva na parcela e, como fallback, a data registrada na memória JSON do cálculo.",
+      "A comparação de vencimento passa a usar o fuso financeiro America/Sao_Paulo por padrão, evitando rejeição na virada do dia em UTC.",
+      "O valor recalculado salvo continua sendo usado como valor de cobrança do boleto.",
+      "A mesma data recalculada passa a ser usada como novo vencimento do boleto e da remessa.",
+      "Nenhuma estrutura do banco de dados ou regra financeira foi alterada."
+    ],
+    architecture: {
+      frontend: [
+        "Sem alteração nesta versão"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Validação de boleto Bradesco",
+        "Fuso financeiro configurável"
       ],
       database: [
         "Sem alteração estrutural",
@@ -196,37 +332,76 @@ const SYSTEM_RELEASES = [
   },
 
   {
-    version: "0.3.50",
-    title: "Contas a Receber — gerar boleto após salvar recálculo",
+    version: "0.3.49",
+    title: "Orçamento — total correto do Saldo Final",
     description:
-      "Mantém o modal de recálculo aberto após a gravação e libera a emissão do boleto Bradesco com o valor atualizado da parcela.",
-    frontend_version: "0.3.50",
+      "Corrige o total anual do bloco Saldo Final no Orçamento para exibir o último saldo mensal disponível, sem somar posições mensais.",
+    frontend_version: "0.3.47",
     backend_version: "0.3.49",
-    released_at: "2026-06-20T21:35:00.000Z",
+    released_at: "2026-06-20T21:30:00.000Z",
     changes: [
-      "O modal de recálculo não fecha mais automaticamente após salvar.",
-      "Adicionado botão Gerar boleto ao lado de Salvar recálculo.",
-      "O botão de boleto permanece bloqueado até o recálculo ser salvo com sucesso.",
-      "Alterações nos campos financeiros voltam a bloquear a emissão até que o novo cálculo seja salvo.",
-      "Após salvar, a tela informa que o boleto será emitido com o valor recalculado.",
-      "Falhas na emissão do boleto são exibidas dentro do próprio modal de recálculo.",
-      "Versionamento do frontend atualizado para 0.3.50."
+      "O total anual da linha SALDO FINAL deixa de somar os saldos de janeiro a dezembro.",
+      "O total passa a representar o último saldo mensal disponível no ano selecionado.",
+      "A mesma regra foi aplicada às linhas que compõem o bloco de saldos, como Saldos Bancários em C/C, Aplicações Financeiras, Curto Prazo e seus detalhes.",
+      "Receitas, despesas e demais linhas de fluxo continuam usando a soma anual normalmente.",
+      "Nenhum valor mensal, movimento bancário ou orçamento importado foi alterado.",
+      "Versionamento do backend atualizado para 0.3.49."
+    ],
+    architecture: {
+      frontend: [
+        "Sem alteração de interface",
+        "Orçamento v0.3.47"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "Regra de totalização por posição financeira"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_orcamento_linhas",
+        "fin_orcamento_valores"
+      ],
+      integrations: [
+        "Orçamento Financeiro",
+        "Cash Flow Orçado"
+      ]
+    },
+  },
+
+  {
+    version: "0.3.48",
+    title: "Contas a Receber — correção de datas no recálculo",
+    description:
+      "Corrige a validação do vencimento no recálculo das parcelas quando o PostgreSQL devolve datas como Date, timestamp ISO ou formato brasileiro.",
+    frontend_version: "0.3.47",
+    backend_version: "0.3.48",
+    released_at: "2026-06-19T23:10:00.000Z",
+    changes: [
+      "Corrigido o erro Vencimento inválida ao abrir ou atualizar o recálculo de parcelas atrasadas.",
+      "A API agora normaliza datas recebidas como DATE do PostgreSQL, objeto Date, timestamp ISO e DD/MM/AAAA.",
+      "A mesma normalização foi aplicada às referências mensais dos índices econômicos.",
+      "A validação de vencimento usada na geração de boleto e remessa Bradesco passa a usar a data normalizada.",
+      "Nenhum valor, índice, parcela ou regra financeira foi alterado.",
+      "Versionamento do backend atualizado para 0.3.48."
     ],
     architecture: {
       frontend: [
         "Next.js App Router",
-        "Modal de recálculo",
-        "Emissão de boleto Bradesco",
-        "Controle de estado salvo/alterado"
+        "Contas a Receber v0.3.47"
       ],
       backend: [
-        "API existente de recálculo",
-        "API existente de boleto Bradesco"
+        "Node.js",
+        "Express.js",
+        "Normalização segura de datas financeiras"
       ],
       database: [
-        "Sem alteração de banco"
+        "PostgreSQL",
+        "com_parcelas",
+        "fin_indice_valores"
       ],
       integrations: [
+        "Recálculo de recebíveis",
         "Cobrança Bradesco"
       ]
     },
@@ -342,6 +517,128 @@ const SYSTEM_RELEASES = [
     },
   },
 
+
+  {
+    version: "0.3.45",
+    title: "Contas a Receber — vínculo com clientes inativos",
+    description:
+      "Corrige a importação de contratos, receitas e parcelas do Strato para localizar também clientes inativos, preservando o status cadastral e evitando a necessidade de reativação artificial.",
+    frontend_version: "0.3.42",
+    backend_version: "0.3.45",
+    released_at: "2026-06-19T20:58:00.000Z",
+    changes: [
+      "O importador deixa de excluir cad_clientes e cad_pessoas inativos durante o vínculo dos contratos históricos.",
+      "Clientes inativos continuam inativos após a importação; somente o relacionamento com contratos, receitas e parcelas é criado.",
+      "A prévia passa a informar quantos contratos foram vinculados a clientes inativos.",
+      "Mantida a trava contra clientes realmente ausentes ou nomes ambíguos.",
+      "Corrigido o vínculo de ALEXANDRE EMERSON DA SILVA nas unidades R-6, R-7, R-8 e R-9.",
+      "Versionamento atualizado para 0.3.45."
+    ],
+    architecture: {
+      frontend: ["Sem alteração de interface"],
+      backend: ["Node.js", "Seed idempotente", "Vínculo histórico de clientes ativos e inativos"],
+      database: ["cad_clientes", "cad_pessoas", "com_contratos", "fin_receitas", "com_parcelas"],
+      integrations: ["Relatório a Receber Strato — posição 01/06/2026"]
+    },
+  },
+
+  {
+    version: "0.3.44",
+    title: "Contas a Receber — contratos, receitas e parcelas do Strato (Fase 2)",
+    description:
+      "Importa o saldo em aberto do relatório Strato e relaciona clientes já cadastrados com unidades, contratos, receitas e parcelas, sem criar uma segunda tabela de recebimentos.",
+    frontend_version: "0.3.42",
+    backend_version: "0.3.44",
+    released_at: "2026-06-19T22:10:00.000Z",
+    changes: [
+      "A tabela com_parcelas foi preservada e ampliada com vínculos para fin_receitas, com_contrato_itens, cad_produtos/cad_servicos e fin_tipos_receita.",
+      "Criados campos de rastreabilidade do relatório Strato: documento, parcela legada, obra, unidade, índice, composição do valor e data de posição.",
+      "Preparado seed idempotente com modo prévia e execução para o relatório a receber com posição em 01/06/2026.",
+      "Os 126 clientes do relatório são vinculados aos cadastros existentes por nome normalizado exato; a execução é bloqueada quando houver cliente ausente ou ambíguo.",
+      "O relatório gera 137 unidades/produtos, 137 contratos, 251 receitas e 13.502 parcelas em aberto, totalizando R$ 21.031.875,59.",
+      "Cada contrato é relacionado ao cliente, à obra e à unidade; cada natureza de receita gera um item contratual e uma receita própria.",
+      "As parcelas usam o Total do relatório como valor exibido e preservam separadamente convertido, resíduo, moras, desconto, seguro e juros de financiamento.",
+      "Reexecuções não duplicam dados e preservam parcelas já pagas e contratos encerrados/quitados.",
+      "Corrigida a seleção da versão atual do changelog para usar a maior versão semântica, independentemente da ordem do arquivo.",
+      "Versionamento atualizado para 0.3.44."
+    ],
+    architecture: {
+      frontend: [
+        "Sem alteração de interface nesta fase",
+        "Contas a Receber existente passa a consumir com_contratos e com_parcelas importados"
+      ],
+      backend: [
+        "Node.js",
+        "Migration idempotente",
+        "Seed com preview/execute",
+        "Importação em lotes"
+      ],
+      database: [
+        "PostgreSQL",
+        "cad_clientes",
+        "cad_produtos",
+        "com_contratos",
+        "com_contrato_itens",
+        "fin_receitas",
+        "com_parcelas",
+        "fin_tipos_receita"
+      ],
+      integrations: [
+        "Relatório a Receber Strato — posição 01/06/2026",
+        "Obras 7698, 7700 e 7701",
+        "Índices IPCA e IGP-M"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.43",
+    title: "Contas a Receber — base comercial e contratual (Fase 1)",
+    description:
+      "Cria a fundação normalizada para relacionar clientes, produtos, serviços, contratos e receitas antes da evolução das parcelas do Contas a Receber.",
+    frontend_version: "0.3.42",
+    backend_version: "0.3.43",
+    released_at: "2026-06-19T21:15:00.000Z",
+    changes: [
+      "Criadas as tabelas cad_produtos e cad_servicos para o catálogo comercial.",
+      "Criada fin_tipos_receita com os códigos encontrados no relatório legado: Entrada, Parcela, Anual, Renegociação, Intermediária, Taxa, Condomínio, Aditivo, Outros e Comissão.",
+      "Criada fin_receitas como cabeçalho/origem da receita por cliente, contrato, produto ou serviço, sem gerar parcelas nesta fase.",
+      "A tabela com_contratos foi preservada e ampliada com cliente_id, título, tipo de contrato, período, reajuste, obra, unidade e identificação legada.",
+      "Criada com_contrato_itens para permitir vários produtos e/ou serviços dentro do mesmo contrato.",
+      "Contratos existentes tentam ser vinculados a cad_clientes por CPF/CNPJ e, como fallback conservador, por nome exato e único.",
+      "Adicionado seed opcional em modo prévia para importar obras/produtos de tb2_obra e ts1_prod e serviços de ts1_serv.",
+      "A tabela com_parcelas não foi duplicada; ela será evoluída na Fase 2 para receber o vínculo com fin_receitas e os dados completos do relatório a receber.",
+      "Versionamento atualizado para 0.3.43."
+    ],
+    architecture: {
+      frontend: [
+        "Sem alteração de interface nesta fase",
+        "Contas a Receber atual preservado"
+      ],
+      backend: [
+        "Node.js",
+        "Migration idempotente",
+        "Seed legado com preview/execute"
+      ],
+      database: [
+        "PostgreSQL",
+        "cad_clientes",
+        "cad_produtos",
+        "cad_servicos",
+        "com_contratos",
+        "com_contrato_itens",
+        "fin_tipos_receita",
+        "fin_receitas",
+        "com_parcelas"
+      ],
+      integrations: [
+        "tb2_obra",
+        "ts1_prod",
+        "ts1_serv",
+        "Relatório a Receber Strato"
+      ],
+    },
+  },
 
   {
     version: "0.3.42",
@@ -1460,22 +1757,23 @@ const SYSTEM_RELEASES = [
       ],
     },
   },
+
   {
-    version: "0.3.9",
-    title: "Fornecedores — gestão de contratos",
+    version: "0.3.2",
+    title: "Financeiro — Movimento Bancário com resumo filtrado por ano",
     description:
-      "Adiciona aba de contratos no cadastro de fornecedores, com controle de assinatura, renovação, índice de correção, valores, serviços, importação/exportação por planilha e anexo de PDF assinado.",
-    frontend_version: "0.3.9",
-    backend_version: "0.3.9",
-    released_at: "2026-05-29T00:00:00.000Z",
+      "Correção pontual no Movimento Bancário para garantir que os cards de Entradas, Saídas e Saldo respeitem o ano selecionado, mantendo o filtro por ano isolado da API compartilhada do financeiro.",
+    frontend_version: "0.3.2",
+    backend_version: "0.3.2",
+    released_at: "2026-05-27T19:30:00.000Z",
     changes: [
-      "Adicionada aba Contratos no modal de Fornecedores sem alterar a aba Dados nem a aba Histórico.",
-      "Criado cadastro de contratos por fornecedor com título/serviço, número, status, datas de assinatura, início, fim e renovação.",
-      "Incluídos campos de índice de correção, valor mensal, valor total, valor pago, serviços contratados, responsável e observações.",
-      "Adicionado anexo de contrato assinado em PDF vinculado ao fornecedor.",
-      "Adicionada importação e exportação de contratos por planilha dentro da aba Contratos.",
-      "Adicionado botão Exportar fornecedores na listagem para usar a exportação backend já prevista no módulo.",
-      "Mantidas as telas e regras existentes de fornecedores, bancos e histórico sem alteração estrutural."
+      "Mantidos os botões de ano de 2021 a 2026 na tela Financeiro > Movimento Bancário.",
+      "Mantido 2026 como ano padrão ao abrir a tela para evitar exibir dados históricos fora do contexto atual.",
+      "A busca do extrato passa a enviar explicitamente o ano selecionado ao backend.",
+      "O resumo de Entradas, Saídas e Saldo agora aplica o mesmo filtro de ano da listagem.",
+      "O backend considera COALESCE(ano, EXTRACT(YEAR FROM data)) para compatibilidade com registros antigos sem coluna ano preenchida.",
+      "Nenhuma alteração foi feita em src/lib/api/financeiro.ts, package.json, package-lock.json ou tipagens de Fornecedor.",
+      "Atualizada versão técnica do front-end e backend para 0.3.2."
     ],
     architecture: {
       frontend: [
@@ -1483,13 +1781,340 @@ const SYSTEM_RELEASES = [
         "React",
         "TypeScript",
         "TailwindCSS",
-        "XLSX",
-        "Fornecedores Contratos v0.3.9"
+        "Movimento Bancário por ano"
       ],
-      backend: ["Node.js", "Express.js", "JWT", "REST API Financeiro", "PM2"],
-      database: ["PostgreSQL", "fin_fornecedor_contratos", "hub_system_releases"],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "PM2"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "hub_system_releases"
+      ],
       integrations: [
-        "Importação/exportação Excel",
+        "Changelog versionado no banco",
+        "Filtro anual do Movimento Bancário"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.3",
+    title: "Financeiro — seed do Movimento Bancário 2022 e estudo de fornecedores",
+    description:
+      "Inclusão do arquivo de importação do Movimento Bancário 2022 e documentação técnica para futura criação inteligente de fornecedores a partir dos movimentos, sem alterar telas ou regras atuais de fornecedores.",
+    frontend_version: "0.3.2",
+    backend_version: "0.3.3",
+    released_at: "2026-05-29T00:30:00.000Z",
+    changes: [
+      "Adicionado o arquivo server/scripts/imports/mov-bancario-2022.xlsx para importação do Movimento Bancário de 2022.",
+      "Adicionado o script npm db:seed:movimento:2022 para executar a importação do ano 2022 com limpeza restrita ao próprio ano.",
+      "Mantido o padrão seguro de importação por ano usando --ano=2022 --limpar, sem apagar movimentos de outros anos.",
+      "Criado estudo técnico para futura importação de fornecedores a partir dos movimentos bancários, considerando nomes incompletos, abreviados, quebrados e repetidos.",
+      "Nenhuma alteração foi feita no frontend, em src/lib/api/financeiro.ts, package-lock.json, telas de fornecedores ou regras atuais de fornecedores.",
+      "Atualizada versão técnica do backend para 0.3.3."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Sem alteração nesta versão"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Scripts de seed financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "fin_fornecedores",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Importação anual do Movimento Bancário",
+        "Changelog versionado no banco",
+        "Estudo de deduplicação futura de fornecedores"
+      ],
+    },
+  },
+
+
+
+  {
+    version: "0.3.4",
+    title: "Financeiro — seed do Movimento Bancário 2023",
+    description:
+      "Inclusão do arquivo de importação do Movimento Bancário 2023 e script dedicado para subir o histórico anual sem alterar frontend, fornecedores ou regras financeiras existentes.",
+    frontend_version: "0.3.2",
+    backend_version: "0.3.4",
+    released_at: "2026-05-29T01:00:00.000Z",
+    changes: [
+      "Adicionado o arquivo server/scripts/imports/mov-bancario-2023.xlsx para importação do Movimento Bancário de 2023.",
+      "Adicionado o script npm db:seed:movimento:2023 para executar a importação do ano 2023 com limpeza restrita ao próprio ano.",
+      "Mantido o padrão seguro de importação por ano usando --ano=2023 --limpar, sem apagar movimentos de 2021, 2022 ou demais anos.",
+      "Mantida para uma próxima etapa a sanitização inteligente de fornecedores a partir dos movimentos bancários.",
+      "Nenhuma alteração foi feita no frontend, em src/lib/api/financeiro.ts, package-lock.json, telas de fornecedores ou regras atuais de fornecedores.",
+      "Atualizada versão técnica do backend para 0.3.4."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Sem alteração nesta versão"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Scripts de seed financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Importação anual do Movimento Bancário",
+        "Changelog versionado no banco",
+        "Histórico financeiro 2023"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.5",
+    title: "Financeiro — seed do Movimento Bancário 2024",
+    description:
+      "Inclusão do arquivo de importação do Movimento Bancário 2024 e script dedicado para subir o histórico anual mantendo o padrão seguro por ano, sem alterar frontend, fornecedores ou regras financeiras existentes.",
+    frontend_version: "0.3.2",
+    backend_version: "0.3.5",
+    released_at: "2026-05-29T01:30:00.000Z",
+    changes: [
+      "Adicionado o arquivo server/scripts/imports/mov-bancario-2024.xlsx para importação do Movimento Bancário de 2024.",
+      "Adicionado o script npm db:seed:movimento:2024 para executar a importação do ano 2024 com limpeza restrita ao próprio ano.",
+      "Mantido o padrão seguro de importação por ano usando --ano=2024 --limpar, sem apagar movimentos de 2021, 2022, 2023 ou demais anos.",
+      "Mantida para uma próxima etapa a sanitização inteligente de fornecedores a partir dos movimentos bancários.",
+      "Nenhuma alteração foi feita no frontend, em src/lib/api/financeiro.ts, package-lock.json, telas de fornecedores ou regras atuais de fornecedores.",
+      "Atualizada versão técnica do backend para 0.3.5."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Sem alteração nesta versão"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Scripts de seed financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Importação anual do Movimento Bancário",
+        "Changelog versionado no banco",
+        "Histórico financeiro 2024"
+      ],
+    },
+  },
+
+
+  {
+    version: "0.3.6",
+    title: "Financeiro — seed do Movimento Bancário 2025",
+    description:
+      "Inclusão do arquivo de importação do Movimento Bancário 2025 e script dedicado para subir o histórico anual mantendo o padrão seguro por ano, sem alterar frontend, fornecedores ou regras financeiras existentes.",
+    frontend_version: "0.3.2",
+    backend_version: "0.3.6",
+    released_at: "2026-05-29T02:40:00.000Z",
+    changes: [
+      "Adicionado o arquivo server/scripts/imports/mov-bancario-2025.xlsx para importação do Movimento Bancário de 2025.",
+      "Adicionado o script npm db:seed:movimento:2025 para executar a importação do ano 2025 com limpeza restrita ao próprio ano.",
+      "Mantido o padrão seguro de importação por ano usando --ano=2025 --limpar, sem apagar movimentos de 2021, 2022, 2023, 2024 ou demais anos.",
+      "Mantida para uma próxima etapa a sanitização inteligente de fornecedores a partir dos movimentos bancários.",
+      "Nenhuma alteração foi feita no frontend, em src/lib/api/financeiro.ts, package-lock.json, telas de fornecedores ou regras atuais de fornecedores.",
+      "Atualizada versão técnica do backend para 0.3.6."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Sem alteração nesta versão"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Scripts de seed financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Importação anual do Movimento Bancário",
+        "Changelog versionado no banco",
+        "Histórico financeiro 2025"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.7",
+    title: "Financeiro — seed do Movimento Bancário 2026 parcial",
+    description:
+      "Inclusão do arquivo de importação do Movimento Bancário 2026 e script dedicado para subir somente os movimentos até 28/06/2026, mantendo o padrão seguro por ano e sem alterar frontend ou regras financeiras existentes.",
+    frontend_version: "0.3.2",
+    backend_version: "0.3.7",
+    released_at: "2026-05-29T03:30:00.000Z",
+    changes: [
+      "Adicionado o arquivo server/scripts/imports/mov-bancario-2026.xlsx para importação do Movimento Bancário de 2026.",
+      "Adicionado o script npm db:seed:movimento:2026 para executar a importação do ano 2026 com limpeza restrita ao próprio ano.",
+      "Incluído o parâmetro --ate=2026-06-28 no seed de 2026 para importar somente movimentos com data até 28/06/2026.",
+      "Atualizado o importador scripts/import_financeiro.py para aceitar filtro de data final sem alterar os comandos existentes dos anos 2021 a 2025.",
+      "Mantido o padrão seguro de importação por ano usando --ano=2026 --limpar, sem apagar movimentos de 2021, 2022, 2023, 2024 ou 2025.",
+      "Nenhuma alteração foi feita no frontend, telas financeiras, fornecedores, contas bancárias ou regras atuais de baixa/pagamento.",
+      "Atualizada versão técnica do backend para 0.3.7."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Sem alteração nesta versão"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Scripts de seed financeiro"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_movimento",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Importação anual do Movimento Bancário",
+        "Filtro de data final no importador",
+        "Changelog versionado no banco",
+        "Histórico financeiro 2026 parcial"
+      ],
+    },
+  },
+
+
+
+  {
+    version: "0.3.8",
+    title: "Financeiro — seed inicial de fornecedores do Movimento Bancário",
+    description:
+      "Inclusão de seed conservador para criar fornecedores iniciais a partir dos movimentos bancários de 2021 a 2026, com 2026 recortado até 28/06/2026, deduplicação por nome normalizado, campos obrigatórios preenchidos e sem CNPJ/CPF fictício.",
+    frontend_version: "0.3.2",
+    backend_version: "0.3.8",
+    released_at: "2026-05-29T03:45:00.000Z",
+    changes: [
+      "Gerada base sanitizada de fornecedores a partir das planilhas de Movimento Bancário 2021, 2022, 2023, 2024, 2025 e 2026, mantendo 2026 somente até 28/06/2026.",
+      "Criado arquivo scripts/imports/fornecedores-movimento-2021-2026.json com fornecedores prontos para seed conservador.",
+      "Criado script npm db:seed:fornecedores:movimento para inserir fornecedores sem CNPJ/CPF fictício, usando razão social, tipo PJ, categoria Não classificado e empresa TODOS.",
+      "Adicionada deduplicação por nome normalizado na importação de fornecedores por planilha quando o CNPJ/CPF estiver vazio.",
+      "Adicionado endpoint GET /financeiro/fornecedores/exportar para exportar fornecedores em CSV compatível com Excel ou JSON.",
+      "Mantidas as regras atuais de fornecedores, bancos, contas a pagar, movimento bancário e frontend sem alteração visual nesta versão.",
+      "Atualizada versão técnica do backend para 0.3.8."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Sem alteração visual nesta versão"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Seed de fornecedores"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_fornecedores",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Movimento Bancário 2021-2026",
+        "Importação de fornecedores por planilha",
+        "Exportação CSV compatível com Excel",
+        "Changelog versionado no banco"
+      ],
+    },
+  },
+
+  {
+    version: "0.3.9",
+    title: "Fornecedores — gestão de contratos",
+    description:
+      "Adiciona estrutura backend para contratos vinculados aos fornecedores, incluindo assinatura, renovação, índice de correção, valores, serviços, importação/exportação e anexo de PDF assinado.",
+    frontend_version: "0.3.9",
+    backend_version: "0.3.9",
+    released_at: "2026-05-29T04:10:00.000Z",
+    changes: [
+      "Criada tabela fin_fornecedor_contratos para armazenar contratos vinculados aos fornecedores.",
+      "Criados endpoints REST para listar, criar, atualizar, inativar, importar e exportar contratos por fornecedor.",
+      "Adicionado endpoint para recuperar PDF assinado anexado ao contrato.",
+      "Adicionado script npm db:migrate:fornecedor-contratos para criar/atualizar a estrutura no PostgreSQL.",
+      "Preservadas as rotas atuais de reservas, comissões, recebíveis, movimento bancário, fornecedores e contas a pagar.",
+      "Atualizada versão técnica do backend para 0.3.9."
+    ],
+    architecture: {
+      frontend: [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "TailwindCSS",
+        "Aba Contratos no módulo Fornecedores"
+      ],
+      backend: [
+        "Node.js",
+        "Express.js",
+        "JWT",
+        "REST API Financeiro",
+        "Gestão de contratos de fornecedores"
+      ],
+      database: [
+        "PostgreSQL",
+        "fin_fornecedor_contratos",
+        "hub_system_releases"
+      ],
+      integrations: [
+        "Importação/exportação compatível com Excel",
         "Anexo PDF em base64",
         "Changelog versionado no banco"
       ],
