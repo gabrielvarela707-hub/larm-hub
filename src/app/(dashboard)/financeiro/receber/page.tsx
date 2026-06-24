@@ -6,8 +6,11 @@ import {
   Calculator,
   Check,
   Download,
+  Files,
   Landmark,
   Loader2,
+  Mail,
+  MessageCircle,
   Plus,
   Printer,
   Search,
@@ -72,6 +75,12 @@ type ParcelaReceber = {
   nosso_numero?: string | null
   linha_digitavel?: string | null
   boleto_status?: string | null
+  boleto_enviado_em?: string | null
+  boleto_envio_canal?: string | null
+  boleto_envio_status?: string | null
+  boleto_envio_erro?: string | null
+  cliente_email?: string | null
+  cliente_telefone?: string | null
   empresa_cobranca?: EmpresaCobranca | null
 }
 
@@ -113,6 +122,10 @@ type Recalculation = {
   meses: Array<{ mes_correcao: string; referencia_indice: string; variacao_mensal: number | null; encontrado: boolean }>
   referencias_ausentes: string[]
   avisos: string[]
+  lote?: boolean
+  quantidade_parcelas?: number
+  parcelas_ids?: string[]
+  parcelas?: Recalculation[]
 }
 
 type RecalcForm = {
@@ -123,6 +136,7 @@ type RecalcForm = {
   outros_acrescimos: string
   seguro: string
   desconto: string
+  incluir_parcelas_anteriores: boolean
 }
 
 type BradescoConfig = {
@@ -284,6 +298,10 @@ export default function ContasReceberPage() {
   const [configSaving, setConfigSaving] = useState(false)
   const [configError, setConfigError] = useState('')
   const [remittanceLoading, setRemittanceLoading] = useState(false)
+  const [batchBoletoLoading, setBatchBoletoLoading] = useState(false)
+  const [emailLoading, setEmailLoading] = useState(false)
+  const [whatsappLoading, setWhatsappLoading] = useState(false)
+  const [returnApplyPayment, setReturnApplyPayment] = useState(true)
   const [returnLoading, setReturnLoading] = useState(false)
   const [boletoLoadingId, setBoletoLoadingId] = useState<string | null>(null)
   const [boletoError, setBoletoError] = useState('')
@@ -416,6 +434,7 @@ export default function ContasReceberPage() {
       outros_acrescimos: String(row.valor_outros_acrescimos || 0),
       seguro: String(row.valor_seguro || 0),
       desconto: String(row.valor_desconto || 0),
+      incluir_parcelas_anteriores: true,
     }
     setRecalcRow(row)
     setRecalcForm(form)
@@ -434,6 +453,7 @@ export default function ContasReceberPage() {
     outros_acrescimos: Number(form.outros_acrescimos || 0),
     seguro: Number(form.seguro || 0),
     desconto: Number(form.desconto || 0),
+    incluir_parcelas_anteriores: form.incluir_parcelas_anteriores,
   })
 
   const updateRecalcForm = (patch: Partial<RecalcForm>) => {
@@ -471,7 +491,9 @@ export default function ContasReceberPage() {
         valor_recalculado: Number(savedData?.valor_final || current.valor_recalculado || 0),
         data_recalculo: savedData?.data_calculo || current.data_recalculo,
       } : current)
-      setSuccess(`Parcela recalculada para ${formatDate(savedData?.data_calculo)}.`)
+      const savedIds = Array.isArray(savedData?.parcelas_ids) ? savedData.parcelas_ids : [recalcRow.id]
+      setSelected(current => new Set([...current, ...savedIds]))
+      setSuccess(`${savedIds.length} parcela(s) recalculada(s) para ${formatDate(savedData?.data_calculo)}.`)
       await load()
     } catch (requestError: unknown) {
       setRecalcSaved(false)
@@ -523,6 +545,87 @@ export default function ContasReceberPage() {
     }
   }
 
+  const openHtmlDocument = (html: string) => {
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  }
+
+  const generateSelectedBoletos = async (ids = Array.from(selected)) => {
+    if (!ids.length) return
+    setBatchBoletoLoading(true)
+    setError('')
+    setSuccess('')
+    setBoletoError('')
+    try {
+      const response = await apiClient.post('/financeiro/contas-receber/bradesco/boletos', { parcela_ids: ids })
+      const html = response.data?.data?.html
+      if (!html) throw new Error('O backend não retornou os boletos para impressão.')
+      openHtmlDocument(html)
+      const quantity = Number(response.data?.data?.quantidade || ids.length)
+      setSuccess(`${quantity} boleto(s) gerado(s) para impressão.`)
+      await load()
+    } catch (requestError: unknown) {
+      const message = requestErrorMessage(requestError, 'Não foi possível gerar os boletos selecionados.')
+      if (recalcRow) setBoletoError(message)
+      else setError(message)
+    } finally {
+      setBatchBoletoLoading(false)
+    }
+  }
+
+  const sendSelectedEmails = async () => {
+    if (!selected.size) return
+    setEmailLoading(true)
+    setError('')
+    setSuccess('')
+    try {
+      const response = await apiClient.post('/financeiro/contas-receber/bradesco/enviar-email', { parcela_ids: Array.from(selected) })
+      const result = response.data?.data || {}
+      setSuccess(`${result.enviados || 0} boleto(s) enviado(s) por e-mail.${result.erros ? ` ${result.erros} com erro.` : ''}`)
+      await load()
+    } catch (requestError: unknown) {
+      setError(requestErrorMessage(requestError, 'Não foi possível enviar os boletos por e-mail.'))
+      await load()
+    } finally {
+      setEmailLoading(false)
+    }
+  }
+
+  const prepareSelectedWhatsApp = async () => {
+    if (!selected.size) return
+    setWhatsappLoading(true)
+    setError('')
+    setSuccess('')
+    try {
+      const response = await apiClient.post('/financeiro/contas-receber/bradesco/whatsapp', { parcela_ids: Array.from(selected) })
+      const result = response.data?.data || {}
+      const links = Array.isArray(result.links) ? result.links : []
+      if (links.length === 1) {
+        window.open(links[0].url, '_blank', 'noopener,noreferrer')
+      } else if (links.length > 1) {
+        const content = links.map((item: { cliente?: string; telefone?: string; url: string }) => `${item.cliente || item.telefone || 'Cliente'}\n${item.url}`).join('\n\n')
+        downloadBlob(content, 'links-whatsapp-boletos.txt')
+        window.open(links[0].url, '_blank', 'noopener,noreferrer')
+      }
+      setSuccess(`${result.preparados || 0} boleto(s) preparado(s) para WhatsApp.${links.length > 1 ? ' Os demais links foram baixados em TXT.' : ''}`)
+      await load()
+    } catch (requestError: unknown) {
+      setError(requestErrorMessage(requestError, 'Não foi possível preparar o envio por WhatsApp.'))
+      await load()
+    } finally {
+      setWhatsappLoading(false)
+    }
+  }
+
   const generateRemittance = async () => {
     if (!selected.size) return
     setRemittanceLoading(true)
@@ -565,6 +668,7 @@ export default function ContasReceberPage() {
       const response = await apiClient.post('/financeiro/contas-receber/bradesco/retorno', {
         filename: file.name,
         content,
+        baixar_liquidacoes: returnApplyPayment,
       })
       if (response.data?.duplicated) {
         setSuccess('Este retorno já havia sido processado. Nenhuma baixa foi duplicada.')
@@ -639,9 +743,25 @@ export default function ContasReceberPage() {
             className="hidden"
             onChange={event => processReturnFile(event.target.files?.[0])}
           />
+          <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-medium text-slate-600" title="Desmarque para apenas conferir as liquidações sem baixar as parcelas">
+            <input type="checkbox" checked={returnApplyPayment} onChange={event => setReturnApplyPayment(event.target.checked)} />
+            Baixar liquidações
+          </label>
           <button type="button" onClick={() => returnInputRef.current?.click()} disabled={returnLoading} className={secondaryButtonClass}>
             {returnLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
             Importar Retorno
+          </button>
+          <button type="button" onClick={() => generateSelectedBoletos()} disabled={!selected.size || batchBoletoLoading} className={secondaryButtonClass}>
+            {batchBoletoLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Files className="w-3.5 h-3.5" />}
+            Gerar Boletos ({selected.size})
+          </button>
+          <button type="button" onClick={sendSelectedEmails} disabled={!selected.size || emailLoading} className={secondaryButtonClass}>
+            {emailLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}
+            Enviar E-mail ({selected.size})
+          </button>
+          <button type="button" onClick={prepareSelectedWhatsApp} disabled={!selected.size || whatsappLoading} className={secondaryButtonClass}>
+            {whatsappLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}
+            WhatsApp ({selected.size})
           </button>
           <button type="button" onClick={generateRemittance} disabled={!selected.size || remittanceLoading} className={secondaryButtonClass}>
             {remittanceLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Landmark className="w-3.5 h-3.5" />}
@@ -660,7 +780,7 @@ export default function ContasReceberPage() {
       </div>
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-xs text-blue-800">
-        Parcelas vencidas devem ser recalculadas para a data de recebimento antes da geração do boleto ou da remessa. Retornos Bradesco com liquidação confirmada dão baixa automaticamente.
+        Parcelas vencidas podem ser recalculadas em conjunto com todas as anteriores em aberto. O retorno Bradesco pode apenas conferir as liquidações ou também aplicar as baixas, conforme a opção acima.
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
@@ -770,7 +890,7 @@ export default function ContasReceberPage() {
                     <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-800 whitespace-nowrap"><p>{formatCurrency(row.valor_total)}</p>{row.valor_recalculado != null && <p className="mt-1 text-[9px] font-normal text-blue-600" title={`Recalculado para ${formatDate(row.data_recalculo)}`}>recalculado</p>}</td>
                     <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{formatDate(row.vencimento)}</td>
                     <td className="px-3 py-3"><p className={cn('whitespace-nowrap', row.status === 'paga' ? 'text-emerald-700 font-medium' : 'text-slate-400')}>{row.status === 'paga' ? formatDate(row.pago_em || row.conciliado_em) : '—'}</p><p className="mt-1 text-[10px] text-slate-400 truncate" title={origemBaixaLabel(row)}>{origemBaixaLabel(row)}</p>{row.movimento_banco && <p className="mt-0.5 text-[10px] text-slate-400 truncate">Banco: {row.movimento_banco}</p>}</td>
-                    <td className="px-3 py-3"><span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold', statusClass(row.status))}>{statusLabel(row.status)}</span>{row.boleto_status && <p className="mt-1 text-[9px] text-slate-400">Boleto: {row.boleto_status.replace(/_/g, ' ')}</p>}</td>
+                    <td className="px-3 py-3"><span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold', statusClass(row.status))}>{statusLabel(row.status)}</span>{row.boleto_status && <p className="mt-1 text-[9px] text-slate-400">Boleto: {row.boleto_status.replace(/_/g, ' ')}</p>}{row.boleto_enviado_em && <p className="mt-0.5 text-[9px] font-medium text-emerald-600">Enviado por {row.boleto_envio_canal || 'canal registrado'} em {formatDate(row.boleto_enviado_em)}</p>}{row.boleto_envio_status === 'erro' && <p className="mt-0.5 text-[9px] text-red-600" title={row.boleto_envio_erro || ''}>Falha no envio</p>}</td>
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-1.5">
                         {row.status === 'atrasada' && <button type="button" onClick={() => openRecalculate(row)} className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700 hover:bg-amber-100"><Calculator className="h-3 w-3" /> Recalcular</button>}
@@ -802,6 +922,7 @@ export default function ContasReceberPage() {
               <Field label="Seguro"><MoneyInput value={recalcForm.seguro} onChange={value => updateRecalcForm({ seguro: value })} /></Field>
               <Field label="Desconto / abatimento"><MoneyInput value={recalcForm.desconto} onChange={value => updateRecalcForm({ desconto: value })} /></Field>
               <div className="flex items-end"><button type="button" onClick={() => previewRecalculation()} disabled={recalcLoading} className="h-10 w-full rounded-lg border border-blue-200 bg-blue-50 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50">{recalcLoading ? 'Calculando...' : 'Atualizar cálculo'}</button></div>
+              <label className="md:col-span-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900"><input type="checkbox" className="mt-0.5" checked={recalcForm.incluir_parcelas_anteriores} onChange={event => updateRecalcForm({ incluir_parcelas_anteriores: event.target.checked })} /><span><strong>Incluir todas as parcelas anteriores em aberto deste contrato.</strong><br />Cada parcela continua com seu próprio boleto e nosso número, mas o cálculo e o total da dívida são apresentados e salvos em conjunto.</span></label>
             </div>
 
             {recalcLoading && !recalcData ? <div className="py-10 text-center text-slate-400"><Loader2 className="inline h-4 w-4 animate-spin mr-2" />Calculando...</div> : recalcData && (
@@ -809,23 +930,24 @@ export default function ContasReceberPage() {
                 {recalcData.avisos.length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><div className="flex gap-2"><AlertTriangle className="h-4 w-4 shrink-0" /><div>{recalcData.avisos.map(item => <p key={item}>{item}</p>)}</div></div></div>}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                   <CalcBox label="Valor base" value={recalcData.valor_base} />
-                  <CalcBox label={`Correção ${recalcData.indice?.codigo || ''}`} value={recalcData.valor_correcao} sub={formatPercent(recalcData.percentual_indice_aplicado)} />
+                  <CalcBox label={`Correção ${recalcData.indice?.codigo || ''}`} value={recalcData.valor_correcao} sub={recalcData.parcelas && recalcData.parcelas.length > 1 ? `${recalcData.parcelas.length} parcelas calculadas separadamente` : formatPercent(recalcData.percentual_indice_aplicado)} />
                   <CalcBox label="Multa" value={recalcData.valor_multa} sub={formatPercent(recalcData.percentual_multa)} />
-                  <CalcBox label={`Mora • ${recalcData.dias_atraso} dias`} value={recalcData.valor_juros_mora} sub={`${formatPercent(recalcData.percentual_mora_mes)} ao mês`} />
+                  <CalcBox label={recalcData.parcelas && recalcData.parcelas.length > 1 ? 'Mora acumulada' : `Mora • ${recalcData.dias_atraso} dias`} value={recalcData.valor_juros_mora} sub={`${formatPercent(recalcData.percentual_mora_mes)} ao mês por parcela`} />
                   <CalcBox label="Valor final" value={recalcData.valor_final} strong />
                 </div>
+                {recalcData.parcelas && recalcData.parcelas.length > 1 && <div className="rounded-xl border border-blue-200 overflow-hidden"><div className="bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-800">Dívida acumulada — {recalcData.parcelas.length} parcelas anteriores em aberto</div><div className="max-h-56 overflow-auto"><table className="w-full text-xs"><thead className="sticky top-0 bg-white"><tr><th className="px-3 py-2 text-left">Vencimento</th><th className="px-3 py-2 text-right">Base</th><th className="px-3 py-2 text-right">Correção</th><th className="px-3 py-2 text-right">Multa</th><th className="px-3 py-2 text-right">Juros</th><th className="px-3 py-2 text-right">Total</th></tr></thead><tbody>{recalcData.parcelas.map(item => <tr key={item.parcela_id} className="border-t border-slate-100"><td className="px-3 py-2">{formatDate(item.vencimento)}</td><td className="px-3 py-2 text-right">{formatCurrency(item.valor_base)}</td><td className="px-3 py-2 text-right">{formatCurrency(item.valor_correcao)}</td><td className="px-3 py-2 text-right">{formatCurrency(item.valor_multa)}</td><td className="px-3 py-2 text-right">{formatCurrency(item.valor_juros_mora)}</td><td className="px-3 py-2 text-right font-semibold">{formatCurrency(item.valor_final)}</td></tr>)}</tbody></table></div></div>}
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
-                  <div className="bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700">Memória mensal do índice {recalcData.indice ? `— ${recalcData.indice.nome}${recalcData.indice.defasagem_meses ? ` (${recalcData.indice.defasagem_meses} meses de defasagem)` : ''}` : ''}</div>
+                  <div className="bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700">{recalcData.parcelas && recalcData.parcelas.length > 1 ? 'Memória mensal da parcela selecionada' : 'Memória mensal do índice'} {recalcData.indice ? `— ${recalcData.indice.nome}${recalcData.indice.defasagem_meses ? ` (${recalcData.indice.defasagem_meses} meses de defasagem)` : ''}` : ''}</div>
                   <div className="max-h-48 overflow-auto"><table className="w-full text-xs"><thead className="sticky top-0 bg-white"><tr><th className="px-3 py-2 text-left">Mês corrigido</th><th className="px-3 py-2 text-left">Referência usada</th><th className="px-3 py-2 text-right">Variação</th><th className="px-3 py-2 text-center">Situação</th></tr></thead><tbody>{recalcData.meses.length === 0 ? <tr><td colSpan={4} className="px-3 py-5 text-center text-slate-400">Nenhuma virada de mês entre vencimento e data do cálculo.</td></tr> : recalcData.meses.map(item => <tr key={`${item.mes_correcao}-${item.referencia_indice}`} className="border-t border-slate-100"><td className="px-3 py-2">{formatDate(item.mes_correcao)}</td><td className="px-3 py-2">{formatDate(item.referencia_indice)}</td><td className="px-3 py-2 text-right">{item.variacao_mensal == null ? '—' : formatPercent(item.variacao_mensal)}</td><td className="px-3 py-2 text-center">{item.encontrado ? <span className="text-emerald-600">Encontrado</span> : <span className="text-red-600">Ausente</span>}</td></tr>)}</tbody></table></div>
                 </div>
               </>
             )}
-            {recalcSaved && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">Recálculo salvo. O boleto já pode ser gerado com o valor atualizado.</div>}
+            {recalcSaved && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-700">Recálculo salvo. As parcelas foram selecionadas e já podem ser geradas em conjunto.</div>}
             {boletoError && <Notice type="error">{boletoError}</Notice>}
             <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-4">
               <button type="button" onClick={() => setRecalcRow(null)} className={cancelButtonClass}>Fechar</button>
               <button type="button" disabled={!recalcData || recalcSaving || recalcLoading || recalcSaved} onClick={saveRecalculation} className={primaryButtonClass}>{recalcSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} {recalcSaved ? 'Recálculo salvo' : 'Salvar recálculo'}</button>
-              <button type="button" disabled={!recalcSaved || recalcSaving || recalcLoading || boletoLoadingId === recalcRow.id} onClick={() => generateBoleto(recalcRow, true)} title={recalcSaved ? 'Gerar boleto com o valor recalculado' : 'Salve o recálculo antes de gerar o boleto'} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">{boletoLoadingId === recalcRow.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} {boletoLoadingId === recalcRow.id ? 'Gerando boleto...' : 'Gerar boleto'}</button>
+              <button type="button" disabled={!recalcSaved || recalcSaving || recalcLoading || batchBoletoLoading} onClick={() => generateSelectedBoletos(recalcData?.parcelas_ids?.length ? recalcData.parcelas_ids : [recalcRow.id])} title={recalcSaved ? 'Gerar todos os boletos recalculados' : 'Salve o recálculo antes de gerar os boletos'} className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">{batchBoletoLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Files className="h-4 w-4" />} {batchBoletoLoading ? 'Gerando boletos...' : `Gerar ${recalcData?.quantidade_parcelas || 1} boleto(s)`}</button>
             </div>
           </div>
         </Modal>
