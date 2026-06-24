@@ -559,6 +559,46 @@ export default function ContasReceberPage() {
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
+  const combineBoletoDocuments = (documents: string[]) => {
+    if (documents.length === 1) return documents[0]
+
+    const parser = new DOMParser()
+    const styles = new Set<string>()
+    const pages = documents.map((html, index) => {
+      const documentHtml = parser.parseFromString(html, 'text/html')
+      documentHtml.querySelectorAll('style').forEach(style => {
+        if (style.textContent) styles.add(style.textContent)
+      })
+      documentHtml.querySelectorAll('.actions').forEach(element => element.remove())
+      return `${index > 0 ? '<div class="larmhub-page-break"></div>' : ''}<section class="larmhub-boleto-page">${documentHtml.body.innerHTML}</section>`
+    })
+
+    return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Boletos Bradesco</title><style>${Array.from(styles).join('\n')}
+.larmhub-page-break{break-after:page;page-break-after:always}.larmhub-boleto-page{position:relative}@media print{.larmhub-page-break{display:block}}</style></head><body><div class="actions"><button onclick="window.print()">Imprimir / Salvar PDF</button><button onclick="window.close()">Fechar</button></div>${pages.join('')}</body></html>`
+  }
+
+  const generateBoletosUsingWorkingRoute = async (ids: string[]) => {
+    const documents: string[] = []
+    let homologation = false
+
+    for (const id of ids) {
+      const currentRow = rows.find(row => row.id === id)
+      const recalculationDate = recalcData?.parcelas_ids?.includes(id)
+        ? recalcData.data_calculo
+        : currentRow?.data_recalculo || undefined
+      const response = await apiClient.post(
+        `/financeiro/contas-receber/${id}/bradesco/boleto`,
+        { data_recalculo: recalculationDate },
+      )
+      const html = response.data?.data?.html
+      if (!html) throw new Error(`O backend não retornou o boleto da parcela ${currentRow?.numero || id}.`)
+      documents.push(html)
+      if (!response.data?.data?.homologado) homologation = true
+    }
+
+    return { html: combineBoletoDocuments(documents), quantidade: documents.length, homologation }
+  }
+
   const generateSelectedBoletos = async (ids = Array.from(selected)) => {
     if (!ids.length) return
     setBatchBoletoLoading(true)
@@ -566,12 +606,35 @@ export default function ContasReceberPage() {
     setSuccess('')
     setBoletoError('')
     try {
-      const response = await apiClient.post('/financeiro/contas-receber/bradesco/boletos', { parcela_ids: ids })
-      const html = response.data?.data?.html
-      if (!html) throw new Error('O backend não retornou os boletos para impressão.')
-      openHtmlDocument(html)
-      const quantity = Number(response.data?.data?.quantidade || ids.length)
-      setSuccess(`${quantity} boleto(s) gerado(s) para impressão.`)
+      // Um único boleto volta a usar exatamente a rota que já funcionava antes.
+      // Para vários títulos, tenta a rota em lote e mantém fallback compatível
+      // com backends que ainda possuem somente a rota individual.
+      let result: { html: string; quantidade: number; homologation: boolean }
+      if (ids.length === 1) {
+        result = await generateBoletosUsingWorkingRoute(ids)
+      } else {
+        try {
+          const response = await apiClient.post('/financeiro/contas-receber/bradesco/boletos', { parcela_ids: ids })
+          const html = response.data?.data?.html
+          if (!html) throw new Error('O backend não retornou os boletos para impressão.')
+          result = {
+            html,
+            quantidade: Number(response.data?.data?.quantidade || ids.length),
+            homologation: Boolean(response.data?.data?.homologacao),
+          }
+        } catch (batchError: unknown) {
+          const batchResponse = batchError as { response?: { status?: number; data?: { message?: string } } }
+          const batchMessage = String(batchResponse.response?.data?.message || '')
+          const routeUnavailable = batchResponse.response?.status === 404 || /rota não encontrada/i.test(batchMessage)
+          if (!routeUnavailable) throw batchError
+          result = await generateBoletosUsingWorkingRoute(ids)
+        }
+      }
+
+      openHtmlDocument(result.html)
+      setSuccess(result.homologation
+        ? `${result.quantidade} boleto(s) de homologação gerado(s) para impressão.`
+        : `${result.quantidade} boleto(s) gerado(s) para impressão.`)
       await load()
     } catch (requestError: unknown) {
       const message = requestErrorMessage(requestError, 'Não foi possível gerar os boletos selecionados.')
