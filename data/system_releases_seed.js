@@ -6,6 +6,185 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.75",
+    "title": "Clientes — histórico comercial e Orçamento com Saldo Final recalculado",
+    "description": "Adiciona histórico de compras, contratos e recebíveis ao cadastro de clientes e recompõe os saldos mensais do Orçamento pela fórmula Saldo Inicial + Entradas - Saídas.",
+    "frontend_version": "0.3.75",
+    "backend_version": "0.3.75",
+    "released_at": "2026-06-25T21:00:00.000Z",
+    "changes": [
+      "O cadastro de clientes passa a ter uma aba Histórico com contratos, obras, unidades, parcelas pagas, em aberto e vencidas.",
+      "Foi adicionado um atalho de histórico diretamente nas ações da listagem de clientes.",
+      "Clientes sem contratos vinculados passam a ser identificados claramente, sem criar informações fictícias.",
+      "O Saldo Final mensal do Orçamento passa a ser recomposto em tempo de consulta pela fórmula Saldo Inicial + Entradas - Saídas.",
+      "Os saldos Previsto e Realizado deixam de depender de agregados antigos para as linhas Saldo Inicial, Saldo Final e Saldos Bancários em C/C.",
+      "O lançamento 8.12 Brasil Agro II e os demais movimentos do mês passam a participar explicitamente do saldo final correspondente.",
+      "Nenhum movimento, contrato, parcela ou valor existente foi alterado no banco; o ajuste é de consulta e apresentação."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Cadastro de Clientes",
+        "Histórico comercial",
+        "Orçamento Financeiro"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "Consulta agregada de contratos e parcelas",
+        "Recomposição mensal de saldos"
+      ],
+      "database": [
+        "PostgreSQL",
+        "cad_clientes",
+        "cad_pessoas",
+        "com_contratos",
+        "com_parcelas",
+        "fin_movimento",
+        "fin_orcamento_movimento",
+        "fin_bancos_contas"
+      ],
+      "deploy": [
+        "Atualizar frontend e backend",
+        "Executar migrate_system_releases.js",
+        "Sem migration estrutural e sem seed operacional"
+      ]
+    }
+  },
+  {
+    "version": "0.3.74",
+    "title": "Cadastros — restauração das listagens após ordenação",
+    "description": "Corrige a falha de CORS introduzida nas listagens de Clientes e Fornecedores, mantendo as setas de ordenação funcionais sem enviar cabeçalhos não permitidos pela API.",
+    "frontend_version": "0.3.74",
+    "backend_version": "0.3.73",
+    "released_at": "2026-06-25T20:00:00.000Z",
+    "changes": [
+      "Removido o cabeçalho Cache-Control enviado pelo navegador, que acionava uma preflight CORS incompatível e impedia o carregamento dos cadastros.",
+      "Removidos os parâmetros duplicados sort/direction; as telas passam a enviar somente ordenar/direcao, conforme o contrato da API.",
+      "As setas de Código, Cliente/Razão Social e Categoria continuam alternando entre ordem crescente e decrescente.",
+      "A listagem volta a carregar normalmente antes e depois do clique nas setas.",
+      "Nenhuma rota, consulta SQL, cadastro, boleto ou regra financeira do backend foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Axios",
+        "Cadastro de Clientes",
+        "Cadastro de Fornecedores"
+      ],
+      "backend": [
+        "Sem alteração operacional",
+        "API 0.3.73 mantida"
+      ],
+      "database": [
+        "Sem alteração"
+      ],
+      "integrations": [
+        "CORS da API preservado"
+      ]
+    }
+  },
+  {
+    "version": "0.3.73",
+    "title": "Cadastros — clique nas setas aplica a ordenação",
+    "description": "Corrige a ação dos cabeçalhos Código, Cliente/Razão Social e Categoria para recarregar as listas na ordem selecionada em Clientes e Fornecedores.",
+    "frontend_version": "0.3.73",
+    "backend_version": "0.3.73",
+    "released_at": "2026-06-25T19:30:00.000Z",
+    "changes": [
+      "O clique nas setas dos cabeçalhos passa a enviar explicitamente campo e direção da ordenação para a API.",
+      "A API de clientes e fornecedores reconhece ordenar/direcao e aliases de compatibilidade, aplicando ORDER BY no banco sobre todos os registros.",
+      "As respostas de listagem deixam de ser reutilizadas por cache durante a troca de ordenação.",
+      "Foi adicionada uma ordenação defensiva no frontend para que os registros da página visível reflitam imediatamente a seta selecionada.",
+      "O segundo clique no mesmo cabeçalho alterna corretamente entre crescente e decrescente.",
+      "Nenhuma regra de cadastro, boleto, recebível, remessa, retorno ou cálculo financeiro foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Cadastro de Clientes",
+        "Cadastro de Fornecedores",
+        "Ordenação por cabeçalho"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "PostgreSQL",
+        "ORDER BY parametrizado por lista segura"
+      ],
+      "database": [
+        "Sem alteração estrutural"
+      ],
+      "deploy": [
+        "Atualizar frontend e backend",
+        "Reiniciar a API",
+        "Sem migration"
+      ]
+    },
+    "is_current": true
+  },
+  {
+    "version": "0.3.72",
+    "title": "Cadastros — setas visíveis nos cabeçalhos de ordenação",
+    "description": "Garante a exibição das setas de ordenação diretamente nos títulos Código, Cliente/Razão Social e Categoria nas tabelas de clientes e fornecedores.",
+    "frontend_version": "0.3.72",
+    "backend_version": "0.3.70",
+    "released_at": "2026-06-25T19:00:00.000Z",
+    "changes": [
+      "Os cabeçalhos Código, Cliente e Categoria do cadastro de clientes passam a exibir indicadores visíveis ↕, ↑ e ↓.",
+      "Os cabeçalhos Código, Razão Social/Fantasia e Categoria do cadastro de fornecedores recebem o mesmo comportamento.",
+      "O clique no título alterna entre ordenação crescente e decrescente e continua ordenando todos os registros pela API.",
+      "Os indicadores usam caracteres visíveis, sem depender da renderização de ícones externos.",
+      "O seletor de ordenação existente foi preservado como alternativa.",
+      "Nenhuma regra de cadastro, boleto, recebível, remessa, retorno ou cálculo financeiro foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Cadastro de Clientes",
+        "Cadastro de Fornecedores",
+        "Cabeçalhos acessíveis com aria-sort"
+      ],
+      "backend": [
+        "Backend operacional preservado"
+      ],
+      "database": [
+        "Sem alteração estrutural"
+      ],
+      "integrations": []
+    }
+  },
+  {
+    "version": "0.3.71",
+    "title": "Frontend — restauração do pacote Next.js para deploy",
+    "description": "Restaura os metadados corretos do projeto web após o package.json do backend ter sido aplicado no repositório do frontend, permitindo que o Vercel identifique novamente o Next.js.",
+    "frontend_version": "0.3.71",
+    "backend_version": "0.3.70",
+    "released_at": "2026-06-25T18:30:00.000Z",
+    "changes": [
+      "Restaurado o package.json do frontend com o nome larmhub-web e a dependência Next.js.",
+      "Restaurado o package-lock.json correspondente ao frontend para impedir a remoção das dependências web durante o deploy.",
+      "Preservadas as setas de ordenação adicionadas na versão 0.3.70.",
+      "Adicionada validação operacional para conferir o nome do pacote e a versão do Next.js antes do deploy.",
+      "Nenhuma tela, regra financeira, boleto, recebível, remessa, retorno ou API foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Vercel"
+      ],
+      "backend": [
+        "Backend 0.3.70 preservado"
+      ],
+      "database": [
+        "Sem alteração estrutural"
+      ],
+      "integrations": []
+    }
+  },
+  {
     "version": "0.3.70",
     "title": "Cadastros — ordenação direta pelos títulos das colunas",
     "description": "Adiciona setas clicáveis nos títulos Código, Cliente/Nome e Categoria nas tabelas de clientes e fornecedores, mantendo a ordenação completa feita pela API.",

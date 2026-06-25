@@ -6,6 +6,52 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.75",
+    "title": "Clientes — histórico comercial e Orçamento com Saldo Final recalculado",
+    "description": "Adiciona histórico de compras, contratos e recebíveis ao cadastro de clientes e recompõe os saldos mensais do Orçamento pela fórmula Saldo Inicial + Entradas - Saídas.",
+    "frontend_version": "0.3.75",
+    "backend_version": "0.3.75",
+    "released_at": "2026-06-25T21:00:00.000Z",
+    "changes": [
+      "O cadastro de clientes passa a ter uma aba Histórico com contratos, obras, unidades, parcelas pagas, em aberto e vencidas.",
+      "Foi adicionado um atalho de histórico diretamente nas ações da listagem de clientes.",
+      "Clientes sem contratos vinculados passam a ser identificados claramente, sem criar informações fictícias.",
+      "O Saldo Final mensal do Orçamento passa a ser recomposto em tempo de consulta pela fórmula Saldo Inicial + Entradas - Saídas.",
+      "Os saldos Previsto e Realizado deixam de depender de agregados antigos para as linhas Saldo Inicial, Saldo Final e Saldos Bancários em C/C.",
+      "O lançamento 8.12 Brasil Agro II e os demais movimentos do mês passam a participar explicitamente do saldo final correspondente.",
+      "Nenhum movimento, contrato, parcela ou valor existente foi alterado no banco; o ajuste é de consulta e apresentação."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Cadastro de Clientes",
+        "Histórico comercial",
+        "Orçamento Financeiro"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "Consulta agregada de contratos e parcelas",
+        "Recomposição mensal de saldos"
+      ],
+      "database": [
+        "PostgreSQL",
+        "cad_clientes",
+        "cad_pessoas",
+        "com_contratos",
+        "com_parcelas",
+        "fin_movimento",
+        "fin_orcamento_movimento",
+        "fin_bancos_contas"
+      ],
+      "deploy": [
+        "Atualizar frontend e backend",
+        "Executar migrate_system_releases.js",
+        "Sem migration estrutural e sem seed operacional"
+      ]
+    }
+  },
+  {
     "version": "0.3.74",
     "title": "Cadastros — restauração das listagens após ordenação",
     "description": "Corrige a falha de CORS introduzida nas listagens de Clientes e Fornecedores, mantendo as setas de ordenação funcionais sem enviar cabeçalhos não permitidos pela API.",

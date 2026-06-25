@@ -226,6 +226,91 @@ async function getOrcamentoRealizadoFromMovimento(linhasBase, empresa, ano, mes 
   return realizadosPorRowIdx
 }
 
+async function getOrcamentoSaldosMensais(tabelaMovimento, empresa, ano, mes = null) {
+  const saldoInicial = emptyMonthMap()
+  const saldoFinal = emptyMonthMap()
+  const empresaFiltro = normalizeEmpresaFilter(empresa)
+  const ultimoMes = mes ? Math.min(12, Math.max(1, Number(mes))) : 12
+
+  let abertura = 0
+  if (await tableExists('fin_bancos_contas')) {
+    const paramsAbertura = [ano]
+    const conditionsAbertura = [
+      `COALESCE(ativo, TRUE) = TRUE`,
+      `(data_saldo_inicial IS NULL OR EXTRACT(YEAR FROM data_saldo_inicial)::int = $1)`,
+    ]
+    if (empresaFiltro !== 'CONSOLIDADO') {
+      paramsAbertura.push(empresaFiltro)
+      conditionsAbertura.push(`UPPER(TRIM(COALESCE(empresa::text, ''))) = $${paramsAbertura.length}`)
+    }
+
+    const { rows: aberturaRows } = await query(
+      `SELECT COALESCE(SUM(COALESCE(saldo_inicial, 0)), 0)::float AS saldo
+         FROM fin_bancos_contas
+        WHERE ${conditionsAbertura.join(' AND ')}`,
+      paramsAbertura,
+    )
+    abertura = Number(aberturaRows[0]?.saldo || 0)
+  }
+
+  if (!(await tableExists(tabelaMovimento))) {
+    let saldoCorrente = abertura
+    for (let numeroMes = 1; numeroMes <= ultimoMes; numeroMes += 1) {
+      saldoInicial[numeroMes] = saldoCorrente
+      saldoFinal[numeroMes] = saldoCorrente
+    }
+    return { saldoInicial, saldoFinal }
+  }
+
+  const params = [ano, ultimoMes]
+  const conditions = [
+    `COALESCE(fm.ano, EXTRACT(YEAR FROM fm.data)::int) = $1`,
+    `COALESCE(fm.mes, EXTRACT(MONTH FROM fm.data)::int) BETWEEN 1 AND $2`,
+  ]
+
+  if (tabelaMovimento === 'fin_movimento') {
+    conditions.push(await getMovimentoRealizadoGuardCondition('fm'))
+  }
+
+  if (empresaFiltro !== 'CONSOLIDADO') {
+    params.push(empresaFiltro)
+    conditions.push(`UPPER(TRIM(COALESCE(fm.empresa::text, ''))) = $${params.length}`)
+  }
+
+  const { rows } = await query(
+    `SELECT COALESCE(fm.mes, EXTRACT(MONTH FROM fm.data)::int)::int AS mes,
+            COALESCE(SUM(COALESCE(fm.entradas, 0) - COALESCE(fm.saidas, 0)), 0)::float AS fluxo
+       FROM ${tabelaMovimento} fm
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY 1
+      ORDER BY 1`,
+    params,
+  )
+
+  const fluxoPorMes = new Map(rows.map(row => [Number(row.mes), Number(row.fluxo || 0)]))
+  let saldoCorrente = abertura
+  for (let numeroMes = 1; numeroMes <= ultimoMes; numeroMes += 1) {
+    saldoInicial[numeroMes] = saldoCorrente
+    saldoCorrente += Number(fluxoPorMes.get(numeroMes) || 0)
+    saldoFinal[numeroMes] = saldoCorrente
+  }
+
+  return { saldoInicial, saldoFinal }
+}
+
+function aplicarSaldosOrcamento({ linhasBase, destino, chave, saldos }) {
+  const porDescricao = new Map(
+    linhasBase.map(linha => [normalizeText(linha.descricao), linha]),
+  )
+  const saldoInicialLinha = porDescricao.get(normalizeText('(A) Saldo Inicial'))
+  const saldoFinalLinha = porDescricao.get(normalizeText('SALDO FINAL'))
+  const saldosBancariosLinha = porDescricao.get(normalizeText('Saldos Bancários em C/C'))
+
+  if (saldoInicialLinha) destino[saldoInicialLinha[chave]] = { ...saldos.saldoInicial }
+  if (saldoFinalLinha) destino[saldoFinalLinha[chave]] = { ...saldos.saldoFinal }
+  if (saldosBancariosLinha) destino[saldosBancariosLinha[chave]] = { ...saldos.saldoFinal }
+}
+
 async function getContasPagarFuturoAberto(empresa, ano, mes = null) {
   const empresaFiltro = normalizeEmpresaFilter(empresa)
   const params = [ano]
@@ -498,15 +583,16 @@ function sumMaps(...maps) {
 // Saldos de aplicações são posições, e não movimentos. Quando existe um
 // lançamento em determinado dia, mantém esse valor nos dias seguintes do
 // mesmo mês até que outro lançamento substitua a posição.
-function carryForwardDailyBalance(values, ano, mes) {
+function carryForwardDailyBalance(values, ano, mes, explicitDays = new Set()) {
   const result = emptyDayMap(ano, mes)
   let currentValue = 0
   let hasPosition = false
 
   for (let dia = 1; dia <= daysInMonth(ano, mes); dia += 1) {
     const dayValue = Number(values?.[dia] ?? values?.[String(dia)] ?? 0)
-    if (Number.isFinite(dayValue) && dayValue !== 0) {
-      currentValue = dayValue
+    const explicitPosition = explicitDays.has(dia) || explicitDays.has(String(dia))
+    if (explicitPosition || (Number.isFinite(dayValue) && dayValue !== 0)) {
+      currentValue = Number.isFinite(dayValue) ? dayValue : 0
       hasPosition = true
     }
     result[dia] = hasPosition ? currentValue : 0
@@ -610,6 +696,7 @@ async function buildCashflowDiario(empresa, ano, mes) {
       total: isPositionBalance ? lastDailyBalance(valores, ano, mes) : mapTotal(valores),
       composicao,
       composicao_total: { ...composicaoTotal, total: composicaoTotal.realizado + composicaoTotal.contas_pagar_aberto },
+      editavel_saldo: dailyBreakdown.editablePositionLineIds?.has(Number(linha.id)) || false,
     }
   })
 
@@ -1043,6 +1130,8 @@ async function getCashflowDailyOpeningBalance(empresa, ano, mes) {
 async function getCashflowDailyBreakdown({ linhasImportadas, empresa, ano, mes }) {
   const valueMap = {}
   const positionLineIds = new Set()
+  const editablePositionLineIds = new Set()
+  const explicitPositionDaysByLine = new Map()
   const childrenByParent = new Map()
   const linesByCode = new Map()
   const linesByDescription = new Map()
@@ -1302,6 +1391,30 @@ async function getCashflowDailyBreakdown({ linhasImportadas, empresa, ano, mes }
     if (linha) positionLineIds.add(Number(linha.id))
   }
 
+  // Valores manuais informados na visão diária substituem a posição do dia
+  // e passam a valer até o próximo lançamento dentro do mesmo mês.
+  if (await tableExists('fin_cashflow_valores_diarios')) {
+    const { rows: valoresDiarios } = await query(
+      `SELECT linha_id,
+              EXTRACT(DAY FROM data)::int AS dia,
+              COALESCE(valor, 0)::float AS valor
+         FROM fin_cashflow_valores_diarios
+        WHERE UPPER(TRIM(empresa)) = $1
+          AND EXTRACT(YEAR FROM data)::int = $2
+          AND EXTRACT(MONTH FROM data)::int = $3`,
+      [empresaFiltro, ano, mes],
+    )
+
+    for (const row of valoresDiarios) {
+      const linhaId = Number(row.linha_id)
+      const dia = Number(row.dia)
+      if (!valueMap[linhaId] || !Number.isInteger(dia) || dia < 1 || dia > daysInMonth(ano, mes)) continue
+      valueMap[linhaId][dia] = Number(row.valor || 0)
+      if (!explicitPositionDaysByLine.has(linhaId)) explicitPositionDaysByLine.set(linhaId, new Set())
+      explicitPositionDaysByLine.get(linhaId).add(dia)
+    }
+  }
+
   // Linhas de aplicações representam o saldo final informado naquele dia.
   // O valor permanece válido nos dias seguintes do mesmo mês e é substituído
   // somente quando houver um novo lançamento na mesma aplicação.
@@ -1309,8 +1422,14 @@ async function getCashflowDailyBreakdown({ linhasImportadas, empresa, ano, mes }
   for (const code of applicationBalanceCodes) {
     const linha = lineForCode(code)
     if (!linha) continue
-    valueMap[linha.id] = carryForwardDailyBalance(valueMap[linha.id], ano, mes)
+    valueMap[linha.id] = carryForwardDailyBalance(
+      valueMap[linha.id],
+      ano,
+      mes,
+      explicitPositionDaysByLine.get(Number(linha.id)) || new Set(),
+    )
     markPositionLineByCode(code)
+    editablePositionLineIds.add(Number(linha.id))
   }
 
   // Replica as mesmas fórmulas estruturais usadas pela planilha mensal, agora
@@ -1375,7 +1494,7 @@ async function getCashflowDailyBreakdown({ linhasImportadas, empresa, ano, mes }
   setDescriptionMap('SALDO FINAL', saldoFinalDiario)
   setDescriptionMap('Saldos Bancários em C/C', sumMaps(saldoFinalDiario, mapWithSign(aplicacoes, -1)))
 
-  return { childrenByParent, valueMap, compositionMap, positionLineIds }
+  return { childrenByParent, valueMap, compositionMap, positionLineIds, editablePositionLineIds }
 }
 
 function inferTipoMovimento(descricao, valor = 0) {
@@ -1447,6 +1566,18 @@ async function upsertCashflowValue(client, { linhaId, empresa, ano, mes, valor }
      DO UPDATE SET valor = EXCLUDED.valor`,
     [linhaId, empresa, ano, mes, valor],
   )
+}
+
+async function upsertCashflowDailyValue(client, { linhaId, empresa, ano, mes, dia, valor }) {
+  const data = `${String(ano).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`
+  await client.query(
+    `INSERT INTO fin_cashflow_valores_diarios (linha_id, empresa, data, valor, atualizado_em)
+     VALUES ($1, $2, $3::date, $4, NOW())
+     ON CONFLICT (linha_id, empresa, data)
+     DO UPDATE SET valor = EXCLUDED.valor, atualizado_em = NOW()`,
+    [linhaId, empresa, data, valor],
+  )
+  return data
 }
 
 async function recalculateCashflowBalanceSection(client, structure, empresa, ano, mes) {
@@ -2089,6 +2220,23 @@ router.get('/orcamento', async (req, res) => {
       }
     }
 
+    // Os saldos são posições financeiras e precisam ser recompostos pela
+    // fórmula do período. Isso evita depender de um agregado antigo e garante
+    // que qualquer entrada/saída, inclusive investimentos como 8.12 Brasil
+    // Agro II, participe do Saldo Final do mês.
+    const saldosPrevistos = await getOrcamentoSaldosMensais(
+      'fin_orcamento_movimento',
+      empresa,
+      ano,
+      mes,
+    )
+    aplicarSaldosOrcamento({
+      linhasBase,
+      destino: previstosPorLinha,
+      chave: 'id',
+      saldos: saldosPrevistos,
+    })
+
     const realizadosMovimento = await getOrcamentoRealizadoFromMovimento(linhasBase, empresa, ano, mes)
     for (const [rowIdx, valores] of Object.entries(realizadosMovimento)) {
       for (const [mesKey, valor] of Object.entries(valores || {})) {
@@ -2097,6 +2245,20 @@ router.get('/orcamento', async (req, res) => {
         mesesSet.add(Number(mesKey))
       }
     }
+
+
+    const saldosRealizados = await getOrcamentoSaldosMensais(
+      'fin_movimento',
+      empresa,
+      ano,
+      mes,
+    )
+    aplicarSaldosOrcamento({
+      linhasBase,
+      destino: realizadosPorRowIdx,
+      chave: 'row_idx',
+      saldos: saldosRealizados,
+    })
 
     const MESES_NOME = ['', 'Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
     const colunas = mes
@@ -2387,6 +2549,8 @@ router.patch('/cashflow/valor', async (req, res) => {
   const empresa = normalizeEmpresaFilter(req.body?.empresa)
   const ano = Number(req.body?.ano)
   const mes = Number(req.body?.mes)
+  const dia = req.body?.dia === undefined || req.body?.dia === null ? null : Number(req.body.dia)
+  const visao = String(req.body?.visao || (dia ? 'diaria' : 'mensal')).toLowerCase()
   const valor = Number(req.body?.valor)
 
   if (!Number.isInteger(linhaId) || linhaId <= 0) {
@@ -2397,6 +2561,9 @@ router.patch('/cashflow/valor', async (req, res) => {
   }
   if (!Number.isInteger(mes) || mes < 1 || mes > 12) {
     return res.status(400).json({ ok: false, message: 'Mês inválido.' })
+  }
+  if (visao === 'diaria' && (!Number.isInteger(dia) || dia < 1 || dia > daysInMonth(ano, mes))) {
+    return res.status(400).json({ ok: false, message: 'Dia inválido para o mês selecionado.' })
   }
   if (!Number.isFinite(valor) || Math.abs(valor) > 99999999999999) {
     return res.status(400).json({ ok: false, message: 'Valor inválido.' })
@@ -2418,6 +2585,56 @@ router.patch('/cashflow/valor', async (req, res) => {
     }
 
     const linha = linhas.find(item => Number(item.id) === linhaId)
+
+    if (visao === 'diaria') {
+      if (!(await tableExists('fin_cashflow_valores_diarios'))) {
+        return res.status(409).json({
+          ok: false,
+          message: 'A tabela de valores diários ainda não foi criada. Execute a migration da versão 0.3.56.',
+        })
+      }
+
+      const dailyEditableCodes = new Set(['CDB1', 'CDB2', 'LCA2', 'LCI Pós', 'FI', 'LCA', 'LCA V', 'CDBG', 'LCI'])
+      if (!linha || !dailyEditableCodes.has(normalizeCashflowCodigo(linha.codigo))) {
+        return res.status(403).json({
+          ok: false,
+          message: 'Na visão diária, somente os saldos finais das aplicações podem ser editados diretamente.',
+        })
+      }
+
+      const result = await transaction(async client => {
+        const data = `${String(ano).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`
+        const { rows: anteriorRows } = await client.query(
+          `SELECT valor
+             FROM fin_cashflow_valores_diarios
+            WHERE linha_id = $1 AND UPPER(TRIM(empresa)) = $2 AND data = $3::date
+            LIMIT 1`,
+          [linhaId, empresa, data],
+        )
+        const valorAnterior = anteriorRows.length ? Number(anteriorRows[0].valor || 0) : null
+        await upsertCashflowDailyValue(client, { linhaId, empresa, ano, mes, dia, valor })
+        return { valorAnterior, data }
+      })
+
+      return res.json({
+        ok: true,
+        data: {
+          linha_id: linhaId,
+          codigo: linha.codigo || null,
+          descricao: linha.descricao || null,
+          empresa,
+          ano,
+          mes,
+          dia,
+          data: result.data,
+          visao: 'diaria',
+          valor,
+          valor_anterior: result.valorAnterior,
+          replicado_ate: `${String(ano).padStart(4, '0')}-${String(mes).padStart(2, '0')}-${String(daysInMonth(ano, mes)).padStart(2, '0')}`,
+        },
+      })
+    }
+
     const result = await transaction(async client => {
       const { rows: anteriorRows } = await client.query(
         `SELECT valor
