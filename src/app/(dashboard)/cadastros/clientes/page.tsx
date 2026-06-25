@@ -1,7 +1,7 @@
 'use client'
 
-import { FormEvent, useCallback, useEffect, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, Loader2, Pencil, Plus, Search, Trash2, UserRound, X } from 'lucide-react'
+import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { Check, ChevronLeft, ChevronRight, Eye, Loader2, Pencil, Plus, Search, Trash2, UserRound, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { apiClient } from '@/lib/auth-store'
 import { usePermission } from '@/hooks/usePermission'
@@ -112,6 +112,11 @@ function Field({ label, name, value, onChange, type = 'text', placeholder, class
   )
 }
 
+function formatCep(value: string) {
+  const digits = String(value || '').replace(/\D/g, '').slice(0, 8)
+  return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits
+}
+
 function toForm(cliente: Cliente): ClienteForm {
   const form = { ...EMPTY_FORM }
   for (const key of Object.keys(form) as (keyof ClienteForm)[]) {
@@ -139,7 +144,11 @@ export default function ClientesPage() {
   const [total, setTotal] = useState(0)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
+  const [viewMode, setViewMode] = useState(false)
+  const [nextCodeLoading, setNextCodeLoading] = useState(false)
+  const [cepLoading, setCepLoading] = useState(false)
   const [form, setForm] = useState<ClienteForm>(EMPTY_FORM)
+  const lastCepLookupRef = useRef('')
   const limit = 50
   const totalPages = Math.max(1, Math.ceil(total / limit))
 
@@ -161,18 +170,73 @@ export default function ClientesPage() {
   useEffect(() => { load() }, [load])
 
   function updateField(name: keyof ClienteForm, value: string | boolean) {
-    setForm(current => ({ ...current, [name]: value }))
+    const normalizedValue = name === 'cep' && typeof value === 'string' ? formatCep(value) : value
+    setForm(current => ({ ...current, [name]: normalizedValue }))
   }
 
-  function openNew() {
+  const lookupCep = useCallback(async (cepValue: string) => {
+    const digits = String(cepValue || '').replace(/\D/g, '')
+    if (digits.length !== 8 || digits === lastCepLookupRef.current) return
+    lastCepLookupRef.current = digits
+    setCepLoading(true)
+    try {
+      const response = await apiClient.get(`/cadastros/cep/${digits}`)
+      const address = response.data?.data || {}
+      setForm(current => ({
+        ...current,
+        cep: address.cep || formatCep(digits),
+        logradouro: address.logradouro || '',
+        complemento: address.complemento || current.complemento || '',
+        bairro: address.bairro || '',
+        cidade: address.cidade || '',
+        uf: String(address.uf || '').toUpperCase(),
+      }))
+    } catch (error: any) {
+      lastCepLookupRef.current = ''
+      toast.error(error?.response?.data?.message || 'Não foi possível consultar o CEP.')
+    } finally {
+      setCepLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!modalOpen || viewMode) return
+    const digits = String(form.cep || '').replace(/\D/g, '')
+    if (digits.length !== 8 || digits === lastCepLookupRef.current) return
+    const timer = window.setTimeout(() => void lookupCep(digits), 300)
+    return () => window.clearTimeout(timer)
+  }, [form.cep, lookupCep, modalOpen, viewMode])
+
+  async function openNew() {
     setEditingId(null)
+    setViewMode(false)
     setForm({ ...EMPTY_FORM })
+    lastCepLookupRef.current = ''
     setModalOpen(true)
+    setNextCodeLoading(true)
+    try {
+      const response = await apiClient.get('/cadastros/clientes/proximo-codigo')
+      setForm(current => ({ ...current, codigo: String(response.data?.data?.codigo || '') }))
+    } catch (error: any) {
+      toast.error(error?.response?.data?.message || 'Não foi possível calcular o próximo código do cliente.')
+    } finally {
+      setNextCodeLoading(false)
+    }
   }
 
   function openEdit(cliente: Cliente) {
     setEditingId(cliente.id)
+    setViewMode(false)
     setForm(toForm(cliente))
+    lastCepLookupRef.current = String(cliente.cep || '').replace(/\D/g, '')
+    setModalOpen(true)
+  }
+
+  function openView(cliente: Cliente) {
+    setEditingId(cliente.id)
+    setViewMode(true)
+    setForm(toForm(cliente))
+    lastCepLookupRef.current = String(cliente.cep || '').replace(/\D/g, '')
     setModalOpen(true)
   }
 
@@ -180,6 +244,7 @@ export default function ClientesPage() {
     if (saving) return
     setModalOpen(false)
     setEditingId(null)
+    setViewMode(false)
   }
 
   function applySearch(event: FormEvent) {
@@ -268,9 +333,9 @@ export default function ClientesPage() {
           <span className="text-sm font-medium text-slate-700">{total.toLocaleString('pt-BR')} cliente(s)</span>
           {loading && <Loader2 className="h-4 w-4 animate-spin text-blue-600" />}
         </div>
-        <div className="overflow-x-auto">
+        <div className="max-h-[65vh] overflow-auto">
           <table className="min-w-[1050px] w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <thead className="sticky top-0 z-20 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 shadow-[0_1px_0_0_rgba(226,232,240,1)]">
               <tr>
                 <th className="px-4 py-3">Código</th>
                 <th className="px-4 py-3">Cliente</th>
@@ -304,7 +369,8 @@ export default function ClientesPage() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
-                      {canWrite && <button title="Editar" onClick={() => openEdit(cliente)} className="rounded-md p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-600"><Pencil className="h-4 w-4" /></button>}
+                      <button title="Visualizar" onClick={() => openView(cliente)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800"><Eye className="h-4 w-4" /></button>
+                      {canWrite && <button title="Alterar" onClick={() => openEdit(cliente)} className="rounded-md p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-600"><Pencil className="h-4 w-4" /></button>}
                       {canWrite && cliente.ativo && <button title="Inativar" onClick={() => deactivate(cliente)} className="rounded-md p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>}
                     </div>
                   </td>
@@ -327,14 +393,14 @@ export default function ClientesPage() {
           <div className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">{editingId ? 'Editar cliente' : 'Novo cliente'}</h2>
-                <p className="text-xs text-slate-500">Os dados comuns ficam centralizados e podem ser compartilhados com o perfil de fornecedor.</p>
+                <h2 className="text-lg font-semibold text-slate-900">{viewMode ? 'Visualizar cliente' : editingId ? 'Editar cliente' : 'Novo cliente'}</h2>
+                <p className="text-xs text-slate-500">{viewMode ? 'Consulta completa dos dados cadastrados.' : 'Os dados comuns ficam centralizados e podem ser compartilhados com o perfil de fornecedor.'}</p>
               </div>
               <button onClick={closeModal} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </div>
 
             <form onSubmit={save} className="flex min-h-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-5">
+              <fieldset disabled={viewMode} className="min-h-0 flex-1 space-y-6 overflow-y-auto p-5 disabled:opacity-90">
                 <section>
                   <h3 className="mb-3 text-sm font-semibold text-slate-800">Identificação</h3>
                   <div className="grid gap-3 md:grid-cols-4">
@@ -344,7 +410,7 @@ export default function ClientesPage() {
                         <option value="PF">Pessoa física</option><option value="PJ">Pessoa jurídica</option>
                       </select>
                     </label>
-                    <Field label="Código" name="codigo" value={form.codigo} onChange={updateField} />
+                    <Field label="Código" name="codigo" value={form.codigo} onChange={updateField} placeholder={nextCodeLoading ? 'Calculando...' : undefined} />
                     <Field label="CPF/CNPJ" name="cpf_cnpj" value={form.cpf_cnpj} onChange={updateField} className="md:col-span-2" />
                     <Field label="Nome *" name="nome" value={form.nome} onChange={updateField} className="md:col-span-2" />
                     <Field label="Razão social" name="razao_social" value={form.razao_social} onChange={updateField} className="md:col-span-2" />
@@ -373,7 +439,18 @@ export default function ClientesPage() {
                 <section>
                   <h3 className="mb-3 text-sm font-semibold text-slate-800">Endereço</h3>
                   <div className="grid gap-3 md:grid-cols-6">
-                    <Field label="CEP" name="cep" value={form.cep} onChange={updateField} />
+                    <label className="block">
+                      <span className="mb-1.5 flex items-center gap-2 text-xs font-medium text-slate-600">CEP {cepLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />}</span>
+                      <input
+                        value={form.cep || ''}
+                        onChange={event => updateField('cep', event.target.value)}
+                        onBlur={() => void lookupCep(String(form.cep || ''))}
+                        inputMode="numeric"
+                        maxLength={9}
+                        placeholder="00000-000"
+                        className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      />
+                    </label>
                     <Field label="Logradouro" name="logradouro" value={form.logradouro} onChange={updateField} className="md:col-span-3" />
                     <Field label="Número" name="numero" value={form.numero} onChange={updateField} />
                     <Field label="Complemento" name="complemento" value={form.complemento} onChange={updateField} />
@@ -402,14 +479,16 @@ export default function ClientesPage() {
                     </label>
                   </div>
                 </section>
-              </div>
+              </fieldset>
 
               <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
-                <button type="button" onClick={closeModal} className="h-10 rounded-lg border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Cancelar</button>
-                <button disabled={saving} type="submit" className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60">
-                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                  Salvar
-                </button>
+                <button type="button" onClick={closeModal} className="h-10 rounded-lg border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">{viewMode ? 'Fechar' : 'Cancelar'}</button>
+                {!viewMode && (
+                  <button disabled={saving || nextCodeLoading} type="submit" className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60">
+                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                    Salvar
+                  </button>
+                )}
               </div>
             </form>
           </div>

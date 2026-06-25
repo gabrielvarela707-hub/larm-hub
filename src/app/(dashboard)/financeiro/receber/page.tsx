@@ -96,6 +96,22 @@ type Summary = {
 
 type FilterOption = { id: number; nome: string; codigo?: string; cpf_cnpj?: string; ativo?: boolean }
 type BillingCompanyOption = { codigo: EmpresaCobranca; nome: string; obras: number[] }
+type SystemCompany = {
+  codigo: number
+  nome: string
+  nome_fantasia?: string | null
+  cpf_cnpj?: string | null
+  cep?: string | null
+  logradouro?: string | null
+  numero?: string | null
+  complemento?: string | null
+  bairro?: string | null
+  cidade?: string | null
+  uf?: string | null
+  email?: string | null
+  telefone?: string | null
+  empresa_cobranca?: EmpresaCobranca | null
+}
 type FilterData = { clientes: FilterOption[]; tipos_receita: FilterOption[]; obras: FilterOption[]; empresas_cobranca: BillingCompanyOption[] }
 
 type Recalculation = {
@@ -205,6 +221,28 @@ function emptyBradescoConfig(empresa: EmpresaCobranca): BradescoConfig {
   }
 }
 
+function formatCep(value: string) {
+  const digits = String(value || '').replace(/\D/g, '').slice(0, 8)
+  return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits
+}
+
+function applySystemCompany(config: BradescoConfig, company?: SystemCompany | null) {
+  if (!company) return config
+  return {
+    ...config,
+    empresa: company.empresa_cobranca || config.empresa,
+    beneficiario_nome: company.nome || config.beneficiario_nome,
+    beneficiario_documento: company.cpf_cnpj || config.beneficiario_documento,
+    cep: company.cep || config.cep,
+    logradouro: company.logradouro || config.logradouro,
+    numero: company.numero || config.numero,
+    complemento: company.complemento || config.complemento,
+    bairro: company.bairro || config.bairro,
+    cidade: company.cidade || config.cidade,
+    uf: company.uf || config.uf,
+  }
+}
+
 function firstDayOfCurrentMonth() {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
@@ -297,6 +335,9 @@ export default function ContasReceberPage() {
   const [configLoading, setConfigLoading] = useState(false)
   const [configSaving, setConfigSaving] = useState(false)
   const [configError, setConfigError] = useState('')
+  const [systemCompanies, setSystemCompanies] = useState<SystemCompany[]>([])
+  const [companiesLoading, setCompaniesLoading] = useState(false)
+  const [configCepLoading, setConfigCepLoading] = useState(false)
   const [remittanceLoading, setRemittanceLoading] = useState(false)
   const [batchBoletoLoading, setBatchBoletoLoading] = useState(false)
   const [emailLoading, setEmailLoading] = useState(false)
@@ -309,6 +350,7 @@ export default function ContasReceberPage() {
   const topScrollRef = useRef<HTMLDivElement | null>(null)
   const tableScrollRef = useRef<HTMLDivElement | null>(null)
   const returnInputRef = useRef<HTMLInputElement | null>(null)
+  const lastConfigCepRef = useRef('')
   const tableMinWidth = 2030
 
   const requestParams = useMemo(() => ({
@@ -328,11 +370,31 @@ export default function ContasReceberPage() {
 
   const eligibleIds = useMemo(() => rows.filter(row => ['aberta', 'atrasada'].includes(row.status)).map(row => row.id), [rows])
   const allEligibleSelected = eligibleIds.length > 0 && eligibleIds.every(id => selected.has(id))
+  const billingSystemCompanies = useMemo(
+    () => systemCompanies.filter(item => item.empresa_cobranca === 'LARM' || item.empresa_cobranca === 'LUCKY'),
+    [systemCompanies],
+  )
 
   const syncHorizontalScroll = (source: HTMLDivElement, target: HTMLDivElement | null) => {
     if (!target || target.scrollLeft === source.scrollLeft) return
     target.scrollLeft = source.scrollLeft
   }
+
+  const loadSystemCompanies = useCallback(async () => {
+    setCompaniesLoading(true)
+    try {
+      const response = await apiClient.get('/cadastros/empresas')
+      const data = Array.isArray(response.data?.data) ? response.data.data : []
+      setSystemCompanies(data)
+      return data as SystemCompany[]
+    } catch (requestError: unknown) {
+      setConfigError(requestErrorMessage(requestError, 'Não foi possível carregar as empresas cadastradas.'))
+      setSystemCompanies([])
+      return [] as SystemCompany[]
+    } finally {
+      setCompaniesLoading(false)
+    }
+  }, [])
 
   const loadFilters = useCallback(async () => {
     try {
@@ -369,6 +431,7 @@ export default function ContasReceberPage() {
   }, [requestParams])
 
   useEffect(() => { loadFilters() }, [loadFilters])
+  useEffect(() => { void loadSystemCompanies() }, [loadSystemCompanies])
   useEffect(() => { load() }, [load])
 
   const handleSort = (key: SortKey) => {
@@ -599,7 +662,7 @@ export default function ContasReceberPage() {
     return { html: combineBoletoDocuments(documents), quantidade: documents.length, homologation }
   }
 
-  const generateSelectedBoletos = async (ids = Array.from(selected)) => {
+  const generateSelectedBoletos = async (ids: string[] = Array.from(selected)) => {
     if (!ids.length) return
     setBatchBoletoLoading(true)
     setError('')
@@ -751,27 +814,70 @@ export default function ContasReceberPage() {
     }
   }
 
-  const loadBankConfig = async (company: EmpresaCobranca) => {
+  const loadBankConfig = async (company: EmpresaCobranca, sourceCompany?: SystemCompany | null) => {
+    const companyRecord = sourceCompany || billingSystemCompanies.find(item => item.empresa_cobranca === company) || null
+    const baseConfig = applySystemCompany(emptyBradescoConfig(company), companyRecord)
+    lastConfigCepRef.current = ''
     setConfigLoading(true)
     setConfigError('')
-    setConfig(emptyBradescoConfig(company))
+    setConfig(baseConfig)
     try {
       const response = await apiClient.get('/financeiro/contas-receber/bradesco/config', {
         params: { empresa: company },
       })
-      setConfig({ ...emptyBradescoConfig(company), ...(response.data?.data || {}), empresa: company })
+      const loaded = { ...baseConfig, ...(response.data?.data || {}), empresa: company } as BradescoConfig
+      const merged = applySystemCompany(loaded, companyRecord)
+      lastConfigCepRef.current = ''
+      setConfig(merged)
     } catch (requestError: unknown) {
       setConfigError(requestErrorMessage(requestError, `Não foi possível carregar a configuração bancária da ${company}.`))
-      setConfig(emptyBradescoConfig(company))
+      setConfig(baseConfig)
     } finally {
       setConfigLoading(false)
     }
   }
 
-  const openConfig = () => {
-    const company: EmpresaCobranca = empresa || 'LARM'
+  const lookupConfigCep = useCallback(async (cepValue: string) => {
+    const digits = String(cepValue || '').replace(/\D/g, '')
+    if (digits.length !== 8 || digits === lastConfigCepRef.current) return
+    lastConfigCepRef.current = digits
+    setConfigCepLoading(true)
+    setConfigError('')
+    try {
+      const response = await apiClient.get(`/cadastros/cep/${digits}`)
+      const address = response.data?.data || {}
+      setConfig(current => ({
+        ...current,
+        cep: address.cep || formatCep(digits),
+        logradouro: address.logradouro || '',
+        complemento: address.complemento || current.complemento || '',
+        bairro: address.bairro || '',
+        cidade: address.cidade || '',
+        uf: String(address.uf || '').toUpperCase(),
+      }))
+    } catch (requestError: unknown) {
+      lastConfigCepRef.current = ''
+      setConfigError(requestErrorMessage(requestError, 'Não foi possível consultar o CEP.'))
+    } finally {
+      setConfigCepLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!configOpen || configLoading) return
+    const digits = String(config.cep || '').replace(/\D/g, '')
+    if (digits.length !== 8 || digits === lastConfigCepRef.current) return
+    const timer = window.setTimeout(() => void lookupConfigCep(digits), 300)
+    return () => window.clearTimeout(timer)
+  }, [config.cep, configLoading, configOpen, lookupConfigCep])
+
+  const openConfig = async () => {
     setConfigOpen(true)
-    void loadBankConfig(company)
+    const companies = billingSystemCompanies.length ? billingSystemCompanies : await loadSystemCompanies()
+    const validCompanies = companies.filter(item => item.empresa_cobranca === 'LARM' || item.empresa_cobranca === 'LUCKY')
+    const company: EmpresaCobranca = empresa || validCompanies[0]?.empresa_cobranca || 'LARM'
+    const sourceCompany = validCompanies.find(item => item.empresa_cobranca === company) || null
+    await loadBankConfig(company, sourceCompany)
   }
 
   const saveConfig = async () => {
@@ -1024,7 +1130,7 @@ export default function ContasReceberPage() {
               {!config.id && config.empresa === 'LUCKY' && <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs text-violet-800"><strong>Configuração LUCKY ainda não cadastrada.</strong> Preencha somente os dados bancários reais fornecidos pelo Bradesco. Os dados da LARM não serão copiados.</div>}
               {!config.homologado && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><strong>Modo de homologação:</strong> as remessas serão geradas com extensão <code>.TST</code> e os boletos terão marca de homologação. Marque como homologado somente após validação pelo Bradesco.</div>}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <Field label="Empresa"><select value={config.empresa} onChange={event => void loadBankConfig(event.target.value as EmpresaCobranca)} className={inputClass}><option value="LARM">LARM</option><option value="LUCKY">LUCKY</option></select></Field>
+                <Field label="Empresa cadastrada"><select value={config.empresa} disabled={companiesLoading} onChange={event => { const company = event.target.value as EmpresaCobranca; const source = billingSystemCompanies.find(item => item.empresa_cobranca === company); void loadBankConfig(company, source) }} className={inputClass}>{billingSystemCompanies.length ? billingSystemCompanies.map(item => <option key={item.codigo} value={item.empresa_cobranca || ''}>{item.nome}</option>) : <><option value="LARM">LARM PARTICIPAÇÕES LTDA</option><option value="LUCKY">LUCKY CAPITAL EMPREENDIMENTOS LTDA</option></>}</select></Field>
                 <Field label="Código da empresa Bradesco" className="md:col-span-2"><input value={config.codigo_empresa || ''} maxLength={20} onChange={event => setConfig({ ...config, codigo_empresa: event.target.value })} className={inputClass} /></Field>
                 <Field label="Carteira"><input value={config.carteira} onChange={event => setConfig({ ...config, carteira: event.target.value })} className={inputClass} /></Field>
                 <Field label="Beneficiário" className="md:col-span-3"><input value={config.beneficiario_nome} onChange={event => setConfig({ ...config, beneficiario_nome: event.target.value })} className={inputClass} /></Field>
@@ -1035,7 +1141,7 @@ export default function ContasReceberPage() {
                 <Field label="DV conta"><input value={config.conta_dv || ''} onChange={event => setConfig({ ...config, conta_dv: event.target.value })} className={inputClass} /></Field>
                 <Field label="Multa padrão (%)"><input type="number" step="0.0001" value={config.multa_percentual_padrao} onChange={event => setConfig({ ...config, multa_percentual_padrao: event.target.value })} className={inputClass} /></Field>
                 <Field label="Mora padrão ao mês (%)"><input type="number" step="0.0001" value={config.mora_percentual_mes_padrao} onChange={event => setConfig({ ...config, mora_percentual_mes_padrao: event.target.value })} className={inputClass} /></Field>
-                <Field label="CEP"><input value={config.cep || ''} onChange={event => setConfig({ ...config, cep: event.target.value })} className={inputClass} /></Field>
+                <Field label={<>CEP {configCepLoading && <Loader2 className="ml-1 inline h-3.5 w-3.5 animate-spin text-blue-600" />}</>}><input value={config.cep || ''} onChange={event => setConfig({ ...config, cep: formatCep(event.target.value) })} onBlur={() => void lookupConfigCep(config.cep || '')} inputMode="numeric" maxLength={9} placeholder="00000-000" className={inputClass} /></Field>
                 <Field label="UF"><input maxLength={2} value={config.uf || ''} onChange={event => setConfig({ ...config, uf: event.target.value.toUpperCase() })} className={inputClass} /></Field>
                 <Field label="Logradouro" className="md:col-span-2"><input value={config.logradouro || ''} onChange={event => setConfig({ ...config, logradouro: event.target.value })} className={inputClass} /></Field>
                 <Field label="Número"><input value={config.numero || ''} onChange={event => setConfig({ ...config, numero: event.target.value })} className={inputClass} /></Field>
@@ -1078,7 +1184,7 @@ function FilterField({ label, children, className = '' }: { label: string; child
   return <div className={className}><label className="mb-1 block text-[11px] font-medium text-slate-500">{label}</label>{children}</div>
 }
 
-function Field({ label, children, className = '' }: { label: string; children: ReactNode; className?: string }) {
+function Field({ label, children, className = '' }: { label: ReactNode; children: ReactNode; className?: string }) {
   return <div className={className}><label className="mb-1 block text-xs font-medium text-slate-600">{label}</label>{children}</div>
 }
 
