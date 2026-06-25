@@ -671,6 +671,7 @@ export default function FornecedoresPage() {
   const [fBusca, setFBusca] = useState("");
   const [fEmpresa, setFEmpresa] = useState("");
   const [fCategoria, setFCategoria] = useState("");
+  const [ordenacao, setOrdenacao] = useState("nome:asc");
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Importação
@@ -705,6 +706,9 @@ export default function FornecedoresPage() {
       if (fBusca) params.busca = fBusca;
       if (fEmpresa) params.empresa = fEmpresa;
       if (fCategoria) params.categoria = fCategoria;
+      const [ordenar, direcao] = ordenacao.split(":");
+      params.ordenar = ordenar;
+      params.direcao = direcao;
       const r = await apiClient.get("/financeiro/fornecedores", { params });
       setLista(r.data.data ?? []);
       setTotal(r.data.total ?? 0);
@@ -712,7 +716,7 @@ export default function FornecedoresPage() {
     } finally {
       setLoading(false);
     }
-  }, [fBusca, fEmpresa, fCategoria]);
+  }, [fBusca, fEmpresa, fCategoria, ordenacao]);
 
   useEffect(() => {
     load();
@@ -1327,15 +1331,29 @@ export default function FornecedoresPage() {
             <option key={c}>{c}</option>
           ))}
         </select>
+        <select
+          value={ordenacao}
+          onChange={(e) => setOrdenacao(e.target.value)}
+          aria-label="Ordenar fornecedores"
+          className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700"
+        >
+          <option value="nome:asc">Nome: A–Z</option>
+          <option value="nome:desc">Nome: Z–A</option>
+          <option value="codigo:asc">Código: menor–maior</option>
+          <option value="codigo:desc">Código: maior–menor</option>
+          <option value="categoria:asc">Categoria: A–Z</option>
+          <option value="categoria:desc">Categoria: Z–A</option>
+        </select>
       </div>
 
       {/* Tabela */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
         <div ref={tableScrollRef} className="max-h-[70vh] overflow-auto">
-          <table className="w-full text-sm" style={{ minWidth: 980 }}>
+          <table className="w-full text-sm" style={{ minWidth: 1060 }}>
             <thead className="sticky top-0 z-20">
               <tr className="bg-[#0d1b2a] text-white">
                 {[
+                  "Código",
                   "Razão Social / Fantasia",
                   "CNPJ/CPF",
                   "Categoria",
@@ -1357,7 +1375,7 @@ export default function FornecedoresPage() {
               {loading &&
                 [...Array(5)].map((_, i) => (
                   <tr key={i} className="border-b border-slate-50">
-                    {[...Array(7)].map((_, j) => (
+                    {[...Array(8)].map((_, j) => (
                       <td key={j} className="px-3 py-3">
                         <div
                           className="h-3 bg-slate-100 rounded animate-pulse"
@@ -1370,7 +1388,7 @@ export default function FornecedoresPage() {
               {!loading && lista.length === 0 && (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="text-center text-slate-400 py-12 text-sm"
                   >
                     Nenhum fornecedor cadastrado
@@ -1386,6 +1404,7 @@ export default function FornecedoresPage() {
                       !f.ativo && "opacity-50",
                     )}
                   >
+                    <td className="px-3 py-2.5 text-slate-500 text-xs">{f.id}</td>
                     <td className="px-3 py-2.5">
                       <p className="font-medium text-slate-800 text-xs">
                         {f.razao_social}

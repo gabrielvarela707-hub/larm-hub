@@ -16,6 +16,7 @@ interface Cliente {
   razao_social: string | null
   nome_fantasia: string | null
   tipo_pessoa: 'PF' | 'PJ'
+  categoria: string | null
   cpf_cnpj: string | null
   rg: string | null
   orgao_emissor_rg: string | null
@@ -46,7 +47,7 @@ interface Cliente {
   ativo: boolean
 }
 
-type ClienteForm = Omit<Cliente, 'id' | 'pessoa_id'>
+type ClienteForm = Omit<Cliente, 'id' | 'pessoa_id' | 'categoria'>
 
 const EMPTY_FORM: ClienteForm = {
   codigo: '',
@@ -140,6 +141,7 @@ export default function ClientesPage() {
   const [busca, setBusca] = useState('')
   const [buscaAplicada, setBuscaAplicada] = useState('')
   const [status, setStatus] = useState<'true' | 'false' | 'all'>('true')
+  const [ordenacao, setOrdenacao] = useState('nome:asc')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
   const [modalOpen, setModalOpen] = useState(false)
@@ -155,8 +157,16 @@ export default function ClientesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
+      const [ordenar, direcao] = ordenacao.split(':')
       const response = await apiClient.get('/cadastros/clientes', {
-        params: { busca: buscaAplicada || undefined, ativo: status, page, limit },
+        params: {
+          busca: buscaAplicada || undefined,
+          ativo: status,
+          ordenar,
+          direcao,
+          page,
+          limit,
+        },
       })
       setItems(response.data?.data || [])
       setTotal(Number(response.data?.total || 0))
@@ -165,7 +175,7 @@ export default function ClientesPage() {
     } finally {
       setLoading(false)
     }
-  }, [buscaAplicada, page, status])
+  }, [buscaAplicada, ordenacao, page, status])
 
   useEffect(() => { load() }, [load])
 
@@ -324,6 +334,19 @@ export default function ClientesPage() {
             <option value="false">Inativos</option>
             <option value="all">Todos</option>
           </select>
+          <select
+            value={ordenacao}
+            onChange={event => { setOrdenacao(event.target.value); setPage(1) }}
+            aria-label="Ordenar clientes"
+            className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-blue-500"
+          >
+            <option value="nome:asc">Nome: A–Z</option>
+            <option value="nome:desc">Nome: Z–A</option>
+            <option value="codigo:asc">Código: menor–maior</option>
+            <option value="codigo:desc">Código: maior–menor</option>
+            <option value="categoria:asc">Categoria: A–Z</option>
+            <option value="categoria:desc">Categoria: Z–A</option>
+          </select>
           <button type="submit" className="h-10 rounded-lg border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">Pesquisar</button>
         </form>
       </div>
@@ -334,11 +357,12 @@ export default function ClientesPage() {
           {loading && <Loader2 className="h-4 w-4 animate-spin text-blue-600" />}
         </div>
         <div className="max-h-[65vh] overflow-auto">
-          <table className="min-w-[1050px] w-full text-sm">
+          <table className="min-w-[1160px] w-full text-sm">
             <thead className="sticky top-0 z-20 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 shadow-[0_1px_0_0_rgba(226,232,240,1)]">
               <tr>
                 <th className="px-4 py-3">Código</th>
                 <th className="px-4 py-3">Cliente</th>
+                <th className="px-4 py-3">Categoria</th>
                 <th className="px-4 py-3">CPF/CNPJ</th>
                 <th className="px-4 py-3">E-mail</th>
                 <th className="px-4 py-3">Telefone</th>
@@ -349,7 +373,7 @@ export default function ClientesPage() {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {!loading && items.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">Nenhum cliente encontrado.</td></tr>
+                <tr><td colSpan={9} className="px-4 py-12 text-center text-slate-500">Nenhum cliente encontrado.</td></tr>
               )}
               {items.map(cliente => (
                 <tr key={cliente.id} className="hover:bg-slate-50/70">
@@ -358,6 +382,7 @@ export default function ClientesPage() {
                     <div className="font-medium text-slate-900">{cliente.nome}</div>
                     {cliente.nome_fantasia && cliente.nome_fantasia !== cliente.nome && <div className="text-xs text-slate-500">{cliente.nome_fantasia}</div>}
                   </td>
+                  <td className="px-4 py-3 text-slate-600">{cliente.categoria || (cliente.tipo_pessoa === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física')}</td>
                   <td className="px-4 py-3 text-slate-600">{cliente.cpf_cnpj || '—'}</td>
                   <td className="px-4 py-3 text-slate-600">{cliente.email || '—'}</td>
                   <td className="px-4 py-3 text-slate-600">{cliente.celular || cliente.telefone || cliente.telefone_comercial || '—'}</td>

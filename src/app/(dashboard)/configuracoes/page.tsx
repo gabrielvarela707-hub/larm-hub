@@ -274,6 +274,19 @@ function formatDateTimeBR(value: string) {
   try { return new Date(value).toLocaleString('pt-BR') } catch { return value }
 }
 
+function compareSemanticVersionsDesc(left: string, right: string) {
+  const leftParts = String(left || '').split('.').map(part => Number(part) || 0)
+  const rightParts = String(right || '').split('.').map(part => Number(part) || 0)
+  const size = Math.max(leftParts.length, rightParts.length)
+
+  for (let index = 0; index < size; index += 1) {
+    const diff = (rightParts[index] || 0) - (leftParts[index] || 0)
+    if (diff !== 0) return diff
+  }
+
+  return 0
+}
+
 function formatReferenceMonth(value: string) {
   const [year, month] = String(value || '').split('-').map(Number)
   if (!year || !month) return value
@@ -2635,7 +2648,7 @@ export default function ConfiguracoesPage() {
                 <div className="space-y-3">
                   {(systemAbout?.releases || []).length === 0 ? (
                     <p className="text-sm text-slate-400">Nenhuma versão cadastrada ainda.</p>
-                  ) : (systemAbout?.releases || []).map(release => (
+                  ) : [...(systemAbout?.releases || [])].sort((a, b) => compareSemanticVersionsDesc(a.version, b.version)).map(release => (
                     <div key={release.version} className="rounded-xl border border-slate-100 p-4 bg-white">
                       <div className="flex items-start justify-between gap-4">
                         <div>
