@@ -6,6 +6,37 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.72",
+    "title": "Cadastros — setas visíveis nos cabeçalhos de ordenação",
+    "description": "Garante a exibição das setas de ordenação diretamente nos títulos Código, Cliente/Razão Social e Categoria nas tabelas de clientes e fornecedores.",
+    "frontend_version": "0.3.72",
+    "backend_version": "0.3.70",
+    "released_at": "2026-06-25T19:00:00.000Z",
+    "changes": [
+      "Os cabeçalhos Código, Cliente e Categoria do cadastro de clientes passam a exibir indicadores visíveis ↕, ↑ e ↓.",
+      "Os cabeçalhos Código, Razão Social/Fantasia e Categoria do cadastro de fornecedores recebem o mesmo comportamento.",
+      "O clique no título alterna entre ordenação crescente e decrescente e continua ordenando todos os registros pela API.",
+      "Os indicadores usam caracteres visíveis, sem depender da renderização de ícones externos.",
+      "O seletor de ordenação existente foi preservado como alternativa.",
+      "Nenhuma regra de cadastro, boleto, recebível, remessa, retorno ou cálculo financeiro foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Cadastro de Clientes",
+        "Cadastro de Fornecedores",
+        "Cabeçalhos acessíveis com aria-sort"
+      ],
+      "backend": [
+        "Backend operacional preservado"
+      ],
+      "database": [
+        "Sem alteração estrutural"
+      ],
+      "integrations": []
+    }
+  },
+  {
     "version": "0.3.71",
     "title": "Frontend — restauração do pacote Next.js para deploy",
     "description": "Restaura os metadados corretos do projeto web após o package.json do backend ter sido aplicado no repositório do frontend, permitindo que o Vercel identifique novamente o Next.js.",

@@ -263,6 +263,30 @@ export default function ClientesPage() {
     setBuscaAplicada(busca.trim())
   }
 
+  function toggleOrdenacao(campo: 'codigo' | 'nome' | 'categoria') {
+    setOrdenacao(atual => {
+      const [campoAtual, direcaoAtual] = atual.split(':')
+      const proximaDirecao = campoAtual === campo && direcaoAtual === 'asc' ? 'desc' : 'asc'
+      return `${campo}:${proximaDirecao}`
+    })
+    setPage(1)
+  }
+
+  function sortIcon(campo: 'codigo' | 'nome' | 'categoria') {
+    const [campoAtual, direcaoAtual] = ordenacao.split(':')
+    const ativo = campoAtual === campo
+    const simbolo = ativo ? (direcaoAtual === 'asc' ? '↑' : '↓') : '↕'
+
+    return (
+      <span
+        aria-hidden="true"
+        className={`ml-1 inline-block min-w-3 text-center text-sm font-bold leading-none ${ativo ? 'text-blue-600' : 'text-slate-400'}`}
+      >
+        {simbolo}
+      </span>
+    )
+  }
+
   async function save(event: FormEvent) {
     event.preventDefault()
     if (!form.nome.trim() && !String(form.razao_social || '').trim()) {
@@ -360,9 +384,21 @@ export default function ClientesPage() {
           <table className="min-w-[1160px] w-full text-sm">
             <thead className="sticky top-0 z-20 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 shadow-[0_1px_0_0_rgba(226,232,240,1)]">
               <tr>
-                <th className="px-4 py-3">Código</th>
-                <th className="px-4 py-3">Cliente</th>
-                <th className="px-4 py-3">Categoria</th>
+                <th className="px-4 py-3" aria-sort={ordenacao.startsWith('codigo:') ? (ordenacao.endsWith(':asc') ? 'ascending' : 'descending') : 'none'}>
+                  <button type="button" onClick={() => toggleOrdenacao('codigo')} className="inline-flex items-center gap-1.5 font-semibold hover:text-blue-600" title="Ordenar por código">
+                    Código {sortIcon('codigo')}
+                  </button>
+                </th>
+                <th className="px-4 py-3" aria-sort={ordenacao.startsWith('nome:') ? (ordenacao.endsWith(':asc') ? 'ascending' : 'descending') : 'none'}>
+                  <button type="button" onClick={() => toggleOrdenacao('nome')} className="inline-flex items-center gap-1.5 font-semibold hover:text-blue-600" title="Ordenar por nome do cliente">
+                    Cliente {sortIcon('nome')}
+                  </button>
+                </th>
+                <th className="px-4 py-3" aria-sort={ordenacao.startsWith('categoria:') ? (ordenacao.endsWith(':asc') ? 'ascending' : 'descending') : 'none'}>
+                  <button type="button" onClick={() => toggleOrdenacao('categoria')} className="inline-flex items-center gap-1.5 font-semibold hover:text-blue-600" title="Ordenar por categoria">
+                    Categoria {sortIcon('categoria')}
+                  </button>
+                </th>
                 <th className="px-4 py-3">CPF/CNPJ</th>
                 <th className="px-4 py-3">E-mail</th>
                 <th className="px-4 py-3">Telefone</th>

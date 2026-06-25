@@ -14,7 +14,6 @@ import {
   Check,
   Loader2,
   Building2,
-  User,
   History,
   FileText,
   AlertTriangle,
@@ -672,6 +671,29 @@ export default function FornecedoresPage() {
   const [fEmpresa, setFEmpresa] = useState("");
   const [fCategoria, setFCategoria] = useState("");
   const [ordenacao, setOrdenacao] = useState("nome:asc");
+
+  function toggleOrdenacao(campo: 'codigo' | 'nome' | 'categoria') {
+    setOrdenacao((atual) => {
+      const [campoAtual, direcaoAtual] = atual.split(':');
+      const proximaDirecao = campoAtual === campo && direcaoAtual === 'asc' ? 'desc' : 'asc';
+      return `${campo}:${proximaDirecao}`;
+    });
+  }
+
+  function sortIcon(campo: 'codigo' | 'nome' | 'categoria') {
+    const [campoAtual, direcaoAtual] = ordenacao.split(':');
+    const ativo = campoAtual === campo;
+    const simbolo = ativo ? (direcaoAtual === 'asc' ? '↑' : '↓') : '↕';
+
+    return (
+      <span
+        aria-hidden="true"
+        className={`ml-1 inline-block min-w-3 text-center text-sm font-bold leading-none ${ativo ? 'text-blue-200' : 'text-slate-300'}`}
+      >
+        {simbolo}
+      </span>
+    );
+  }
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Importação
@@ -1352,23 +1374,26 @@ export default function FornecedoresPage() {
           <table className="w-full text-sm" style={{ minWidth: 1060 }}>
             <thead className="sticky top-0 z-20">
               <tr className="bg-[#0d1b2a] text-white">
-                {[
-                  "Código",
-                  "Razão Social / Fantasia",
-                  "CNPJ/CPF",
-                  "Categoria",
-                  "Empresa",
-                  "Banco",
-                  "Status",
-                  "Ações",
-                ].map((h) => (
-                  <th
-                    key={h}
-                    className="text-left px-3 py-2.5 font-semibold text-xs whitespace-nowrap"
-                  >
-                    {h}
-                  </th>
-                ))}
+                <th className="text-left px-3 py-2.5 font-semibold text-xs whitespace-nowrap" aria-sort={ordenacao.startsWith('codigo:') ? (ordenacao.endsWith(':asc') ? 'ascending' : 'descending') : 'none'}>
+                  <button type="button" onClick={() => toggleOrdenacao('codigo')} className="inline-flex items-center gap-1.5 hover:text-blue-200" title="Ordenar por código">
+                    Código {sortIcon('codigo')}
+                  </button>
+                </th>
+                <th className="text-left px-3 py-2.5 font-semibold text-xs whitespace-nowrap" aria-sort={ordenacao.startsWith('nome:') ? (ordenacao.endsWith(':asc') ? 'ascending' : 'descending') : 'none'}>
+                  <button type="button" onClick={() => toggleOrdenacao('nome')} className="inline-flex items-center gap-1.5 hover:text-blue-200" title="Ordenar por razão social ou fantasia">
+                    Razão Social / Fantasia {sortIcon('nome')}
+                  </button>
+                </th>
+                <th className="text-left px-3 py-2.5 font-semibold text-xs whitespace-nowrap">CNPJ/CPF</th>
+                <th className="text-left px-3 py-2.5 font-semibold text-xs whitespace-nowrap" aria-sort={ordenacao.startsWith('categoria:') ? (ordenacao.endsWith(':asc') ? 'ascending' : 'descending') : 'none'}>
+                  <button type="button" onClick={() => toggleOrdenacao('categoria')} className="inline-flex items-center gap-1.5 hover:text-blue-200" title="Ordenar por categoria">
+                    Categoria {sortIcon('categoria')}
+                  </button>
+                </th>
+                <th className="text-left px-3 py-2.5 font-semibold text-xs whitespace-nowrap">Empresa</th>
+                <th className="text-left px-3 py-2.5 font-semibold text-xs whitespace-nowrap">Banco</th>
+                <th className="text-left px-3 py-2.5 font-semibold text-xs whitespace-nowrap">Status</th>
+                <th className="text-left px-3 py-2.5 font-semibold text-xs whitespace-nowrap">Ações</th>
               </tr>
             </thead>
             <tbody>
