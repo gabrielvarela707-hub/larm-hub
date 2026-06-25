@@ -6,6 +6,29 @@
 
 const SYSTEM_RELEASES = [
   {
+    version: "0.3.66",
+    title: "Boletos — envio direto e nome amigável do PDF",
+    description:
+      "Adiciona as ações de e-mail e WhatsApp diretamente na visualização do boleto e define um nome amigável para o PDF sem alterar a geração bancária existente.",
+    frontend_version: "0.3.66",
+    backend_version: "0.3.65",
+    released_at: "2026-06-25T14:30:00.000Z",
+    changes: [
+      "A tela final do boleto passa a exibir os botões Enviar por e-mail e Compartilhar no WhatsApp ao lado de Imprimir / Salvar PDF.",
+      "O envio por e-mail usa a rota já existente, registra sucesso ou erro e mantém o status/data de envio da parcela.",
+      "O WhatsApp abre uma nova aba com a mensagem e a linha digitável preparadas para o cliente, sem alterar o boleto emitido.",
+      "Ao imprimir ou salvar em PDF, o título sugerido usa até 10 caracteres do nome do cliente e a data de emissão do documento.",
+      "Mantida integralmente a lógica já validada de cálculo, nosso número, código de barras, linha digitável, CNAB e geração individual/em lote."
+    ],
+    architecture: {
+      frontend: ["Next.js App Router", "Visualização HTML do boleto", "BroadcastChannel"],
+      backend: ["Backend 0.3.65 preservado", "Rotas existentes de e-mail e WhatsApp"],
+      database: ["Sem alteração estrutural", "fin_boletos_envios", "com_parcelas"],
+      integrations: ["AWS SES", "WhatsApp", "Bradesco"]
+    },
+  },
+
+  {
     version: "0.3.64",
     title: "Cadastros — empresas, CEP automático e melhorias em clientes",
     description:

@@ -299,6 +299,113 @@ function filenameFromDisposition(value?: string) {
   return match?.[1] || 'remessa-bradesco.TST'
 }
 
+
+function boletoClientShortName(value?: string | null) {
+  const normalized = String(value || 'CLIENTE')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+  return normalized.slice(0, 10) || 'CLIENTE'
+}
+
+function boletoEmissionDate(html: string) {
+  const match = String(html || '').match(/Data do documento[\s\S]{0,180}?(\d{2})\/(\d{2})\/(\d{4})/i)
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : todayIso()
+}
+
+function boletoPdfBaseName(parcelIds: string[], rows: ParcelaReceber[], html: string) {
+  const selectedRows = parcelIds.map(id => rows.find(row => row.id === id)).filter(Boolean) as ParcelaReceber[]
+  const clientNames = Array.from(new Set(selectedRows.map(row => String(row.cliente_nome || '').trim()).filter(Boolean)))
+  const clientPart = clientNames.length === 1 ? boletoClientShortName(clientNames[0]) : 'BOLETOS'
+  return `${clientPart}_${boletoEmissionDate(html)}`
+}
+
+function enhanceBoletoHtml(html: string, parcelIds: string[], rows: ParcelaReceber[], channelOwner: string) {
+  const pdfBaseName = boletoPdfBaseName(parcelIds, rows, html)
+  const requestId = `boleto-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const actions = `<div class="actions larmhub-boleto-actions">
+    <button type="button" onclick="window.print()">Imprimir / Salvar PDF</button>
+    <button type="button" onclick="window.larmHubBoletoShare('email')">Enviar por e-mail</button>
+    <button type="button" onclick="window.larmHubBoletoShare('whatsapp')">Compartilhar no WhatsApp</button>
+    <button type="button" onclick="window.close()">Fechar</button>
+    <span id="larmhub-share-status" class="larmhub-share-status">PDF: ${pdfBaseName}.pdf</span>
+  </div>`
+
+  let output = String(html || '')
+  if (/<title>[\s\S]*?<\/title>/i.test(output)) {
+    output = output.replace(/<title>[\s\S]*?<\/title>/i, `<title>${pdfBaseName}</title>`)
+  } else {
+    output = output.replace(/<head>/i, `<head><title>${pdfBaseName}</title>`)
+  }
+
+  if (/<div class="actions">[\s\S]*?<\/div>/i.test(output)) {
+    output = output.replace(/<div class="actions">[\s\S]*?<\/div>/i, actions)
+  } else {
+    output = output.replace(/<body>/i, `<body>${actions}`)
+  }
+
+  const extraStyle = `<style>
+    .larmhub-boleto-actions{align-items:center;flex-wrap:wrap}
+    .larmhub-boleto-actions button:nth-of-type(2){border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}
+    .larmhub-boleto-actions button:nth-of-type(3){border-color:#bbf7d0;background:#f0fdf4;color:#15803d}
+    .larmhub-share-status{font-size:12px;color:#475569;margin-left:4px}
+    @media print{.larmhub-boleto-actions{display:none!important}}
+  </style>`
+  output = output.replace(/<\/head>/i, `${extraStyle}</head>`)
+
+  const script = `<script>
+  (function(){
+    var parcelIds=${JSON.stringify(parcelIds)};
+    var owner=${JSON.stringify(channelOwner)};
+    var requestId=${JSON.stringify(requestId)};
+    var status=document.getElementById('larmhub-share-status');
+    var whatsappWindow=null;
+    var channel=null;
+
+    function setStatus(message,isError){
+      if(!status)return;
+      status.textContent=message;
+      status.style.color=isError?'#b91c1c':'#166534';
+    }
+
+    function send(action){
+      if(typeof BroadcastChannel==='undefined'){
+        setStatus('Seu navegador não permite o compartilhamento direto nesta aba.',true);
+        return;
+      }
+      if(action==='whatsapp'){
+        whatsappWindow=window.open('about:blank','_blank');
+        if(whatsappWindow){
+          whatsappWindow.document.write('<p style="font-family:Arial;padding:20px">Preparando WhatsApp...</p>');
+        }
+      }
+      setStatus(action==='email'?'Enviando boleto por e-mail...':'Preparando compartilhamento no WhatsApp...',false);
+      channel=channel||new BroadcastChannel('larmhub-boleto-share');
+      channel.postMessage({source:'larmhub-boleto',owner:owner,requestId:requestId,action:action,parcelaIds:parcelIds});
+    }
+
+    window.larmHubBoletoShare=send;
+    if(typeof BroadcastChannel!=='undefined'){
+      channel=new BroadcastChannel('larmhub-boleto-share');
+      channel.onmessage=function(event){
+        var data=event.data||{};
+        if(data.source!=='larmhub-boleto-result'||data.owner!==owner||data.requestId!==requestId)return;
+        setStatus(data.message|| (data.ok?'Operação concluída.':'Não foi possível concluir.'),!data.ok);
+        if(data.action==='whatsapp'){
+          if(data.ok&&data.url&&whatsappWindow){
+            whatsappWindow.location.href=data.url;
+          }else if(whatsappWindow){
+            whatsappWindow.close();
+          }
+        }
+      };
+    }
+  })();
+  <\/script>`
+  return output.replace(/<\/body>/i, `${script}</body>`)
+}
+
 export default function ContasReceberPage() {
   const [rows, setRows] = useState<ParcelaReceber[]>([])
   const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY)
@@ -351,6 +458,7 @@ export default function ContasReceberPage() {
   const tableScrollRef = useRef<HTMLDivElement | null>(null)
   const returnInputRef = useRef<HTMLInputElement | null>(null)
   const lastConfigCepRef = useRef('')
+  const boletoChannelOwnerRef = useRef(`receber-${Math.random().toString(16).slice(2)}-${Date.now()}`)
   const tableMinWidth = 2030
 
   const requestParams = useMemo(() => ({
@@ -584,8 +692,9 @@ export default function ContasReceberPage() {
       )
       const html = response.data?.data?.html
       if (!html) throw new Error('O banco não retornou o boleto para impressão.')
+      const printableHtml = enhanceBoletoHtml(html, [row.id], rows, boletoChannelOwnerRef.current)
 
-      const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+      const blob = new Blob([printableHtml], { type: 'text/html;charset=utf-8' })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
@@ -608,8 +717,9 @@ export default function ContasReceberPage() {
     }
   }
 
-  const openHtmlDocument = (html: string) => {
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+  const openHtmlDocument = (html: string, parcelIds: string[]) => {
+    const printableHtml = enhanceBoletoHtml(html, parcelIds, rows, boletoChannelOwnerRef.current)
+    const blob = new Blob([printableHtml], { type: 'text/html;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -694,7 +804,7 @@ export default function ContasReceberPage() {
         }
       }
 
-      openHtmlDocument(result.html)
+      openHtmlDocument(result.html, ids)
       setSuccess(result.homologation
         ? `${result.quantidade} boleto(s) de homologação gerado(s) para impressão.`
         : `${result.quantidade} boleto(s) gerado(s) para impressão.`)
@@ -751,6 +861,84 @@ export default function ContasReceberPage() {
       setWhatsappLoading(false)
     }
   }
+
+
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return
+    const channel = new BroadcastChannel('larmhub-boleto-share')
+
+    channel.onmessage = async event => {
+      const data = event.data as {
+        source?: string
+        owner?: string
+        requestId?: string
+        action?: 'email' | 'whatsapp'
+        parcelaIds?: string[]
+      }
+      if (data?.source !== 'larmhub-boleto' || data.owner !== boletoChannelOwnerRef.current) return
+      const ids = Array.from(new Set(Array.isArray(data.parcelaIds) ? data.parcelaIds.filter(Boolean) : []))
+      if (!ids.length || !data.requestId || !data.action) return
+
+      const reply = (payload: { ok: boolean; message: string; url?: string }) => {
+        channel.postMessage({
+          source: 'larmhub-boleto-result',
+          owner: data.owner,
+          requestId: data.requestId,
+          action: data.action,
+          ...payload,
+        })
+      }
+
+      if (data.action === 'email') {
+        setEmailLoading(true)
+        setError('')
+        setSuccess('')
+        try {
+          const response = await apiClient.post('/financeiro/contas-receber/bradesco/enviar-email', { parcela_ids: ids })
+          const result = response.data?.data || {}
+          const message = `${result.enviados || 0} boleto(s) enviado(s) por e-mail.${result.erros ? ` ${result.erros} com erro.` : ''}`
+          setSuccess(message)
+          reply({ ok: Number(result.enviados || 0) > 0, message })
+          await load()
+        } catch (requestError: unknown) {
+          const message = requestErrorMessage(requestError, 'Não foi possível enviar o boleto por e-mail.')
+          setError(message)
+          reply({ ok: false, message })
+        } finally {
+          setEmailLoading(false)
+        }
+        return
+      }
+
+      setWhatsappLoading(true)
+      setError('')
+      setSuccess('')
+      try {
+        const response = await apiClient.post('/financeiro/contas-receber/bradesco/whatsapp', { parcela_ids: ids })
+        const result = response.data?.data || {}
+        const links = Array.isArray(result.links) ? result.links : []
+        if (links.length > 1) {
+          const content = links.map((item: { cliente?: string; telefone?: string; url: string }) => `${item.cliente || item.telefone || 'Cliente'}\n${item.url}`).join('\n\n')
+          downloadBlob(content, 'links-whatsapp-boletos.txt')
+        }
+        const message = links.length
+          ? `${result.preparados || 0} boleto(s) preparado(s) para WhatsApp.${links.length > 1 ? ' Os demais links foram baixados em TXT.' : ''}`
+          : requestErrorMessage({ response: { data: { message: result.falhas?.[0]?.message } } }, 'Nenhum telefone válido foi encontrado para o cliente.')
+        setSuccess(links.length ? message : '')
+        if (!links.length) setError(message)
+        reply({ ok: links.length > 0, message, url: links[0]?.url })
+        await load()
+      } catch (requestError: unknown) {
+        const message = requestErrorMessage(requestError, 'Não foi possível preparar o envio por WhatsApp.')
+        setError(message)
+        reply({ ok: false, message })
+      } finally {
+        setWhatsappLoading(false)
+      }
+    }
+
+    return () => channel.close()
+  }, [load])
 
   const generateRemittance = async () => {
     if (!selected.size) return
