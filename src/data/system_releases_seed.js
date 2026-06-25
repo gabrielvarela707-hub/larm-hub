@@ -6,6 +6,38 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.70",
+    "title": "Cadastros — ordenação direta pelos títulos das colunas",
+    "description": "Adiciona setas clicáveis nos títulos Código, Cliente/Nome e Categoria nas tabelas de clientes e fornecedores, mantendo a ordenação completa feita pela API.",
+    "frontend_version": "0.3.70",
+    "backend_version": "0.3.70",
+    "released_at": "2026-06-25T18:07:00.000Z",
+    "changes": [
+      "Os títulos Código, Cliente e Categoria da tabela de clientes passam a ser clicáveis para alternar entre ordenação crescente e decrescente.",
+      "Os títulos Código, Razão Social/Fantasia e Categoria da tabela de fornecedores passam a ter o mesmo comportamento.",
+      "A coluna ativa exibe seta para cima ou para baixo; as demais exibem o indicador neutro de ordenação.",
+      "A ordenação continua sendo executada no backend, portanto funciona sobre todos os registros e não apenas sobre a página visível.",
+      "O seletor de ordenação existente foi preservado como alternativa de uso.",
+      "Nenhuma regra de cadastro, boleto, recebível, remessa, retorno ou cálculo financeiro foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Cadastro de Clientes",
+        "Cadastro de Fornecedores",
+        "Cabeçalhos de tabela acessíveis com aria-sort"
+      ],
+      "backend": [
+        "Backend 0.3.69 preservado",
+        "Ordenação parametrizada já existente"
+      ],
+      "database": [
+        "Sem alteração estrutural"
+      ],
+      "integrations": []
+    }
+  },
+  {
     "version": "0.3.69",
     "title": "Cadastros — ordenação consistente e changelog por versão",
     "description": "Corrige a ordem visual do changelog e adiciona ordenação segura por nome, código e categoria aos cadastros de clientes e fornecedores.",
