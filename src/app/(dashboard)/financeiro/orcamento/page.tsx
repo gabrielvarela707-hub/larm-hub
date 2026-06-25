@@ -171,7 +171,7 @@ export default function OrcamentoPage() {
         <div className="px-5 py-4 border-b border-zinc-100 flex items-center justify-between gap-3">
           <div>
             <h2 className="font-semibold text-zinc-900">Orçamento — {empresa} {ano}</h2>
-            <p className="text-xs text-zinc-400 mt-0.5">Previsto vem do Movimento Bancário Orçado; Realizado vem do Movimento Bancário pago/recebido.</p>
+            <p className="text-xs text-zinc-400 mt-0.5">Previsto vem do Movimento Bancário Orçado; Realizado vem do Movimento Bancário pago/recebido. Saldo Final = Saldo Inicial + Entradas - Saídas.</p>
           </div>
           <span className="bg-zinc-100 text-zinc-600 text-xs px-2 py-0.5 rounded font-medium">Mensal</span>
         </div>

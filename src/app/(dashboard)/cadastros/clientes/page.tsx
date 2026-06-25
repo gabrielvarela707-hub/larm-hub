@@ -1,7 +1,7 @@
 'use client'
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, Eye, Loader2, Pencil, Plus, Search, Trash2, UserRound, X } from 'lucide-react'
+import { FormEvent, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Building2, Check, ChevronLeft, ChevronRight, Eye, FileText, History, Loader2, Pencil, Plus, Search, Trash2, UserRound, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { apiClient } from '@/lib/auth-store'
 import { usePermission } from '@/hooks/usePermission'
@@ -48,6 +48,45 @@ interface Cliente {
 }
 
 type ClienteForm = Omit<Cliente, 'id' | 'pessoa_id' | 'categoria'>
+
+interface ClienteHistoricoContrato {
+  id: string
+  numero: string
+  titulo: string | null
+  tipo_contrato: string | null
+  status: string
+  data_inicio: string | null
+  data_fim: string | null
+  data_assinatura: string | null
+  valor_total: number
+  valor_entrada: number
+  parcelas_count: number
+  obra_codigo_legado: number | null
+  unidade_codigo_legado: string | null
+  empresa: string | null
+  empresa_nome: string | null
+  parcelas_total: number
+  parcelas_pagas: number
+  parcelas_abertas: number
+  parcelas_vencidas: number
+  total_recebido: number
+  total_aberto: number
+  total_vencido: number
+  primeiro_vencimento: string | null
+  ultimo_vencimento: string | null
+}
+
+interface ClienteHistorico {
+  total_contratos: number
+  total_unidades: number
+  valor_contratos: number
+  total_recebido: number
+  total_aberto: number
+  total_vencido: number
+  contratos: ClienteHistoricoContrato[]
+}
+
+type ClienteModalTab = 'dados' | 'historico'
 
 const EMPTY_FORM: ClienteForm = {
   codigo: '',
@@ -118,6 +157,37 @@ function formatCep(value: string) {
   return digits.length > 5 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : digits
 }
 
+function formatMoney(value: number) {
+  return Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
+
+function formatDate(value: string | null) {
+  if (!value) return '—'
+  const date = new Date(`${String(value).slice(0, 10)}T12:00:00`)
+  if (Number.isNaN(date.getTime())) return '—'
+  return date.toLocaleDateString('pt-BR')
+}
+
+function contratoStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    rascunho: 'Rascunho',
+    aguardando_assinatura: 'Aguardando assinatura',
+    assinado: 'Assinado',
+    distratado: 'Distratado',
+    quitado: 'Quitado',
+    cancelado: 'Cancelado',
+  }
+  return labels[String(value || '').toLowerCase()] || value || 'Sem status'
+}
+
+function contratoStatusClass(value: string) {
+  const status = String(value || '').toLowerCase()
+  if (status === 'quitado') return 'bg-emerald-50 text-emerald-700'
+  if (status === 'assinado') return 'bg-blue-50 text-blue-700'
+  if (status === 'distratado' || status === 'cancelado') return 'bg-red-50 text-red-700'
+  return 'bg-amber-50 text-amber-700'
+}
+
 function toForm(cliente: Cliente): ClienteForm {
   const form = { ...EMPTY_FORM }
   for (const key of Object.keys(form) as (keyof ClienteForm)[]) {
@@ -178,6 +248,9 @@ export default function ClientesPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
   const [viewMode, setViewMode] = useState(false)
+  const [modalTab, setModalTab] = useState<ClienteModalTab>('dados')
+  const [historico, setHistorico] = useState<ClienteHistorico | null>(null)
+  const [historicoLoading, setHistoricoLoading] = useState(false)
   const [nextCodeLoading, setNextCodeLoading] = useState(false)
   const [cepLoading, setCepLoading] = useState(false)
   const [form, setForm] = useState<ClienteForm>(EMPTY_FORM)
@@ -250,9 +323,24 @@ export default function ClientesPage() {
     return () => window.clearTimeout(timer)
   }, [form.cep, lookupCep, modalOpen, viewMode])
 
+  const loadHistorico = useCallback(async (clienteId: number) => {
+    setHistoricoLoading(true)
+    try {
+      const response = await apiClient.get(`/cadastros/clientes/${clienteId}/historico`)
+      setHistorico(response.data?.data || null)
+    } catch (error: any) {
+      setHistorico(null)
+      toast.error(error?.response?.data?.message || 'Não foi possível carregar o histórico do cliente.')
+    } finally {
+      setHistoricoLoading(false)
+    }
+  }, [])
+
   async function openNew() {
     setEditingId(null)
     setViewMode(false)
+    setModalTab('dados')
+    setHistorico(null)
     setForm({ ...EMPTY_FORM })
     lastCepLookupRef.current = ''
     setModalOpen(true)
@@ -270,6 +358,8 @@ export default function ClientesPage() {
   function openEdit(cliente: Cliente) {
     setEditingId(cliente.id)
     setViewMode(false)
+    setModalTab('dados')
+    setHistorico(null)
     setForm(toForm(cliente))
     lastCepLookupRef.current = String(cliente.cep || '').replace(/\D/g, '')
     setModalOpen(true)
@@ -278,9 +368,29 @@ export default function ClientesPage() {
   function openView(cliente: Cliente) {
     setEditingId(cliente.id)
     setViewMode(true)
+    setModalTab('dados')
+    setHistorico(null)
     setForm(toForm(cliente))
     lastCepLookupRef.current = String(cliente.cep || '').replace(/\D/g, '')
     setModalOpen(true)
+  }
+
+  function openHistory(cliente: Cliente) {
+    setEditingId(cliente.id)
+    setViewMode(true)
+    setModalTab('historico')
+    setHistorico(null)
+    setForm(toForm(cliente))
+    lastCepLookupRef.current = String(cliente.cep || '').replace(/\D/g, '')
+    setModalOpen(true)
+    void loadHistorico(cliente.id)
+  }
+
+  function selectModalTab(tab: ClienteModalTab) {
+    setModalTab(tab)
+    if (tab === 'historico' && editingId && !historico && !historicoLoading) {
+      void loadHistorico(editingId)
+    }
   }
 
   function closeModal() {
@@ -288,6 +398,8 @@ export default function ClientesPage() {
     setModalOpen(false)
     setEditingId(null)
     setViewMode(false)
+    setModalTab('dados')
+    setHistorico(null)
   }
 
   function applySearch(event: FormEvent) {
@@ -464,6 +576,7 @@ export default function ClientesPage() {
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-1">
                       <button title="Visualizar" onClick={() => openView(cliente)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800"><Eye className="h-4 w-4" /></button>
+                      <button title="Histórico de compras e contratos" onClick={() => openHistory(cliente)} className="rounded-md p-2 text-slate-500 hover:bg-violet-50 hover:text-violet-600"><History className="h-4 w-4" /></button>
                       {canWrite && <button title="Alterar" onClick={() => openEdit(cliente)} className="rounded-md p-2 text-slate-500 hover:bg-blue-50 hover:text-blue-600"><Pencil className="h-4 w-4" /></button>}
                       {canWrite && cliente.ativo && <button title="Inativar" onClick={() => deactivate(cliente)} className="rounded-md p-2 text-slate-500 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>}
                     </div>
@@ -493,8 +606,27 @@ export default function ClientesPage() {
               <button onClick={closeModal} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </div>
 
+            <div className="flex gap-1 border-b border-slate-200 bg-slate-50 px-5 pt-2">
+              <button
+                type="button"
+                onClick={() => selectModalTab('dados')}
+                className={cn('border-b-2 px-4 py-2 text-sm font-medium transition', modalTab === 'dados' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800')}
+              >
+                Dados do cliente
+              </button>
+              <button
+                type="button"
+                disabled={!editingId}
+                onClick={() => selectModalTab('historico')}
+                className={cn('inline-flex items-center gap-2 border-b-2 px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40', modalTab === 'historico' ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-800')}
+              >
+                <History className="h-4 w-4" /> Histórico
+              </button>
+            </div>
+
             <form onSubmit={save} className="flex min-h-0 flex-1 flex-col">
-              <fieldset disabled={viewMode} className="min-h-0 flex-1 space-y-6 overflow-y-auto p-5 disabled:opacity-90">
+              <fieldset disabled={viewMode && modalTab === 'dados'} className="min-h-0 flex-1 overflow-y-auto p-5 disabled:opacity-90">
+                <div className={modalTab === 'dados' ? 'space-y-6' : 'hidden'}>
                 <section>
                   <h3 className="mb-3 text-sm font-semibold text-slate-800">Identificação</h3>
                   <div className="grid gap-3 md:grid-cols-4">
@@ -573,11 +705,75 @@ export default function ClientesPage() {
                     </label>
                   </div>
                 </section>
+                </div>
+
+                {modalTab === 'historico' && (
+                  <div className="space-y-5">
+                    {historicoLoading ? (
+                      <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-slate-500">
+                        <Loader2 className="h-5 w-5 animate-spin text-blue-600" /> Carregando histórico do cliente...
+                      </div>
+                    ) : !historico ? (
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
+                        Não foi possível carregar o histórico deste cliente.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                          <HistorySummaryCard label="Contratos" value={historico.total_contratos.toLocaleString('pt-BR')} icon={<FileText className="h-4 w-4" />} />
+                          <HistorySummaryCard label="Unidades" value={historico.total_unidades.toLocaleString('pt-BR')} icon={<Building2 className="h-4 w-4" />} />
+                          <HistorySummaryCard label="Recebido" value={formatMoney(historico.total_recebido)} tone="positive" />
+                          <HistorySummaryCard label="Em aberto" value={formatMoney(historico.total_aberto)} />
+                          <HistorySummaryCard label="Vencido" value={formatMoney(historico.total_vencido)} tone="negative" />
+                        </div>
+
+                        {historico.contratos.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-5 py-12 text-center">
+                            <FileText className="mx-auto h-8 w-8 text-slate-300" />
+                            <p className="mt-3 text-sm font-medium text-slate-700">Nenhum contrato vinculado</p>
+                            <p className="mt-1 text-xs text-slate-500">Este cliente ainda não possui compra, unidade ou contrato registrado no sistema.</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {historico.contratos.map(contrato => (
+                              <article key={contrato.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                  <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <h3 className="font-semibold text-slate-900">{contrato.numero || 'Contrato sem número'}</h3>
+                                      <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', contratoStatusClass(contrato.status))}>{contratoStatusLabel(contrato.status)}</span>
+                                      {contrato.empresa && <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">{contrato.empresa}</span>}
+                                    </div>
+                                    <p className="mt-1 text-sm text-slate-700">{contrato.titulo || [contrato.tipo_contrato, contrato.unidade_codigo_legado].filter(Boolean).join(' — ') || 'Contrato'}</p>
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      Obra {contrato.obra_codigo_legado || '—'} · Unidade {contrato.unidade_codigo_legado || '—'} · Período {formatDate(contrato.data_inicio)} a {formatDate(contrato.data_fim)}
+                                    </p>
+                                  </div>
+                                  <div className="text-left lg:text-right">
+                                    <p className="text-xs text-slate-500">Valor registrado no contrato</p>
+                                    <p className="text-base font-semibold text-slate-900">{formatMoney(contrato.valor_total)}</p>
+                                  </div>
+                                </div>
+
+                                <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-2 lg:grid-cols-4">
+                                  <ContractMetric label="Parcelas" value={`${contrato.parcelas_total} total · ${contrato.parcelas_pagas} pagas`} />
+                                  <ContractMetric label="Em aberto" value={formatMoney(contrato.total_aberto)} />
+                                  <ContractMetric label="Vencido" value={formatMoney(contrato.total_vencido)} negative={contrato.total_vencido > 0} />
+                                  <ContractMetric label="Recebido" value={formatMoney(contrato.total_recebido)} positive />
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
               </fieldset>
 
               <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
                 <button type="button" onClick={closeModal} className="h-10 rounded-lg border border-slate-200 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50">{viewMode ? 'Fechar' : 'Cancelar'}</button>
-                {!viewMode && (
+                {!viewMode && modalTab === 'dados' && (
                   <button disabled={saving || nextCodeLoading} type="submit" className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60">
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                     Salvar
@@ -588,6 +784,51 @@ export default function ClientesPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function HistorySummaryCard({
+  label,
+  value,
+  icon,
+  tone = 'default',
+}: {
+  label: string
+  value: string
+  icon?: ReactNode
+  tone?: 'default' | 'positive' | 'negative'
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+        {icon}
+        <span>{label}</span>
+      </div>
+      <p className={cn('mt-1 text-base font-semibold', tone === 'positive' ? 'text-emerald-700' : tone === 'negative' ? 'text-red-600' : 'text-slate-900')}>
+        {value}
+      </p>
+    </div>
+  )
+}
+
+function ContractMetric({
+  label,
+  value,
+  positive = false,
+  negative = false,
+}: {
+  label: string
+  value: string
+  positive?: boolean
+  negative?: boolean
+}) {
+  return (
+    <div>
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className={cn('mt-0.5 text-sm font-medium', positive ? 'text-emerald-700' : negative ? 'text-red-600' : 'text-slate-800')}>
+        {value}
+      </p>
     </div>
   )
 }
