@@ -133,6 +133,37 @@ function toForm(cliente: Cliente): ClienteForm {
   return form
 }
 
+
+function sortClientesLocal(data: Cliente[], sorting: string) {
+  const [field, direction] = sorting.split(':')
+  const multiplier = direction === 'desc' ? -1 : 1
+
+  return [...data].sort((a, b) => {
+    if (field === 'codigo') {
+      const aCode = Number.parseInt(String(a.codigo || '').replace(/\D/g, ''), 10)
+      const bCode = Number.parseInt(String(b.codigo || '').replace(/\D/g, ''), 10)
+      const aValid = Number.isFinite(aCode)
+      const bValid = Number.isFinite(bCode)
+      if (aValid && bValid && aCode !== bCode) return (aCode - bCode) * multiplier
+      if (aValid !== bValid) return aValid ? -1 : 1
+    }
+
+    const aValue = field === 'categoria'
+      ? (a.categoria || (a.tipo_pessoa === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'))
+      : (a.nome || a.razao_social || '')
+    const bValue = field === 'categoria'
+      ? (b.categoria || (b.tipo_pessoa === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'))
+      : (b.nome || b.razao_social || '')
+
+    const compared = String(aValue).localeCompare(String(bValue), 'pt-BR', {
+      sensitivity: 'base',
+      numeric: true,
+    })
+    if (compared !== 0) return compared * multiplier
+    return a.id - b.id
+  })
+}
+
 export default function ClientesPage() {
   const { canWrite } = usePermission('cadastros_clientes')
   const [items, setItems] = useState<Cliente[]>([])
@@ -164,11 +195,16 @@ export default function ClientesPage() {
           ativo: status,
           ordenar,
           direcao,
+          sort: ordenar,
+          direction: direcao,
           page,
           limit,
+          _ts: Date.now(),
         },
+        headers: { 'Cache-Control': 'no-cache' },
       })
-      setItems(response.data?.data || [])
+      const received = Array.isArray(response.data?.data) ? response.data.data : []
+      setItems(sortClientesLocal(received, `${ordenar}:${direcao}`))
       setTotal(Number(response.data?.total || 0))
     } catch (error: any) {
       toast.error(error?.response?.data?.message || 'Não foi possível carregar os clientes.')

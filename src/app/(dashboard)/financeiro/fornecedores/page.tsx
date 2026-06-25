@@ -643,6 +643,32 @@ function normalizeFornecedorForm(data?: Partial<Fornecedor>) {
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
+
+function sortFornecedoresLocal(data: Fornecedor[], sorting: string) {
+  const [field, direction] = sorting.split(':')
+  const multiplier = direction === 'desc' ? -1 : 1
+
+  return [...data].sort((a, b) => {
+    if (field === 'codigo') {
+      if (a.id !== b.id) return (a.id - b.id) * multiplier
+    }
+
+    const aValue = field === 'categoria'
+      ? (a.categoria || '')
+      : (a.razao_social || a.nome_fantasia || '')
+    const bValue = field === 'categoria'
+      ? (b.categoria || '')
+      : (b.razao_social || b.nome_fantasia || '')
+
+    const compared = String(aValue).localeCompare(String(bValue), 'pt-BR', {
+      sensitivity: 'base',
+      numeric: true,
+    })
+    if (compared !== 0) return compared * multiplier
+    return a.id - b.id
+  })
+}
+
 export default function FornecedoresPage() {
   const [lista, setLista] = useState<Fornecedor[]>([]);
   const [total, setTotal] = useState(0);
@@ -731,8 +757,15 @@ export default function FornecedoresPage() {
       const [ordenar, direcao] = ordenacao.split(":");
       params.ordenar = ordenar;
       params.direcao = direcao;
-      const r = await apiClient.get("/financeiro/fornecedores", { params });
-      setLista(r.data.data ?? []);
+      params.sort = ordenar;
+      params.direction = direcao;
+      params._ts = String(Date.now());
+      const r = await apiClient.get("/financeiro/fornecedores", {
+        params,
+        headers: { "Cache-Control": "no-cache" },
+      });
+      const received = Array.isArray(r.data?.data) ? r.data.data : [];
+      setLista(sortFornecedoresLocal(received, `${ordenar}:${direcao}`));
       setTotal(r.data.total ?? 0);
     } catch {
     } finally {

@@ -6,6 +6,45 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.73",
+    "title": "Cadastros — clique nas setas aplica a ordenação",
+    "description": "Corrige a ação dos cabeçalhos Código, Cliente/Razão Social e Categoria para recarregar as listas na ordem selecionada em Clientes e Fornecedores.",
+    "frontend_version": "0.3.73",
+    "backend_version": "0.3.73",
+    "released_at": "2026-06-25T19:30:00.000Z",
+    "changes": [
+      "O clique nas setas dos cabeçalhos passa a enviar explicitamente campo e direção da ordenação para a API.",
+      "A API de clientes e fornecedores reconhece ordenar/direcao e aliases de compatibilidade, aplicando ORDER BY no banco sobre todos os registros.",
+      "As respostas de listagem deixam de ser reutilizadas por cache durante a troca de ordenação.",
+      "Foi adicionada uma ordenação defensiva no frontend para que os registros da página visível reflitam imediatamente a seta selecionada.",
+      "O segundo clique no mesmo cabeçalho alterna corretamente entre crescente e decrescente.",
+      "Nenhuma regra de cadastro, boleto, recebível, remessa, retorno ou cálculo financeiro foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Cadastro de Clientes",
+        "Cadastro de Fornecedores",
+        "Ordenação por cabeçalho"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "PostgreSQL",
+        "ORDER BY parametrizado por lista segura"
+      ],
+      "database": [
+        "Sem alteração estrutural"
+      ],
+      "deploy": [
+        "Atualizar frontend e backend",
+        "Reiniciar a API",
+        "Sem migration"
+      ]
+    },
+    "is_current": true
+  },
+  {
     "version": "0.3.72",
     "title": "Cadastros — setas visíveis nos cabeçalhos de ordenação",
     "description": "Garante a exibição das setas de ordenação diretamente nos títulos Código, Cliente/Razão Social e Categoria nas tabelas de clientes e fornecedores.",
