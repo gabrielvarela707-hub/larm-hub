@@ -6,6 +6,39 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.74",
+    "title": "Cadastros — restauração das listagens após ordenação",
+    "description": "Corrige a falha de CORS introduzida nas listagens de Clientes e Fornecedores, mantendo as setas de ordenação funcionais sem enviar cabeçalhos não permitidos pela API.",
+    "frontend_version": "0.3.74",
+    "backend_version": "0.3.73",
+    "released_at": "2026-06-25T20:00:00.000Z",
+    "changes": [
+      "Removido o cabeçalho Cache-Control enviado pelo navegador, que acionava uma preflight CORS incompatível e impedia o carregamento dos cadastros.",
+      "Removidos os parâmetros duplicados sort/direction; as telas passam a enviar somente ordenar/direcao, conforme o contrato da API.",
+      "As setas de Código, Cliente/Razão Social e Categoria continuam alternando entre ordem crescente e decrescente.",
+      "A listagem volta a carregar normalmente antes e depois do clique nas setas.",
+      "Nenhuma rota, consulta SQL, cadastro, boleto ou regra financeira do backend foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Axios",
+        "Cadastro de Clientes",
+        "Cadastro de Fornecedores"
+      ],
+      "backend": [
+        "Sem alteração operacional",
+        "API 0.3.73 mantida"
+      ],
+      "database": [
+        "Sem alteração"
+      ],
+      "integrations": [
+        "CORS da API preservado"
+      ]
+    }
+  },
+  {
     "version": "0.3.73",
     "title": "Cadastros — clique nas setas aplica a ordenação",
     "description": "Corrige a ação dos cabeçalhos Código, Cliente/Razão Social e Categoria para recarregar as listas na ordem selecionada em Clientes e Fornecedores.",

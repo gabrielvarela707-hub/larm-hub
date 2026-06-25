@@ -757,17 +757,13 @@ export default function FornecedoresPage() {
       const [ordenar, direcao] = ordenacao.split(":");
       params.ordenar = ordenar;
       params.direcao = direcao;
-      params.sort = ordenar;
-      params.direction = direcao;
       params._ts = String(Date.now());
-      const r = await apiClient.get("/financeiro/fornecedores", {
-        params,
-        headers: { "Cache-Control": "no-cache" },
-      });
+      const r = await apiClient.get("/financeiro/fornecedores", { params });
       const received = Array.isArray(r.data?.data) ? r.data.data : [];
       setLista(sortFornecedoresLocal(received, `${ordenar}:${direcao}`));
       setTotal(r.data.total ?? 0);
-    } catch {
+    } catch (error) {
+      console.error('Erro ao carregar fornecedores:', error);
     } finally {
       setLoading(false);
     }
@@ -843,7 +839,8 @@ export default function FornecedoresPage() {
         cidade_uf:
           d.localidade && d.uf ? `${d.localidade} - ${d.uf}` : p.cidade_uf,
       }));
-    } catch {
+    } catch (error) {
+      console.error('Erro ao carregar fornecedores:', error);
     } finally {
       setCepLoading(false);
     }

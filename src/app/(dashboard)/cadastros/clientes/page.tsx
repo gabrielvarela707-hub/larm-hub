@@ -195,13 +195,10 @@ export default function ClientesPage() {
           ativo: status,
           ordenar,
           direcao,
-          sort: ordenar,
-          direction: direcao,
           page,
           limit,
           _ts: Date.now(),
         },
-        headers: { 'Cache-Control': 'no-cache' },
       })
       const received = Array.isArray(response.data?.data) ? response.data.data : []
       setItems(sortClientesLocal(received, `${ordenar}:${direcao}`))
