@@ -6,6 +6,36 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.71",
+    "title": "Frontend — restauração do pacote Next.js para deploy",
+    "description": "Restaura os metadados corretos do projeto web após o package.json do backend ter sido aplicado no repositório do frontend, permitindo que o Vercel identifique novamente o Next.js.",
+    "frontend_version": "0.3.71",
+    "backend_version": "0.3.70",
+    "released_at": "2026-06-25T18:30:00.000Z",
+    "changes": [
+      "Restaurado o package.json do frontend com o nome larmhub-web e a dependência Next.js.",
+      "Restaurado o package-lock.json correspondente ao frontend para impedir a remoção das dependências web durante o deploy.",
+      "Preservadas as setas de ordenação adicionadas na versão 0.3.70.",
+      "Adicionada validação operacional para conferir o nome do pacote e a versão do Next.js antes do deploy.",
+      "Nenhuma tela, regra financeira, boleto, recebível, remessa, retorno ou API foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Vercel"
+      ],
+      "backend": [
+        "Backend 0.3.70 preservado"
+      ],
+      "database": [
+        "Sem alteração estrutural"
+      ],
+      "integrations": []
+    }
+  },
+  {
     "version": "0.3.70",
     "title": "Cadastros — ordenação direta pelos títulos das colunas",
     "description": "Adiciona setas clicáveis nos títulos Código, Cliente/Nome e Categoria nas tabelas de clientes e fornecedores, mantendo a ordenação completa feita pela API.",
