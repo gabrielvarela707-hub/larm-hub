@@ -1,6 +1,6 @@
 /**
  * server/src/routes/recebiveis.js
- * v0.2.1 — Contratos, Parcelas, Cobrança, Acordos e Projeção.
+ * v0.3.64 — Contratos, parcelas, recálculo acumulado, boletos, comunicação e CNAB 400.
  */
 
 const express = require('express')
@@ -277,6 +277,7 @@ function buildContasReceberFilters(req, { defaultCurrentMonth = true } = {}) {
     cliente_id,
     tipo_receita_id,
     obra_id,
+    empresa,
     status,
     venc_inicio,
     venc_fim,
@@ -314,6 +315,16 @@ function buildContasReceberFilters(req, { defaultCurrentMonth = true } = {}) {
   if (obra_id) {
     params.push(Number(obra_id))
     where.push(`COALESCE(obra.id, unidade.produto_pai_id, unidade.id) = $${params.length}`)
+  }
+
+  const billingCompany = normalizeBillingCompany(empresa)
+  if (billingCompany) {
+    params.push(billingCompany)
+    where.push(`CASE
+      WHEN COALESCE(c.obra_codigo_legado, p.obra_codigo_legado) = 7698 THEN 'LUCKY'
+      WHEN COALESCE(c.obra_codigo_legado, p.obra_codigo_legado) IN (7700, 7701) THEN 'LARM'
+      ELSE NULL
+    END = $${params.length}`)
   }
 
   if (status && status !== 'todos') {
@@ -394,6 +405,10 @@ const CONTAS_RECEBER_SELECT = `
     p.codigo_barras,
     p.boleto_status,
     p.boleto_emitido_em,
+    p.boleto_enviado_em,
+    p.boleto_envio_canal,
+    p.boleto_envio_status,
+    p.boleto_envio_erro,
     ${contasReceberValorSql('p')}::float AS valor_total,
     COALESCE(p.valor_pago, 0)::float AS valor_pago,
     c.numero AS contrato_numero,
@@ -402,6 +417,11 @@ const CONTAS_RECEBER_SELECT = `
     c.cliente_id,
     c.obra_codigo_legado AS contrato_obra_codigo,
     c.unidade_codigo_legado AS contrato_unidade_codigo,
+    CASE
+      WHEN COALESCE(c.obra_codigo_legado, p.obra_codigo_legado) = 7698 THEN 'LUCKY'
+      WHEN COALESCE(c.obra_codigo_legado, p.obra_codigo_legado) IN (7700, 7701) THEN 'LARM'
+      ELSE NULL
+    END AS empresa_cobranca,
     COALESCE(cp.nome, cp.razao_social, c.comprador_nome) AS cliente_nome,
     COALESCE(cp.cpf_cnpj, c.comprador_cpf) AS cliente_documento,
     COALESCE(cp.email, c.comprador_email) AS cliente_email,
@@ -469,6 +489,10 @@ router.get('/financeiro/contas-receber/filtros', async (req, res) => {
         clientes: clientes.rows,
         tipos_receita: tipos.rows,
         obras: obras.rows,
+        empresas_cobranca: [
+          { codigo: 'LARM', nome: 'LARM PARTICIPAÇÕES LTDA', obras: [7700, 7701] },
+          { codigo: 'LUCKY', nome: 'LUCKY CAPITAL EMPREENDIMENTOS LTDA', obras: [7698] },
+        ],
       },
     })
   } catch (error) {
@@ -558,6 +582,7 @@ router.get('/financeiro/contas-receber/exportar', async (req, res) => {
       { header: 'Contrato', key: 'contrato_numero' },
       { header: 'Receita', key: 'receita_titulo' },
       { header: 'Tipo de Receita', key: 'tipo_receita_nome' },
+      { header: 'Empresa de Cobrança', key: 'empresa_cobranca' },
       { header: 'Obra', key: 'obra_nome' },
       { header: 'Unidade', key: 'unidade_nome' },
       { header: 'Documento', value: row => row.receita_documento || row.documento_legado || '' },
@@ -663,15 +688,39 @@ function legacyIndexInfo(code) {
   }
 }
 
-async function getBradescoConfig(tenantId, client = null, { forUpdate = false } = {}) {
+const RECEIVABLE_COMPANY_BY_OBRA = Object.freeze({
+  '7698': 'LUCKY',
+  '7700': 'LARM',
+  '7701': 'LARM',
+})
+
+function normalizeBillingCompany(value) {
+  const company = String(value || '').trim().toUpperCase()
+  return ['LARM', 'LUCKY'].includes(company) ? company : null
+}
+
+function billingCompanyFromObra(value) {
+  const obraCode = String(value ?? '').trim()
+  return RECEIVABLE_COMPANY_BY_OBRA[obraCode] || null
+}
+
+function billingCompanyForParcel(parcel) {
+  return billingCompanyFromObra(parcel?.contrato_obra_codigo)
+    || billingCompanyFromObra(parcel?.obra_codigo_legado)
+}
+
+async function getBradescoConfig(tenantId, client = null, { forUpdate = false, empresa = null } = {}) {
   const runner = client || { query }
   const lock = client && forUpdate ? ' FOR UPDATE' : ''
+  const company = normalizeBillingCompany(empresa)
+  const params = [tenantId]
+  const companyFilter = company ? ` AND UPPER(TRIM(empresa))=$${params.push(company)}` : ''
   const { rows: [config] } = await runner.query(
     `SELECT * FROM fin_cobranca_bancaria_config
-      WHERE tenant_id=$1 AND banco_codigo='237' AND ativo IS TRUE
-      ORDER BY CASE WHEN empresa='LARM' THEN 0 ELSE 1 END, id
+      WHERE tenant_id=$1 AND banco_codigo='237' AND ativo IS TRUE${companyFilter}
+      ORDER BY id
       LIMIT 1${lock}`,
-    [tenantId],
+    params,
   )
   return config || null
 }
@@ -691,7 +740,10 @@ async function calculateReceivable(parcel, tenantId, body = {}) {
   const targetDate = parseIsoDate(body.data_calculo || isoToday(), 'Data do cálculo')
   const dueDate = parseIsoDate(parcel.vencimento, 'Vencimento')
   const daysLate = Math.max(0, Math.floor((targetDate.getTime() - dueDate.getTime()) / 86400000))
-  const config = await getBradescoConfig(tenantId).catch(() => null)
+  const billingCompany = billingCompanyForParcel(parcel)
+  const config = billingCompany
+    ? await getBradescoConfig(tenantId, null, { empresa: billingCompany }).catch(() => null)
+    : null
 
   let indexType = null
   let lagMonths = 0
@@ -840,6 +892,101 @@ function ensureAdmin(req, res) {
   return false
 }
 
+async function getRecalculationParcels(anchor, tenantId, body = {}) {
+  const includePrevious = body.incluir_parcelas_anteriores === true || body.incluir_parcelas_anteriores === 'true'
+  if (!includePrevious) return [anchor]
+  const targetDate = normalizeDateOnly(body.data_calculo || isoToday(), 'Data do cálculo')
+  const { rows } = await query(
+    `${CONTAS_RECEBER_SELECT}
+      WHERE p.tenant_id=$1
+        AND p.contrato_id=$2
+        AND p.status IN ('aberta','atrasada')
+        AND p.vencimento <= $3::date
+      ORDER BY p.vencimento, p.tipo, p.numero, p.id`,
+    [tenantId, anchor.contrato_id, targetDate],
+  )
+  return rows.length ? rows : [anchor]
+}
+
+function aggregateRecalculations(calculations, anchorId) {
+  const anchor = calculations.find(item => item.parcela_id === anchorId) || calculations[calculations.length - 1]
+  const sum = field => roundMoney(calculations.reduce((total, item) => total + finiteNumber(item[field]), 0))
+  const warnings = [...new Set(calculations.flatMap(item => item.avisos || []))]
+  const missing = [...new Set(calculations.flatMap(item => item.referencias_ausentes || []))]
+  return {
+    ...anchor,
+    lote: calculations.length > 1,
+    quantidade_parcelas: calculations.length,
+    parcelas_ids: calculations.map(item => item.parcela_id),
+    parcelas: calculations,
+    dias_atraso: Math.max(...calculations.map(item => finiteNumber(item.dias_atraso))),
+    valor_base: sum('valor_base'),
+    valor_correcao: sum('valor_correcao'),
+    valor_corrigido: sum('valor_corrigido'),
+    valor_multa: sum('valor_multa'),
+    valor_juros_mora: sum('valor_juros_mora'),
+    valor_outros_acrescimos: sum('valor_outros_acrescimos'),
+    valor_seguro: sum('valor_seguro'),
+    valor_desconto: sum('valor_desconto'),
+    valor_final: sum('valor_final'),
+    referencias_ausentes: missing,
+    avisos: warnings,
+  }
+}
+
+async function calculateReceivableGroup(anchor, tenantId, body = {}) {
+  const parcels = await getRecalculationParcels(anchor, tenantId, body)
+  const calculations = []
+  for (const parcel of parcels) {
+    const parcelBody = parcel.id === anchor.id ? body : {
+      ...body,
+      outros_acrescimos: undefined,
+      seguro: undefined,
+      desconto: undefined,
+    }
+    calculations.push(await calculateReceivable(parcel, tenantId, parcelBody))
+  }
+  return aggregateRecalculations(calculations, anchor.id)
+}
+
+async function persistRecalculation(client, calculation, tenantId, userId) {
+  const { rows: [updated] } = await client.query(
+    `UPDATE com_parcelas
+        SET valor_correcao=$1,
+            valor_multa=$2,
+            valor_juros_mora=$3,
+            valor_outros_acrescimos=$4,
+            valor_seguro=$5,
+            valor_desconto=$6,
+            valor_recalculado=$7,
+            data_recalculo=$8,
+            recalculado_em=NOW(),
+            recalculado_por=$9,
+            recalculo_dados=$10::jsonb,
+            linha_digitavel=NULL,
+            codigo_barras=NULL,
+            boleto_status=CASE WHEN boleto_status='liquidado' THEN boleto_status ELSE 'recalculado' END,
+            updated_at=NOW()
+      WHERE id=$11 AND tenant_id=$12
+      RETURNING *`,
+    [
+      calculation.valor_correcao,
+      calculation.valor_multa,
+      calculation.valor_juros_mora,
+      calculation.valor_outros_acrescimos,
+      calculation.valor_seguro,
+      calculation.valor_desconto,
+      calculation.valor_final,
+      calculation.data_calculo,
+      userId,
+      JSON.stringify(calculation),
+      calculation.parcela_id,
+      tenantId,
+    ],
+  )
+  return updated
+}
+
 // POST /financeiro/contas-receber/:id/recalculo/preview
 router.post('/financeiro/contas-receber/:id/recalculo/preview', async (req, res) => {
   try {
@@ -848,7 +995,7 @@ router.post('/financeiro/contas-receber/:id/recalculo/preview', async (req, res)
     if (!['aberta', 'atrasada'].includes(parcel.status)) {
       return res.status(409).json({ ok: false, message: 'Somente parcelas em aberto podem ser recalculadas.' })
     }
-    const calculation = await calculateReceivable(parcel, req.user.tenant_id, req.body || {})
+    const calculation = await calculateReceivableGroup(parcel, req.user.tenant_id, req.body || {})
     return res.json({ ok: true, data: calculation })
   } catch (error) {
     return res.status(400).json({ ok: false, message: error.message })
@@ -864,48 +1011,19 @@ router.post('/financeiro/contas-receber/:id/recalcular', async (req, res) => {
     if (!['aberta', 'atrasada'].includes(parcel.status)) {
       return res.status(409).json({ ok: false, message: 'Somente parcelas em aberto podem ser recalculadas.' })
     }
-    const calculation = await calculateReceivable(parcel, req.user.tenant_id, req.body || {})
-    const { rows: [updated] } = await query(
-      `UPDATE com_parcelas
-          SET valor_correcao=$1,
-              valor_multa=$2,
-              valor_juros_mora=$3,
-              valor_outros_acrescimos=$4,
-              valor_seguro=$5,
-              valor_desconto=$6,
-              valor_recalculado=$7,
-              data_recalculo=$8,
-              recalculado_em=NOW(),
-              recalculado_por=$9,
-              recalculo_dados=$10::jsonb,
-              linha_digitavel=NULL,
-              codigo_barras=NULL,
-              boleto_status=CASE WHEN boleto_status='liquidado' THEN boleto_status ELSE 'recalculado' END,
-              updated_at=NOW()
-        WHERE id=$11 AND tenant_id=$12
-        RETURNING *`,
-      [
-        calculation.valor_correcao,
-        calculation.valor_multa,
-        calculation.valor_juros_mora,
-        calculation.valor_outros_acrescimos,
-        calculation.valor_seguro,
-        calculation.valor_desconto,
-        calculation.valor_final,
-        calculation.data_calculo,
-        req.user.id,
-        JSON.stringify(calculation),
-        req.params.id,
-        req.user.tenant_id,
-      ],
-    )
+    const calculation = await calculateReceivableGroup(parcel, req.user.tenant_id, req.body || {})
+    await transaction(async client => {
+      for (const item of calculation.parcelas || [calculation]) {
+        await persistRecalculation(client, item, req.user.tenant_id, req.user.id)
+      }
+    })
     await logAudit({
       userId: req.user.id,
       tenantId: req.user.tenant_id,
-      action: 'parcela_receber_recalculada',
+      action: calculation.lote ? 'parcelas_receber_recalculadas_lote' : 'parcela_receber_recalculada',
       module: 'recebiveis',
       entityType: 'com_parcelas',
-      entityId: updated.id,
+      entityId: parcel.id,
       meta: calculation,
     }).catch(() => {})
     return res.json({ ok: true, data: calculation })
@@ -917,8 +1035,11 @@ router.post('/financeiro/contas-receber/:id/recalcular', async (req, res) => {
 // GET /financeiro/contas-receber/bradesco/config
 router.get('/financeiro/contas-receber/bradesco/config', async (req, res) => {
   try {
-    const config = await getBradescoConfig(req.user.tenant_id)
-    return res.json({ ok: true, data: config })
+    const requestedCompany = normalizeBillingCompany(req.query?.empresa)
+      || billingCompanyFromObra(req.query?.obra_codigo)
+      || 'LARM'
+    const config = await getBradescoConfig(req.user.tenant_id, null, { empresa: requestedCompany })
+    return res.json({ ok: true, data: config, empresa: requestedCompany })
   } catch (error) {
     return res.status(500).json({ ok: false, message: error.message })
   }
@@ -928,6 +1049,8 @@ router.get('/financeiro/contas-receber/bradesco/config', async (req, res) => {
 router.put('/financeiro/contas-receber/bradesco/config', async (req, res) => {
   if (!ensureAdmin(req, res)) return
   const body = req.body || {}
+  const company = normalizeBillingCompany(body.empresa || 'LARM')
+  if (!company) return res.status(400).json({ ok: false, message: 'Empresa de cobrança inválida. Use LARM ou LUCKY.' })
   const required = ['beneficiario_nome', 'agencia', 'conta', 'carteira']
   const missing = required.filter(field => !String(body[field] || '').trim())
   if (missing.length) return res.status(400).json({ ok: false, message: `Preencha: ${missing.join(', ')}.` })
@@ -974,7 +1097,7 @@ router.put('/financeiro/contas-receber/bradesco/config', async (req, res) => {
        RETURNING *`,
       [
         req.user.tenant_id,
-        String(body.empresa || 'LARM').trim().toUpperCase(),
+        company,
         String(body.codigo_empresa || '').trim() || null,
         String(body.beneficiario_nome).trim(),
         onlyDigits(body.beneficiario_documento) || null,
@@ -1187,15 +1310,188 @@ function parcelForBank(parcel, assigned, billingDueDate = null) {
   }
 }
 
+
+function extractHtmlPart(html, tag) {
+  const match = String(html || '').match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'))
+  return match?.[1] || ''
+}
+
+function buildBoletoBundleHtml(entries, title = 'Boletos Bradesco') {
+  const firstHtml = entries[0]?.html || ''
+  const style = extractHtmlPart(firstHtml, 'style')
+  const pages = entries.map((entry, index) => {
+    let body = extractHtmlPart(entry.html, 'body') || entry.html
+    body = body.replace(/<div class="actions">[\s\S]*?<\/div>/i, '')
+    return `<section class="boleto-page" data-parcela="${entry.parcel.id}">${body}</section>${index < entries.length - 1 ? '<div class="page-break"></div>' : ''}`
+  }).join('')
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${title}</title><style>${style}\n.page-break{break-after:page;page-break-after:always}.boleto-page{position:relative}@media print{.page-break{display:block}}</style></head><body><div class="actions"><button onclick="window.print()">Imprimir / Salvar PDF</button><button onclick="window.close()">Fechar</button></div>${pages}</body></html>`
+}
+
+async function prepareBoletoEntries(client, tenantId, parcelIds, body = {}) {
+  const { rows } = await client.query(
+    `${CONTAS_RECEBER_SELECT}
+      WHERE p.tenant_id=$1 AND p.id = ANY($2::uuid[])
+      ORDER BY p.vencimento, p.id
+      FOR UPDATE OF p`,
+    [tenantId, parcelIds],
+  )
+  if (rows.length !== parcelIds.length) throw new Error('Uma ou mais parcelas selecionadas não foram localizadas.')
+
+  const configCache = new Map()
+  const entries = []
+  for (const parcel of rows) {
+    const company = billingCompanyForParcel(parcel)
+    if (!company) throw new Error(`A parcela ${parcel.documento_legado || parcel.id} não possui empresa de cobrança.`)
+    let config = configCache.get(company)
+    if (!config) {
+      config = await getBradescoConfig(tenantId, client, { forUpdate: true, empresa: company })
+      if (!config) throw new Error(`Configure a cobrança Bradesco da empresa ${company} antes de gerar o boleto.`)
+      validateBradescoConfigForBoleto(config)
+      configCache.set(company, config)
+    }
+    parcel.tenant_id = tenantId
+    const billingDate = validateParcelForBilling(parcel, body)
+    const assigned = await assignOurNumber(client, config, parcel)
+    const bankParcel = parcelForBank(parcel, assigned, billingDate.dueDate)
+    const boleto = buildBoletoData(config, bankParcel)
+    const html = buildBoletoHtml(config, bankParcel)
+    await client.query(
+      `UPDATE com_parcelas
+          SET linha_digitavel=$1,
+              codigo_barras=$2,
+              boleto_status='emitido',
+              boleto_emitido_em=NOW(),
+              updated_at=NOW()
+        WHERE id=$3::uuid AND tenant_id=$4::uuid`,
+      [boleto.digitableLine, boleto.barcode, parcel.id, tenantId],
+    )
+    entries.push({ parcel: bankParcel, boleto, html, config, company })
+  }
+  return entries
+}
+
+async function getTenantSesConfig(tenantId) {
+  const { rows: [cfg] } = await query(
+    `SELECT ses_region,ses_access_key_id,ses_secret_access_key,ses_from_email,ses_from_name
+       FROM hub_tenant_configs WHERE tenant_id=$1`,
+    [tenantId],
+  )
+  if (!cfg?.ses_access_key_id || !cfg?.ses_secret_access_key || !cfg?.ses_from_email) {
+    throw new Error('AWS SES não está configurado para este tenant.')
+  }
+  return cfg
+}
+
+function mimeBase64(value) {
+  return Buffer.from(String(value || ''), 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n')
+}
+
+async function sendBoletoRawEmail(sesConfig, recipient, customerName, entries) {
+  const { SESClient, SendRawEmailCommand } = require('@aws-sdk/client-ses')
+  const client = new SESClient({
+    region: sesConfig.ses_region || 'us-east-1',
+    credentials: { accessKeyId: sesConfig.ses_access_key_id, secretAccessKey: sesConfig.ses_secret_access_key },
+  })
+  const boundary = `----LarmHub${Date.now()}${Math.random().toString(16).slice(2)}`
+  const attachment = buildBoletoBundleHtml(entries, `Boletos de ${customerName || recipient}`)
+  const total = roundMoney(entries.reduce((sum, entry) => sum + finiteNumber(entry.parcel.valor_total), 0))
+  const subject = `Boletos — ${customerName || recipient}`
+  const htmlBody = `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto"><h2>Boletos disponíveis</h2><p>Olá, <strong>${String(customerName || '').replace(/[<>]/g, '')}</strong>.</p><p>Encaminhamos ${entries.length} boleto(s), totalizando <strong>R$ ${total.toLocaleString('pt-BR',{minimumFractionDigits:2})}</strong>.</p><ul>${entries.map(entry => `<li>Vencimento ${normalizeDateOnly(entry.parcel.vencimento_boleto,'Vencimento')} — R$ ${finiteNumber(entry.parcel.valor_total).toLocaleString('pt-BR',{minimumFractionDigits:2})}<br><small>${entry.boleto.digitableLine}</small></li>`).join('')}</ul><p>O arquivo HTML anexado pode ser aberto no navegador e salvo em PDF.</p></div>`
+  const fromName = sesConfig.ses_from_name || 'LarmHub'
+  const raw = [
+    `From: ${fromName} <${sesConfig.ses_from_email}>`,
+    `To: ${recipient}`,
+    `Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/html; charset=UTF-8',
+    'Content-Transfer-Encoding: base64',
+    '',
+    mimeBase64(htmlBody),
+    `--${boundary}`,
+    'Content-Type: text/html; name="boletos.html"',
+    'Content-Disposition: attachment; filename="boletos.html"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    mimeBase64(attachment),
+    `--${boundary}--`,
+    '',
+  ].join('\r\n')
+  const result = await client.send(new SendRawEmailCommand({ RawMessage: { Data: Buffer.from(raw, 'utf8') } }))
+  return result.MessageId || null
+}
+
+async function recordBoletoDelivery({ tenantId, parcelId, channel, recipient, status, userId, providerMessageId = null, error = null, data = {} }) {
+  await query(
+    `WITH params AS (
+       SELECT
+         $1::uuid AS tenant_id,
+         $2::uuid AS parcela_id,
+         $3::varchar(20) AS canal,
+         $4::varchar(180) AS destinatario,
+         $5::varchar(30) AS status,
+         $6::varchar(180) AS provider_message_id,
+         $7::text AS erro,
+         COALESCE($8::jsonb, '{}'::jsonb) AS dados,
+         $9::uuid AS enviado_por
+     )
+     INSERT INTO fin_boletos_envios (
+       tenant_id,parcela_id,canal,destinatario,status,provider_message_id,erro,dados,enviado_por,enviado_em
+     )
+     SELECT
+       tenant_id,parcela_id,canal,destinatario,status,provider_message_id,erro,dados,enviado_por,
+       CASE WHEN status='enviado'::varchar(30) THEN NOW() ELSE NULL END
+     FROM params`,
+    [tenantId, parcelId, channel, recipient || null, status, providerMessageId, error, JSON.stringify(data || {}), userId],
+  )
+  await query(
+    `WITH params AS (
+       SELECT
+         $1::uuid AS parcela_id,
+         $2::varchar(20) AS canal,
+         $3::varchar(30) AS status,
+         $4::text AS erro,
+         $5::uuid AS tenant_id
+     )
+     UPDATE com_parcelas AS p
+        SET boleto_status=CASE WHEN params.status='enviado'::varchar(30) THEN 'enviado'::varchar(30) ELSE p.boleto_status END,
+            boleto_enviado_em=CASE WHEN params.status='enviado'::varchar(30) THEN NOW() ELSE p.boleto_enviado_em END,
+            boleto_envio_canal=params.canal,
+            boleto_envio_status=params.status,
+            boleto_envio_erro=params.erro,
+            updated_at=NOW()
+       FROM params
+      WHERE p.id=params.parcela_id AND p.tenant_id=params.tenant_id`,
+    [parcelId, channel, status, error, tenantId],
+  )
+}
+
 // POST /financeiro/contas-receber/:id/bradesco/boleto
 router.post('/financeiro/contas-receber/:id/bradesco/boleto', async (req, res) => {
   if (!ensureAdmin(req, res)) return
   try {
     const result = await transaction(async client => {
-      const config = await getBradescoConfig(req.user.tenant_id, client, { forUpdate: true })
-      validateBradescoConfigForBoleto(config)
       const parcel = await getReceivableParcel(req.params.id, req.user.tenant_id, client, { forUpdate: true })
       if (!parcel) throw new Error('Parcela não encontrada.')
+      const company = billingCompanyForParcel(parcel)
+      if (!company) {
+        throw boletoValidationError(
+          `A obra ${parcel.obra_codigo_legado || parcel.contrato_obra_codigo || 'não informada'} não possui empresa de cobrança configurada.`,
+          'RECEIVABLE_COMPANY_NOT_MAPPED',
+          ['obra_codigo_legado'],
+        )
+      }
+      const config = await getBradescoConfig(req.user.tenant_id, client, { forUpdate: true, empresa: company })
+      if (!config) {
+        throw boletoValidationError(
+          `Configure a cobrança Bradesco da empresa ${company} antes de gerar o boleto.`,
+          'BRADESCO_CONFIG_NOT_FOUND_FOR_COMPANY',
+          ['empresa'],
+        )
+      }
+      validateBradescoConfigForBoleto(config)
       parcel.tenant_id = req.user.tenant_id
       const billingDate = validateParcelForBilling(parcel, req.body || {})
       const assigned = await assignOurNumber(client, config, parcel)
@@ -1204,11 +1500,15 @@ router.post('/financeiro/contas-receber/:id/bradesco/boleto', async (req, res) =
       const html = buildBoletoHtml(config, bankParcel)
       await client.query(
         `UPDATE com_parcelas
-            SET linha_digitavel=$1, codigo_barras=$2, boleto_status='emitido', boleto_emitido_em=NOW(), updated_at=NOW()
-          WHERE id=$3 AND tenant_id=$4`,
+            SET linha_digitavel=$1,
+                codigo_barras=$2,
+                boleto_status='emitido',
+                boleto_emitido_em=NOW(),
+                updated_at=NOW()
+          WHERE id=$3::uuid AND tenant_id=$4::uuid`,
         [boleto.digitableLine, boleto.barcode, parcel.id, req.user.tenant_id],
       )
-      return { html, boleto, homologado: config.homologado }
+      return { html, boleto, homologado: config.homologado, empresa: company }
     })
     return res.json({ ok: true, data: result })
   } catch (error) {
@@ -1229,6 +1529,114 @@ router.post('/financeiro/contas-receber/:id/bradesco/boleto', async (req, res) =
   }
 })
 
+
+// POST /financeiro/contas-receber/bradesco/boletos — impressão em lote
+router.post('/financeiro/contas-receber/bradesco/boletos', async (req, res) => {
+  if (!ensureAdmin(req, res)) return
+  const ids = Array.from(new Set(Array.isArray(req.body?.parcela_ids) ? req.body.parcela_ids.filter(Boolean) : []))
+  if (!ids.length) return res.status(400).json({ ok: false, message: 'Selecione ao menos uma parcela.' })
+  try {
+    const entries = await transaction(client => prepareBoletoEntries(client, req.user.tenant_id, ids, req.body || {}))
+    return res.json({
+      ok: true,
+      data: {
+        html: buildBoletoBundleHtml(entries),
+        quantidade: entries.length,
+        empresas: [...new Set(entries.map(entry => entry.company))],
+        homologacao: entries.some(entry => !entry.config.homologado),
+      },
+    })
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message, code: error.code || 'BOLETO_BATCH_FAILED' })
+  }
+})
+
+// POST /financeiro/contas-receber/bradesco/enviar-email
+router.post('/financeiro/contas-receber/bradesco/enviar-email', async (req, res) => {
+  if (!ensureAdmin(req, res)) return
+  const ids = Array.from(new Set(Array.isArray(req.body?.parcela_ids) ? req.body.parcela_ids.filter(Boolean) : []))
+  if (!ids.length) return res.status(400).json({ ok: false, message: 'Selecione ao menos uma parcela.' })
+  try {
+    const entries = await transaction(client => prepareBoletoEntries(client, req.user.tenant_id, ids, req.body || {}))
+    const sesConfig = await getTenantSesConfig(req.user.tenant_id)
+    const groups = new Map()
+    for (const entry of entries) {
+      const email = String(entry.parcel.cliente_email || '').trim().toLowerCase()
+      const key = email || `sem-email:${entry.parcel.id}`
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key).push(entry)
+    }
+
+    let sent = 0
+    const failures = []
+    for (const [email, group] of groups.entries()) {
+      if (email.startsWith('sem-email:')) {
+        for (const entry of group) {
+          const message = `Cliente ${entry.parcel.cliente_nome || ''} sem e-mail cadastrado.`
+          failures.push({ parcela_id: entry.parcel.id, cliente: entry.parcel.cliente_nome, message })
+          await recordBoletoDelivery({ tenantId: req.user.tenant_id, parcelId: entry.parcel.id, channel: 'email', recipient: null, status: 'erro', userId: req.user.id, error: message })
+        }
+        continue
+      }
+      try {
+        const messageId = await sendBoletoRawEmail(sesConfig, email, group[0].parcel.cliente_nome, group)
+        for (const entry of group) {
+          sent += 1
+          await recordBoletoDelivery({ tenantId: req.user.tenant_id, parcelId: entry.parcel.id, channel: 'email', recipient: email, status: 'enviado', userId: req.user.id, providerMessageId: messageId, data: { quantidade_grupo: group.length } })
+        }
+      } catch (error) {
+        for (const entry of group) {
+          failures.push({ parcela_id: entry.parcel.id, cliente: entry.parcel.cliente_nome, message: error.message })
+          await recordBoletoDelivery({ tenantId: req.user.tenant_id, parcelId: entry.parcel.id, channel: 'email', recipient: email, status: 'erro', userId: req.user.id, error: error.message })
+        }
+      }
+    }
+    return res.status(sent ? 200 : 400).json({ ok: sent > 0, data: { enviados: sent, erros: failures.length, falhas: failures } })
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message })
+  }
+})
+
+// POST /financeiro/contas-receber/bradesco/whatsapp — prepara links; confirmação real depende de API oficial.
+router.post('/financeiro/contas-receber/bradesco/whatsapp', async (req, res) => {
+  if (!ensureAdmin(req, res)) return
+  const ids = Array.from(new Set(Array.isArray(req.body?.parcela_ids) ? req.body.parcela_ids.filter(Boolean) : []))
+  if (!ids.length) return res.status(400).json({ ok: false, message: 'Selecione ao menos uma parcela.' })
+  try {
+    const entries = await transaction(client => prepareBoletoEntries(client, req.user.tenant_id, ids, req.body || {}))
+    const groups = new Map()
+    for (const entry of entries) {
+      const phone = onlyDigits(entry.parcel.cliente_telefone)
+      const key = phone || `sem-telefone:${entry.parcel.id}`
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key).push(entry)
+    }
+    const links = []
+    const failures = []
+    for (const [phone, group] of groups.entries()) {
+      if (phone.startsWith('sem-telefone:')) {
+        for (const entry of group) {
+          const message = `Cliente ${entry.parcel.cliente_nome || ''} sem telefone cadastrado.`
+          failures.push({ parcela_id: entry.parcel.id, cliente: entry.parcel.cliente_nome, message })
+          await recordBoletoDelivery({ tenantId: req.user.tenant_id, parcelId: entry.parcel.id, channel: 'whatsapp', recipient: null, status: 'erro', userId: req.user.id, error: message })
+        }
+        continue
+      }
+      const normalizedPhone = phone.startsWith('55') ? phone : `55${phone}`
+      const total = roundMoney(group.reduce((sum, entry) => sum + finiteNumber(entry.parcel.valor_total), 0))
+      const lines = group.map((entry, index) => `${index + 1}. Venc. ${normalizeDateOnly(entry.parcel.vencimento_boleto,'Vencimento')} — R$ ${finiteNumber(entry.parcel.valor_total).toLocaleString('pt-BR',{minimumFractionDigits:2})}\nLinha digitável: ${entry.boleto.digitableLine}`)
+      const message = `Olá, ${group[0].parcel.cliente_nome || ''}. Seguem ${group.length} boleto(s), total R$ ${total.toLocaleString('pt-BR',{minimumFractionDigits:2})}.\n\n${lines.join('\n\n')}`
+      links.push({ telefone: normalizedPhone, cliente: group[0].parcel.cliente_nome, parcelas: group.map(entry => entry.parcel.id), url: `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(message)}` })
+      for (const entry of group) {
+        await recordBoletoDelivery({ tenantId: req.user.tenant_id, parcelId: entry.parcel.id, channel: 'whatsapp', recipient: normalizedPhone, status: 'preparado', userId: req.user.id, data: { observacao: 'Link preparado. Sem confirmação de entrega porque não há API oficial configurada.' } })
+      }
+    }
+    return res.json({ ok: true, data: { links, preparados: links.reduce((sum, item) => sum + item.parcelas.length, 0), erros: failures.length, falhas: failures } })
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message })
+  }
+})
+
 // POST /financeiro/contas-receber/bradesco/remessa
 router.post('/financeiro/contas-receber/bradesco/remessa', async (req, res) => {
   if (!ensureAdmin(req, res)) return
@@ -1237,10 +1645,6 @@ router.post('/financeiro/contas-receber/bradesco/remessa', async (req, res) => {
 
   try {
     const result = await transaction(async client => {
-      const config = await getBradescoConfig(req.user.tenant_id, client, { forUpdate: true })
-      if (!config) throw new Error('Configure a cobrança Bradesco antes de gerar a remessa.')
-      if (!config.codigo_empresa) throw new Error('Informe o código da empresa no Bradesco.')
-
       const { rows } = await client.query(
         `${CONTAS_RECEBER_SELECT}
           WHERE p.tenant_id=$1 AND p.id = ANY($2::uuid[])
@@ -1249,6 +1653,15 @@ router.post('/financeiro/contas-receber/bradesco/remessa', async (req, res) => {
         [req.user.tenant_id, ids],
       )
       if (rows.length !== ids.length) throw new Error('Uma ou mais parcelas selecionadas não foram localizadas.')
+
+      const companies = new Set(rows.map(billingCompanyForParcel).filter(Boolean))
+      if (companies.size !== 1 || rows.some(parcel => !billingCompanyForParcel(parcel))) {
+        throw new Error('As parcelas selecionadas precisam pertencer à mesma empresa de cobrança. Separe a remessa por obra/empresa.')
+      }
+      const [company] = companies
+      const config = await getBradescoConfig(req.user.tenant_id, client, { forUpdate: true, empresa: company })
+      if (!config) throw new Error(`Configure a cobrança Bradesco da empresa ${company} antes de gerar a remessa.`)
+      if (!config.codigo_empresa) throw new Error(`Informe o código da empresa ${company} no Bradesco.`)
 
       const bankItems = []
       for (const parcel of rows) {
@@ -1280,7 +1693,10 @@ router.post('/financeiro/contas-receber/bradesco/remessa', async (req, res) => {
           [batch.id, req.user.tenant_id, item.id, item.nosso_numero, item.nosso_numero_dv, item.controle_participante, item.valor_total, item.vencimento_boleto],
         )
         await client.query(
-          `UPDATE com_parcelas SET boleto_status='remessa_gerada', updated_at=NOW() WHERE id=$1`,
+          `UPDATE com_parcelas
+              SET boleto_status='remessa_gerada',
+                  updated_at=NOW()
+            WHERE id=$1::uuid`,
           [item.id],
         )
       }
@@ -1288,7 +1704,7 @@ router.post('/financeiro/contas-receber/bradesco/remessa', async (req, res) => {
         `UPDATE fin_cobranca_bancaria_config SET remessa_sequencia=$1, updated_at=NOW() WHERE id=$2`,
         [remittanceNumber + 1, config.id],
       )
-      return { ...generated, total, batchId: batch.id }
+      return { ...generated, total, batchId: batch.id, empresa: company }
     })
 
     res.setHeader('Content-Type', 'text/plain; charset=ISO-8859-1')
@@ -1305,6 +1721,7 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
   if (!ensureAdmin(req, res)) return
   const filename = String(req.body?.filename || 'retorno.ret').slice(0, 160)
   const content = String(req.body?.content || '')
+  const applyPayment = req.body?.baixar_liquidacoes !== false
   if (!content) return res.status(400).json({ ok: false, message: 'Arquivo de retorno vazio.' })
 
   try {
@@ -1318,14 +1735,17 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
     }
 
     const result = await transaction(async client => {
-      const config = await getBradescoConfig(req.user.tenant_id, client)
+      const returnCompany = normalizeBillingCompany(req.body?.empresa)
+      const config = returnCompany
+        ? await getBradescoConfig(req.user.tenant_id, client, { empresa: returnCompany })
+        : null
       const { rows: [batch] } = await client.query(
         `INSERT INTO fin_retornos_cobranca (
            tenant_id, config_id, banco_codigo, nome_arquivo, data_arquivo,
-           quantidade_registros, sha256, conteudo, processado_por
-         ) VALUES ($1,$2,'237',$3,$4,$5,$6,$7,$8)
+           quantidade_registros, sha256, conteudo, processado_por, baixa_automatica
+         ) VALUES ($1,$2,'237',$3,$4,$5,$6,$7,$8,$9)
          RETURNING *`,
-        [req.user.tenant_id, config?.id || null, filename, parsed.header.fileDate, parsed.recordCount, parsed.sha256, content, req.user.id],
+        [req.user.tenant_id, config?.id || null, filename, parsed.header.fileDate, parsed.recordCount, parsed.sha256, content, req.user.id, applyPayment],
       )
 
       let reconciled = 0
@@ -1369,21 +1789,33 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
           } else if (item.occurrence === '06') {
             const paidValue = finiteNumber(item.paidAmount, item.titleAmount)
             paidTotal += paidValue
-            await client.query(
-              `UPDATE com_parcelas
-                  SET status='paga',
-                      pago_em=COALESCE($1::date,$2::date,CURRENT_DATE),
-                      valor_pago=$3,
-                      forma_pagamento='Boleto',
-                      origem_baixa='retorno_bradesco',
-                      conciliado_em=NOW(),
-                      boleto_status='liquidado',
-                      conciliacao_dados=COALESCE(conciliacao_dados,'{}'::jsonb) || $4::jsonb,
-                      updated_at=NOW()
-                WHERE id=$5`,
-              [item.creditDate, item.occurrenceDate, paidValue, JSON.stringify({ banco: '237', arquivo: filename, ocorrencia: item.occurrence, nosso_numero: item.nossoNumero, valor_pago: paidValue }), match.id],
-            )
-            processingStatus = 'liquidado'
+            if (applyPayment) {
+              await client.query(
+                `UPDATE com_parcelas
+                    SET status='paga',
+                        pago_em=COALESCE($1::date,$2::date,CURRENT_DATE),
+                        valor_pago=$3,
+                        forma_pagamento='Boleto',
+                        origem_baixa='retorno_bradesco',
+                        conciliado_em=NOW(),
+                        boleto_status='liquidado',
+                        conciliacao_dados=COALESCE(conciliacao_dados,'{}'::jsonb) || $4::jsonb,
+                        updated_at=NOW()
+                  WHERE id=$5`,
+                [item.creditDate, item.occurrenceDate, paidValue, JSON.stringify({ banco: '237', arquivo: filename, ocorrencia: item.occurrence, nosso_numero: item.nossoNumero, valor_pago: paidValue, baixa_automatica: true }), match.id],
+              )
+              processingStatus = 'liquidado'
+            } else {
+              await client.query(
+                `UPDATE com_parcelas
+                    SET boleto_status='liquidacao_pendente_baixa',
+                        conciliacao_dados=COALESCE(conciliacao_dados,'{}'::jsonb) || $1::jsonb,
+                        updated_at=NOW()
+                  WHERE id=$2`,
+                [JSON.stringify({ banco: '237', arquivo: filename, ocorrencia: item.occurrence, nosso_numero: item.nossoNumero, valor_pago: paidValue, baixa_automatica: false }), match.id],
+              )
+              processingStatus = 'liquidado_sem_baixa'
+            }
           } else if (['09', '10'].includes(item.occurrence)) {
             await client.query(
               `UPDATE com_parcelas SET boleto_status='baixado_banco', updated_at=NOW() WHERE id=$1`,
@@ -1421,6 +1853,7 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
         conciliados: reconciled,
         nao_localizados: notFound,
         valor_liquidado: roundMoney(paidTotal),
+        baixa_automatica: applyPayment,
         ocorrencias: occurrences,
       }
     })

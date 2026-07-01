@@ -2,16 +2,18 @@
  * scripts/migrate_system_releases.js
  * Cria/atualiza o versionamento/changelog do sistema.
  *
- * Importante:
- * - Insere/atualiza todas as versões como is_current=false.
- * - Depois marca somente a última versão do seed como atual.
- * - Evita erro da constraint idx_system_releases_current_unique.
+ * Fonte canônica:
+ * - src/data/system_releases_seed.js
+ *
+ * Compatibilidade:
+ * - data/system_releases_seed.js permanece sincronizado, mas não é mais a
+ *   fonte principal da migration.
  */
 
 require('dotenv').config()
 const { pool, connectDB } = require('../src/config/database')
 const logger = require('../src/config/logger')
-const { SYSTEM_RELEASES } = require('../data/system_releases_seed')
+const { SYSTEM_RELEASES } = require('../src/data/system_releases_seed')
 
 const SQL = `
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -35,18 +37,54 @@ CREATE INDEX IF NOT EXISTS idx_system_releases_released_at ON hub_system_release
 CREATE UNIQUE INDEX IF NOT EXISTS idx_system_releases_current_unique ON hub_system_releases(is_current) WHERE is_current = true;
 `
 
-async function seedReleases() {
-  const parseVersion = value => String(value || '').split('.').map(part => Number(part) || 0)
-  const compareVersions = (a, b) => {
-    const av = parseVersion(a.version)
-    const bv = parseVersion(b.version)
-    for (let i = 0; i < Math.max(av.length, bv.length); i++) {
-      const diff = (av[i] || 0) - (bv[i] || 0)
-      if (diff !== 0) return diff
-    }
-    return 0
+function parseVersion(value) {
+  return String(value || '')
+    .split('.')
+    .map(part => Number(part) || 0)
+}
+
+function compareVersions(a, b) {
+  const av = parseVersion(a.version)
+  const bv = parseVersion(b.version)
+
+  for (let i = 0; i < Math.max(av.length, bv.length); i += 1) {
+    const diff = (av[i] || 0) - (bv[i] || 0)
+    if (diff !== 0) return diff
   }
+
+  return 0
+}
+
+function validateReleases() {
+  if (!Array.isArray(SYSTEM_RELEASES) || SYSTEM_RELEASES.length === 0) {
+    throw new Error('O seed de changelog está vazio ou inválido.')
+  }
+
+  const seen = new Set()
+  const duplicates = []
+
+  for (const release of SYSTEM_RELEASES) {
+    if (!release?.version || !release?.title || !release?.released_at) {
+      throw new Error(`Release inválida no seed: ${JSON.stringify(release)}`)
+    }
+
+    if (seen.has(release.version)) duplicates.push(release.version)
+    seen.add(release.version)
+  }
+
+  if (duplicates.length > 0) {
+    throw new Error(`Versões duplicadas no seed: ${[...new Set(duplicates)].join(', ')}`)
+  }
+}
+
+async function seedReleases() {
+  validateReleases()
+
   const current = [...SYSTEM_RELEASES].sort(compareVersions).at(-1)
+
+  logger.info(
+    `Changelog: ${SYSTEM_RELEASES.length} versões carregadas de src/data/system_releases_seed.js; atual=${current.version}`
+  )
 
   await pool.query('BEGIN')
 
@@ -79,24 +117,32 @@ async function seedReleases() {
       )
     }
 
-    if (current?.version) {
-      await pool.query(
-        `UPDATE hub_system_releases
-            SET is_current = false,
-                updated_at = NOW()
-          WHERE is_current = true`
-      )
+    await pool.query(
+      `UPDATE hub_system_releases
+          SET is_current = false,
+              updated_at = NOW()
+        WHERE is_current = true`
+    )
 
-      await pool.query(
-        `UPDATE hub_system_releases
-            SET is_current = true,
-                updated_at = NOW()
-          WHERE version = $1`,
-        [current.version]
-      )
-    }
+    await pool.query(
+      `UPDATE hub_system_releases
+          SET is_current = true,
+              updated_at = NOW()
+        WHERE version = $1`,
+      [current.version]
+    )
+
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS total,
+              MAX(version) FILTER (WHERE is_current = true) AS current_version
+         FROM hub_system_releases`
+    )
 
     await pool.query('COMMIT')
+
+    logger.info(
+      `Changelog aplicado: ${rows[0]?.total || 0} versões no banco; atual=${rows[0]?.current_version || current.version}`
+    )
   } catch (err) {
     await pool.query('ROLLBACK')
     throw err
@@ -107,7 +153,7 @@ async function migrate() {
   await connectDB()
 
   try {
-    logger.info('Criando estrutura de versionamento do sistema...')
+    logger.info('Criando/atualizando o versionamento do sistema...')
     await pool.query(SQL)
     await seedReleases()
     logger.info('✅ Versionamento/changelog configurado com sucesso')

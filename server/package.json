@@ -1,6 +1,6 @@
 {
   "name": "larmhub-api",
-  "version": "0.3.56",
+  "version": "0.3.75",
   "description": "API backend LarmHub / Santa Clara HUB",
   "main": "src/server.js",
   "scripts": {
@@ -41,7 +41,13 @@
     "db:seed:recebiveis:strato": "node scripts/seed_recebiveis_relatorio_strato.js --execute",
     "db:migrate:contas-receber-operacional": "node scripts/migrate_contas_receber_operacional.js",
     "db:migrate:recebiveis-bradesco": "node scripts/migrate_recalculo_bradesco_recebiveis.js",
-    "db:migrate:cashflow-diario": "node scripts/migrate_cashflow_valores_diarios.js"
+    "db:migrate:cashflow-diario": "node scripts/migrate_cashflow_valores_diarios.js",
+    "db:preview:recebiveis:obras-empresas": "node scripts/seed_recebiveis_obras_empresas_2026_06.js --preview",
+    "db:seed:recebiveis:obras-empresas": "node scripts/seed_recebiveis_obras_empresas_2026_06.js --execute",
+    "db:migrate:recebiveis-comunicacao": "node scripts/migrate_recebiveis_comunicacao_lote.js",
+    "db:preview:recebiveis:posicao-2026-06-23": "node scripts/seed_recebiveis_posicao_2026_06_23.js --preview",
+    "db:seed:recebiveis:posicao-2026-06-23": "node scripts/seed_recebiveis_posicao_2026_06_23.js --execute --test-fifo",
+    "db:migrate:system-releases": "node scripts/migrate_system_releases.js"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.750.0",

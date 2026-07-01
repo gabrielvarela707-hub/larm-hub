@@ -226,6 +226,91 @@ async function getOrcamentoRealizadoFromMovimento(linhasBase, empresa, ano, mes 
   return realizadosPorRowIdx
 }
 
+async function getOrcamentoSaldosMensais(tabelaMovimento, empresa, ano, mes = null) {
+  const saldoInicial = emptyMonthMap()
+  const saldoFinal = emptyMonthMap()
+  const empresaFiltro = normalizeEmpresaFilter(empresa)
+  const ultimoMes = mes ? Math.min(12, Math.max(1, Number(mes))) : 12
+
+  let abertura = 0
+  if (await tableExists('fin_bancos_contas')) {
+    const paramsAbertura = [ano]
+    const conditionsAbertura = [
+      `COALESCE(ativo, TRUE) = TRUE`,
+      `(data_saldo_inicial IS NULL OR EXTRACT(YEAR FROM data_saldo_inicial)::int = $1)`,
+    ]
+    if (empresaFiltro !== 'CONSOLIDADO') {
+      paramsAbertura.push(empresaFiltro)
+      conditionsAbertura.push(`UPPER(TRIM(COALESCE(empresa::text, ''))) = $${paramsAbertura.length}`)
+    }
+
+    const { rows: aberturaRows } = await query(
+      `SELECT COALESCE(SUM(COALESCE(saldo_inicial, 0)), 0)::float AS saldo
+         FROM fin_bancos_contas
+        WHERE ${conditionsAbertura.join(' AND ')}`,
+      paramsAbertura,
+    )
+    abertura = Number(aberturaRows[0]?.saldo || 0)
+  }
+
+  if (!(await tableExists(tabelaMovimento))) {
+    let saldoCorrente = abertura
+    for (let numeroMes = 1; numeroMes <= ultimoMes; numeroMes += 1) {
+      saldoInicial[numeroMes] = saldoCorrente
+      saldoFinal[numeroMes] = saldoCorrente
+    }
+    return { saldoInicial, saldoFinal }
+  }
+
+  const params = [ano, ultimoMes]
+  const conditions = [
+    `COALESCE(fm.ano, EXTRACT(YEAR FROM fm.data)::int) = $1`,
+    `COALESCE(fm.mes, EXTRACT(MONTH FROM fm.data)::int) BETWEEN 1 AND $2`,
+  ]
+
+  if (tabelaMovimento === 'fin_movimento') {
+    conditions.push(await getMovimentoRealizadoGuardCondition('fm'))
+  }
+
+  if (empresaFiltro !== 'CONSOLIDADO') {
+    params.push(empresaFiltro)
+    conditions.push(`UPPER(TRIM(COALESCE(fm.empresa::text, ''))) = $${params.length}`)
+  }
+
+  const { rows } = await query(
+    `SELECT COALESCE(fm.mes, EXTRACT(MONTH FROM fm.data)::int)::int AS mes,
+            COALESCE(SUM(COALESCE(fm.entradas, 0) - COALESCE(fm.saidas, 0)), 0)::float AS fluxo
+       FROM ${tabelaMovimento} fm
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY 1
+      ORDER BY 1`,
+    params,
+  )
+
+  const fluxoPorMes = new Map(rows.map(row => [Number(row.mes), Number(row.fluxo || 0)]))
+  let saldoCorrente = abertura
+  for (let numeroMes = 1; numeroMes <= ultimoMes; numeroMes += 1) {
+    saldoInicial[numeroMes] = saldoCorrente
+    saldoCorrente += Number(fluxoPorMes.get(numeroMes) || 0)
+    saldoFinal[numeroMes] = saldoCorrente
+  }
+
+  return { saldoInicial, saldoFinal }
+}
+
+function aplicarSaldosOrcamento({ linhasBase, destino, chave, saldos }) {
+  const porDescricao = new Map(
+    linhasBase.map(linha => [normalizeText(linha.descricao), linha]),
+  )
+  const saldoInicialLinha = porDescricao.get(normalizeText('(A) Saldo Inicial'))
+  const saldoFinalLinha = porDescricao.get(normalizeText('SALDO FINAL'))
+  const saldosBancariosLinha = porDescricao.get(normalizeText('Saldos Bancários em C/C'))
+
+  if (saldoInicialLinha) destino[saldoInicialLinha[chave]] = { ...saldos.saldoInicial }
+  if (saldoFinalLinha) destino[saldoFinalLinha[chave]] = { ...saldos.saldoFinal }
+  if (saldosBancariosLinha) destino[saldosBancariosLinha[chave]] = { ...saldos.saldoFinal }
+}
+
 async function getContasPagarFuturoAberto(empresa, ano, mes = null) {
   const empresaFiltro = normalizeEmpresaFilter(empresa)
   const params = [ano]
@@ -2135,6 +2220,23 @@ router.get('/orcamento', async (req, res) => {
       }
     }
 
+    // Os saldos são posições financeiras e precisam ser recompostos pela
+    // fórmula do período. Isso evita depender de um agregado antigo e garante
+    // que qualquer entrada/saída, inclusive investimentos como 8.12 Brasil
+    // Agro II, participe do Saldo Final do mês.
+    const saldosPrevistos = await getOrcamentoSaldosMensais(
+      'fin_orcamento_movimento',
+      empresa,
+      ano,
+      mes,
+    )
+    aplicarSaldosOrcamento({
+      linhasBase,
+      destino: previstosPorLinha,
+      chave: 'id',
+      saldos: saldosPrevistos,
+    })
+
     const realizadosMovimento = await getOrcamentoRealizadoFromMovimento(linhasBase, empresa, ano, mes)
     for (const [rowIdx, valores] of Object.entries(realizadosMovimento)) {
       for (const [mesKey, valor] of Object.entries(valores || {})) {
@@ -2143,6 +2245,20 @@ router.get('/orcamento', async (req, res) => {
         mesesSet.add(Number(mesKey))
       }
     }
+
+
+    const saldosRealizados = await getOrcamentoSaldosMensais(
+      'fin_movimento',
+      empresa,
+      ano,
+      mes,
+    )
+    aplicarSaldosOrcamento({
+      linhasBase,
+      destino: realizadosPorRowIdx,
+      chave: 'row_idx',
+      saldos: saldosRealizados,
+    })
 
     const MESES_NOME = ['', 'Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez']
     const colunas = mes

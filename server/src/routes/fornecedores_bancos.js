@@ -622,8 +622,23 @@ router.get("/fornecedores", async (req, res) => {
     page = 1,
     limit = 50,
   } = req.query;
+  const ordenar = req.query.ordenar || req.query.sort || req.query.order_by || "nome";
+  const direcao = req.query.direcao || req.query.direction || req.query.order_dir || "asc";
+  res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   const conditions = [];
   const params = [];
+
+  const orderFields = {
+    nome: `COALESCE(NULLIF(razao_social, ''), NULLIF(nome_fantasia, ''), '')`,
+    cliente: `COALESCE(NULLIF(razao_social, ''), NULLIF(nome_fantasia, ''), '')`,
+    razao_social: `COALESCE(NULLIF(razao_social, ''), NULLIF(nome_fantasia, ''), '')`,
+    codigo: `id`,
+    categoria: `COALESCE(categoria, '')`,
+  };
+  const normalizedOrder = String(ordenar).toLowerCase().trim();
+  const safeOrder = Object.prototype.hasOwnProperty.call(orderFields, normalizedOrder) ? normalizedOrder : "nome";
+  const orderField = orderFields[safeOrder];
+  const orderDirection = String(direcao).toLowerCase() === "desc" ? "DESC" : "ASC";
 
   if (ativo !== "all") {
     params.push(ativo === "true");
@@ -651,7 +666,9 @@ router.get("/fornecedores", async (req, res) => {
   try {
     const { rows } = await query(
       `SELECT * FROM fin_fornecedores ${where}
-       ORDER BY razao_social
+       ORDER BY ${orderField} ${orderDirection} NULLS LAST,
+                razao_social ASC,
+                id ASC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params,
     );
@@ -663,6 +680,10 @@ router.get("/fornecedores", async (req, res) => {
       ok: true,
       data: rows,
       total: parseInt(ct.rows[0].count),
+      ordenacao: {
+        campo: safeOrder,
+        direcao: orderDirection.toLowerCase(),
+      },
     });
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message });
