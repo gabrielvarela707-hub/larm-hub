@@ -382,6 +382,7 @@ export interface OrcamentoMovimentoParams {
   tipo?: 'entrada' | 'saida' | ''
   busca?: string
   limit?: number
+  status?: 'ativos' | 'inativos' | 'todos'
 }
 
 export interface OrcamentoMovimentoItem {
@@ -402,6 +403,12 @@ export interface OrcamentoMovimentoItem {
   mes?: number
   ano?: number
   saldo?: number
+  ativo?: boolean
+  inativado_em?: string | null
+  inativado_por?: string | null
+  inativado_por_nome?: string | null
+  inativado_por_email?: string | null
+  motivo_inativacao?: string | null
 }
 
 export const getOrcamentoMovimento = (params?: OrcamentoMovimentoParams) =>
@@ -409,5 +416,12 @@ export const getOrcamentoMovimento = (params?: OrcamentoMovimentoParams) =>
     ok: boolean
     data: OrcamentoMovimentoItem[]
     summary: { total_entradas: number; total_saidas: number; saldo_periodo: number; total_lancamentos: number }
-  }>('/financeiro/orcamento/movimento', { params: { ano: 2026, limit: 1000, ...params } })
+    permissions?: { can_inactivate?: boolean }
+  }>('/financeiro/orcamento/movimento', { params: { ano: 2026, limit: 1000, status: 'ativos', ...params } })
     .then(r => r.data)
+
+export const inativarOrcamentoMovimento = (id: number, motivo: string) =>
+  apiClient.patch<{ ok: boolean; message: string; data: Record<string, unknown> }>(
+    `/financeiro/orcamento/movimento/${id}/inativar`,
+    { motivo },
+  ).then(r => r.data)

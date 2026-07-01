@@ -6,6 +6,52 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.76",
+    "title": "Movimento Orçado — inativação auditável de lançamentos",
+    "description": "Permite retirar lançamentos incorretos ou cancelados da listagem ativa do Movimento Orçado sem apagar o histórico, registrando responsável, data e motivo da inativação.",
+    "frontend_version": "0.3.76",
+    "backend_version": "0.3.76",
+    "released_at": "2026-07-01T12:30:00.000Z",
+    "changes": [
+      "Adicionado botão Inativar em cada lançamento ativo do Movimento Orçado para usuários autorizados do grupo financeiro.",
+      "A inativação exige motivo e não exclui fisicamente o registro do banco de dados.",
+      "Lançamentos inativados deixam de aparecer na listagem ativa e nos totais exibidos nessa tela.",
+      "Criado botão Registros inativados para consultar responsável, data, e-mail e motivo da operação.",
+      "A ação passa a gerar um log específico movimento_orcado_inativado no módulo financeiro, além do log geral de requisição.",
+      "Criada migration própria para adicionar os campos ativo, inativado_em, inativado_por e motivo_inativacao.",
+      "A permissão de inativação no backend foi limitada aos perfis super_admin, admin, manager, controller e financial.",
+      "Nenhum lançamento existente é removido automaticamente durante a atualização."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Movimento Orçado",
+        "Modal de confirmação com motivo"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "PATCH /financeiro/orcamento/movimento/:id/inativar",
+        "Auditoria centralizada"
+      ],
+      "database": [
+        "PostgreSQL",
+        "fin_orcamento_movimento.ativo",
+        "fin_orcamento_movimento.inativado_em",
+        "fin_orcamento_movimento.inativado_por",
+        "fin_orcamento_movimento.motivo_inativacao",
+        "hub_audit_logs"
+      ],
+      "deploy": [
+        "Executar node scripts/migrate_movimento_orcado_inativacao.js",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API e publicar o frontend"
+      ]
+    }
+  },
+  {
     "version": "0.3.75",
     "title": "Clientes — histórico comercial e Orçamento com Saldo Final recalculado",
     "description": "Adiciona histórico de compras, contratos e recebíveis ao cadastro de clientes e recompõe os saldos mensais do Orçamento pela fórmula Saldo Inicial + Entradas - Saídas.",
