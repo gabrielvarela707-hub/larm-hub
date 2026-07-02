@@ -4,7 +4,7 @@
  * Relatório de Cash Flow — visão consolidada, por empresa, mensal e diária.
  */
 import { useEffect, useRef, useState } from 'react'
-import { Check, Download, Loader2, Pencil, Printer, X } from 'lucide-react'
+import { Check, Download, ListTree, Loader2, Pencil, Printer, X } from 'lucide-react'
 import TableFloatingNav from '@/components/table-floating-nav'
 import {
   getCashflow,
@@ -26,6 +26,7 @@ const MESES_LONGOS = [
 const EMPRESAS_PADRAO = ['CONSOLIDADO', 'LARM', 'LARM FILIAL', 'MANTIQUEIRA', 'RM'] as const
 
 type VisaoCashflow = 'mensal' | 'diaria'
+type ModoContasCashflow = 'sintetico' | 'analitico'
 
 type DetalheCashflow = {
   titulo: string
@@ -109,6 +110,7 @@ export default function CashFlowPage() {
   const [empresa, setEmpresa] = useState<Empresa>('CONSOLIDADO')
   const [ano, setAno] = useState(2026)
   const [visao, setVisao] = useState<VisaoCashflow>('mensal')
+  const [modoContas, setModoContas] = useState<ModoContasCashflow>('sintetico')
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [empresas, setEmpresas] = useState<string[]>([...EMPRESAS_PADRAO])
   const [anos, setAnos] = useState<number[]>([2026, 2025, 2024])
@@ -150,10 +152,12 @@ export default function CashFlowPage() {
   const load = async (showLoading = true) => {
     if (showLoading) setLoading(true)
     try {
-      const params = visao === 'diaria' ? { visao, mes } : { visao }
+      const params = visao === 'diaria'
+        ? { visao, mes, modo: modoContas }
+        : { visao, modo: modoContas }
       const [cf, res] = await Promise.all([
         getCashflow(empresa, ano, params),
-        getCashflowResumo(empresa, ano, visao === 'diaria' ? { mes } : undefined),
+        getCashflowResumo(empresa, ano, visao === 'diaria' ? { mes, visao } : { visao }),
       ])
       setData(cf)
       setResumo(res)
@@ -162,7 +166,7 @@ export default function CashFlowPage() {
     }
   }
 
-  useEffect(() => { load() }, [empresa, ano, visao, mes])
+  useEffect(() => { load() }, [empresa, ano, visao, mes, modoContas])
 
   const fmtBRL = (v: number) => {
     if (!v) return '–'
@@ -380,6 +384,23 @@ export default function CashFlowPage() {
           </div>
         )}
 
+        <div className="min-w-[178px]">
+          <label className="block text-[11px] font-medium text-zinc-500 mb-1">Nível das contas</label>
+          <button
+            type="button"
+            onClick={() => setModoContas(atual => atual === 'sintetico' ? 'analitico' : 'sintetico')}
+            className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition ${
+              modoContas === 'analitico'
+                ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300'
+            }`}
+            title={modoContas === 'sintetico' ? 'Exibir também as contas analíticas' : 'Voltar para somente contas sintéticas'}
+          >
+            <ListTree className="h-3.5 w-3.5" />
+            {modoContas === 'sintetico' ? 'Exibir analíticas' : 'Ocultar analíticas'}
+          </button>
+        </div>
+
         <div className="flex-1" />
         <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 text-xs text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50">
           <Download className="h-3.5 w-3.5" /> Exportar XLSX
@@ -414,10 +435,20 @@ export default function CashFlowPage() {
             {visao === 'mensal' && (
               <p className="text-[11px] text-zinc-400 mt-0.5">Nos saldos finais, use o lápis para editar o valor mensal diretamente em K.</p>
             )}
+            <p className="text-[11px] text-zinc-400 mt-0.5">
+              {modoContas === 'sintetico'
+                ? 'Modo sintético: somente contas consolidadas. O detalhe continua disponível ao clicar no valor.'
+                : 'Modo analítico: contas detalhadas exibidas abaixo das respectivas contas sintéticas.'}
+            </p>
           </div>
-          <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">
-            {visao === 'diaria' ? 'Diário' : 'Orçado'}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="bg-zinc-100 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 text-xs px-2 py-0.5 rounded font-medium">
+              {modoContas === 'sintetico' ? 'Sintético' : 'Analítico'}
+            </span>
+            <span className="bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs px-2 py-0.5 rounded font-medium">
+              {visao === 'diaria' ? 'Diário' : 'Orçado'}
+            </span>
+          </div>
         </div>
         {edicaoErro && (
           <div className="px-4 py-2 text-xs text-red-600 bg-red-50 border-b border-red-100">

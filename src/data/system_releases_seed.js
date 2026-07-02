@@ -6,6 +6,56 @@
 
 const SYSTEM_RELEASES = [
   {
+      "version": "0.3.77",
+      "title": "Cash Flow — visão sintética padrão e Saldo Final corrigido",
+      "description": "Reduz a poluição visual do Cash Flow mantendo apenas contas sintéticas por padrão e corrige o encadeamento do Saldo Final com base nos saldos bancários ativos e nas variações mensais reais da estrutura financeira.",
+      "frontend_version": "0.3.77",
+      "backend_version": "0.3.77",
+      "released_at": "2026-07-01T22:30:00.000Z",
+      "changes": [
+          "O Cash Flow passa a abrir no modo sintético, exibindo somente as contas consolidadas do plano financeiro.",
+          "Adicionado botão Exibir analíticas/Ocultar analíticas para alternar o detalhamento sem perder os filtros selecionados.",
+          "As contas analíticas continuam disponíveis para conferência, mas não são somadas novamente às contas sintéticas.",
+          "O detalhe dos lançamentos permanece acessível ao clicar diretamente no valor da conta sintética.",
+          "O Saldo Inicial mensal passa a partir da soma das contas bancárias ativas cadastradas no sistema, substituindo a abertura antiga importada do Excel.",
+          "O Saldo Final passa a ser encadeado mês a mês pela fórmula Saldo Inicial + Geração de Caixa + Investimentos + Distribuição de Lucros + Sucessão + CP/CR em aberto.",
+          "O total anual da linha SALDO FINAL passa a mostrar a posição de dezembro, e não a soma incorreta dos doze saldos mensais.",
+          "Os cards de resumo passam a usar o mesmo Saldo Final calculado exibido na tabela.",
+          "A visão diária mantém o saldo de abertura real e calcula o encerramento com os movimentos e compromissos do mês.",
+          "Nenhuma migration ou alteração destrutiva de dados é necessária; valores legados permanecem preservados no banco e deixam apenas de ser usados no cálculo exibido."
+      ],
+      "architecture": {
+          "frontend": [
+              "Next.js App Router",
+              "React",
+              "TypeScript",
+              "Cash Flow sintético/analítico",
+              "Alternância de nível sem recarregar a página"
+          ],
+          "backend": [
+              "Node.js",
+              "Express.js",
+              "GET /financeiro/cashflow?modo=sintetico|analitico",
+              "Cálculo mensal encadeado do Saldo Final",
+              "Resumo diário e mensal consistente"
+          ],
+          "database": [
+              "PostgreSQL",
+              "fin_cashflow_linhas",
+              "fin_cashflow_valores",
+              "fin_bancos_contas",
+              "fin_parcelas_cp",
+              "fin_parcelas_cr",
+              "Sem alteração estrutural"
+          ],
+          "deploy": [
+              "Executar node scripts/migrate_system_releases.js",
+              "Reiniciar a API",
+              "Publicar o frontend"
+          ]
+      }
+  },
+  {
     "version": "0.3.76",
     "title": "Movimento Orçado — inativação auditável de lançamentos",
     "description": "Permite retirar lançamentos incorretos ou cancelados da listagem ativa do Movimento Orçado sem apagar o histórico, registrando responsável, data e motivo da inativação.",

@@ -282,6 +282,7 @@ export const getMovimentoResumo = (empresa?: Empresa, ano?: number) =>
 export interface CashflowParams {
   visao?: 'mensal' | 'diaria'
   mes?: number
+  modo?: 'sintetico' | 'analitico'
 }
 
 export const getCashflow = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: CashflowParams) =>
@@ -318,7 +319,7 @@ export const getCashflowLancamentos = (empresa: Empresa = 'CONSOLIDADO', ano?: n
     '/financeiro/cashflow/lancamentos', { params: { empresa, ano, ...params } }
   ).then(data)
 
-export const getCashflowResumo = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: Pick<CashflowParams, 'mes'>) =>
+export const getCashflowResumo = (empresa: Empresa = 'CONSOLIDADO', ano?: number, params?: Pick<CashflowParams, 'mes' | 'visao'>) =>
   apiClient.get<{ ok: boolean; data: Record<string, unknown> }>(
     '/financeiro/cashflow/resumo', { params: { empresa, ano, ...params } }
   ).then(data)
