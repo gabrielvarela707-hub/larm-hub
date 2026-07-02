@@ -74,6 +74,14 @@ function tipoMovimentoDaLinha(linha: any, valor: number): 'entrada' | 'saida' | 
   return undefined
 }
 
+
+function cashflowCodigoNivel(codigo?: string | null) {
+  const raw = String(codigo || '').trim().replace(',', '.')
+  const match = raw.match(/^\d+(?:\.\d+)*/)
+  if (!match) return 0
+  return match[0].split('.').filter(Boolean).length
+}
+
 function formatValorKParaEdicao(valor: number) {
   return (Number(valor || 0) / 1_000).toLocaleString('pt-BR', {
     useGrouping: false,
@@ -335,6 +343,10 @@ export default function CashFlowPage() {
   const monthColumnWidth = visao === 'mensal' ? 112 : 86
   const tableMinWidth = Math.max(760, 48 + 270 + (colunasCount * monthColumnWidth) + 96)
 
+  const linhasVisiveis = (data?.linhas || []).filter((linha: any) => (
+    modoContas === 'analitico' || cashflowCodigoNivel(linha?.codigo) <= 2
+  ))
+
   const stickyBase = 'sticky z-20 border-r border-zinc-100 dark:border-zinc-700'
   const stickyHeader = 'sticky top-0 z-30 bg-zinc-50 dark:bg-zinc-800/95 border-r border-zinc-100 dark:border-zinc-700'
   const stickyBg = (tipo: string) => {
@@ -384,21 +396,35 @@ export default function CashFlowPage() {
           </div>
         )}
 
-        <div className="min-w-[178px]">
+        <div className="min-w-[230px]">
           <label className="block text-[11px] font-medium text-zinc-500 mb-1">Nível das contas</label>
-          <button
-            type="button"
-            onClick={() => setModoContas(atual => atual === 'sintetico' ? 'analitico' : 'sintetico')}
-            className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border text-xs font-medium transition ${
-              modoContas === 'analitico'
-                ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-                : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300'
-            }`}
-            title={modoContas === 'sintetico' ? 'Exibir também as contas analíticas' : 'Voltar para somente contas sintéticas'}
-          >
-            <ListTree className="h-3.5 w-3.5" />
-            {modoContas === 'sintetico' ? 'Exibir analíticas' : 'Ocultar analíticas'}
-          </button>
+          <div className="grid grid-cols-2 rounded-lg border border-zinc-200 bg-white p-0.5 dark:border-zinc-700 dark:bg-zinc-800">
+            <button
+              type="button"
+              onClick={() => setModoContas('sintetico')}
+              className={`flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                modoContas === 'sintetico'
+                  ? 'bg-zinc-900 text-white shadow-sm dark:bg-zinc-100 dark:text-zinc-900'
+                  : 'text-zinc-500 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700'
+              }`}
+              title="Exibir somente contas sintéticas de até dois níveis"
+            >
+              Sintético
+            </button>
+            <button
+              type="button"
+              onClick={() => setModoContas('analitico')}
+              className={`flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                modoContas === 'analitico'
+                  ? 'bg-amber-500 text-white shadow-sm'
+                  : 'text-zinc-500 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700'
+              }`}
+              title="Exibir também o terceiro nível das contas"
+            >
+              <ListTree className="h-3.5 w-3.5" />
+              Analítico
+            </button>
+          </div>
         </div>
 
         <div className="flex-1" />
@@ -455,7 +481,7 @@ export default function CashFlowPage() {
             {edicaoErro}
           </div>
         )}
-        {!loading && data?.linhas?.length ? (
+        {!loading && linhasVisiveis.length ? (
           <div
             ref={topScrollRef}
             onScroll={(e) => syncHorizontalScroll(e.currentTarget, tableScrollRef.current)}
@@ -472,7 +498,7 @@ export default function CashFlowPage() {
         >
           {loading ? (
             <div className="text-center py-10 text-zinc-400">Carregando...</div>
-          ) : !data?.linhas?.length ? (
+          ) : !linhasVisiveis.length ? (
             <div className="text-center py-10 text-zinc-400">
               <p className="text-sm">Sem dados para {empresa} / {ano}</p>
               <p className="text-xs mt-1 text-zinc-400">Execute o script de importação para carregar os dados do Excel.</p>
@@ -490,7 +516,7 @@ export default function CashFlowPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.linhas.map((linha: any) => {
+                {linhasVisiveis.map((linha: any) => {
                   const rowCls = getRowStyle(linha.tipo)
                   const isNeg = (v: number) => v < 0
                   return (
@@ -595,7 +621,7 @@ export default function CashFlowPage() {
         </div>
       </div>
 
-      {!loading && data?.linhas?.length ? (
+      {!loading && linhasVisiveis.length ? (
         <TableFloatingNav scrollRef={tableScrollRef} />
       ) : null}
 

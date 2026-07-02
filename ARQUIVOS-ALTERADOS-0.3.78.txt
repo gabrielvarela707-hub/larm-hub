@@ -1,0 +1,10 @@
+FRONTEND 0.3.78
+
+package.json
+package-lock.json
+src/app/(dashboard)/financeiro/cashflow/page.tsx
+src/lib/api/financeiro.ts
+src/data/system_releases_seed.js
+data/system_releases_seed.js
+README-ATUALIZACAO-0.3.78.txt
+ARQUIVOS-ALTERADOS-0.3.78.txt

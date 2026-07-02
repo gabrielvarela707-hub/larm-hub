@@ -6,6 +6,55 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.78",
+    "title": "Cash Flow — níveis sintético/analítico e posições mensais corrigidas",
+    "description": "Corrige a separação entre contas sintéticas e analíticas e restaura os saldos mensais do Cash Flow conforme o fechamento da planilha original, eliminando a soma indevida de posições diárias.",
+    "frontend_version": "0.3.78",
+    "backend_version": "0.3.78",
+    "released_at": "2026-07-02T00:30:00.000Z",
+    "changes": [
+      "O modo Sintético passa a exibir somente contas numéricas de até dois níveis, como 4 e 4.1.",
+      "O modo Analítico passa a liberar explicitamente o terceiro nível, como 4.1.1 e 4.1.2, abaixo da conta sintética correspondente.",
+      "O frontend aplica um filtro defensivo por profundidade, impedindo que contas analíticas apareçam no modo Sintético mesmo diante de cache ou estruturas antigas.",
+      "O backend também filtra contas analíticas gravadas diretamente em bases antigas, evitando duplicidades entre linhas importadas e linhas geradas pelo Plano de Contas.",
+      "Corrigida a origem do erro de aproximadamente R$ 294 milhões em janeiro: saldos bancários e aplicações eram posições mensais, mas foram importados como soma dos saldos de todos os dias.",
+      "SALDO FINAL mensal volta a seguir a fórmula da planilha: Saldos Bancários em C/C + Aplicações Financeiras.",
+      "Janeiro do Consolidado volta aos valores de referência: Saldo Inicial R$ 9.666.473,96, Saldos Bancários R$ 328.152,96, Aplicações R$ 9.088.833,51 e Saldo Final R$ 9.416.986,47.",
+      "Adicionado procedimento transacional para corrigir 1.080 posições mensais de 2026, abrangendo seis empresas, quinze linhas e doze meses.",
+      "O procedimento gera backup JSON, valida os subtotais e pode ser executado novamente sem duplicar dados.",
+      "O importador do Cash Flow passa a usar a coluna de fechamento mensal para linhas de posição e continua somando diariamente apenas receitas, despesas e demais fluxos."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Seletor explícito Sintético/Analítico",
+        "Filtro defensivo por profundidade da conta"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "GET /financeiro/cashflow?modo=sintetico|analitico",
+        "Posições mensais separadas de fluxos",
+        "SALDO FINAL = C/C + Aplicações"
+      ],
+      "database": [
+        "PostgreSQL",
+        "fin_cashflow_linhas",
+        "fin_cashflow_valores",
+        "Correção transacional de 1.080 valores",
+        "Backup JSON antes da atualização"
+      ],
+      "deploy": [
+        "Executar a prévia migrate_cashflow_posicoes_2026.js",
+        "Executar a correção com --execute --confirmar=1080",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API e publicar o frontend"
+      ]
+    }
+  },
+  {
       "version": "0.3.77",
       "title": "Cash Flow — visão sintética padrão e Saldo Final corrigido",
       "description": "Reduz a poluição visual do Cash Flow mantendo apenas contas sintéticas por padrão e corrige o encadeamento do Saldo Final com base nos saldos bancários ativos e nas variações mensais reais da estrutura financeira.",
