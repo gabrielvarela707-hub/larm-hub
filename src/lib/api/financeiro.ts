@@ -111,6 +111,8 @@ export interface ContaPagar {
   valor_total: number
   num_parcelas: number
   qtd_parcelas?: number
+  parcela_vencimento?: string
+  proximo_venc?: string
   status: 'P' | 'Q' | 'V' | 'C' | 'X'
   parcelas?: Parcela[]
   obs?: string

@@ -4,12 +4,19 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Archive, ArchiveX, Loader2, Search, TrendingDown, TrendingUp, WalletCards, X } from 'lucide-react'
 import { toast } from 'react-hot-toast'
 import TableFloatingNav from '@/components/table-floating-nav'
+import { useAuthStore } from '@/lib/auth-store'
+import { hasModuleAccess } from '@/lib/module-access'
 import {
   getOrcamentoMovimento,
   inativarOrcamentoMovimento,
   type Empresa,
   type OrcamentoMovimentoItem,
 } from '@/lib/api/financeiro'
+
+const MOVIMENTO_ORCADO_WRITE_ROLES = new Set([
+  'super_admin', 'admin', 'manager', 'controller', 'financial',
+  'superadministrador', 'administrador', 'gerente', 'controladoria', 'financeiro',
+])
 
 const EMPRESAS = ['CONSOLIDADO', 'LARM', 'LUCKY', 'LM', 'HOLDING', 'RM'] as const
 const MESES = [
@@ -57,6 +64,10 @@ function apiErrorMessage(error: unknown) {
 }
 
 export default function MovimentoOrcadoPage() {
+  const currentUser = useAuthStore(state => state.user)
+  const roleCanInactivate = MOVIMENTO_ORCADO_WRITE_ROLES.has(String(currentUser?.role || '').trim().toLowerCase())
+  const localCanInactivate = roleCanInactivate || hasModuleAccess(currentUser, 'fin_movimento_orcado', 'write')
+
   const [empresa, setEmpresa] = useState<Empresa | 'CONSOLIDADO'>('CONSOLIDADO')
   const [mes, setMes] = useState('')
   const [tipo, setTipo] = useState<'entrada' | 'saida' | ''>('')
@@ -65,13 +76,13 @@ export default function MovimentoOrcadoPage() {
   const [rows, setRows] = useState<OrcamentoMovimentoItem[]>([])
   const [summary, setSummary] = useState({ total_entradas: 0, total_saidas: 0, saldo_periodo: 0, total_lancamentos: 0 })
   const [loading, setLoading] = useState(false)
-  const [canInactivate, setCanInactivate] = useState(false)
+  const [canInactivate, setCanInactivate] = useState(localCanInactivate)
   const [selectedRow, setSelectedRow] = useState<OrcamentoMovimentoItem | null>(null)
   const [motivo, setMotivo] = useState('')
   const [saving, setSaving] = useState(false)
   const topScrollRef = useRef<HTMLDivElement | null>(null)
   const tableScrollRef = useRef<HTMLDivElement | null>(null)
-  const tableMinWidth = status === 'inativos' ? 1900 : 1420
+  const tableMinWidth = status === 'inativos' ? 1900 : 1520
   const columnCount = status === 'inativos' ? 12 : 9 + (canInactivate ? 1 : 0)
 
   const syncHorizontalScroll = (source: HTMLDivElement, target: HTMLDivElement | null) => {
@@ -93,7 +104,7 @@ export default function MovimentoOrcadoPage() {
       .then(res => {
         setRows(res.data || [])
         setSummary(res.summary || { total_entradas: 0, total_saidas: 0, saldo_periodo: 0, total_lancamentos: 0 })
-        setCanInactivate(Boolean(res.permissions?.can_inactivate))
+        setCanInactivate(Boolean(res.permissions?.can_inactivate) || localCanInactivate)
       })
       .catch(error => {
         setRows([])
@@ -104,6 +115,7 @@ export default function MovimentoOrcadoPage() {
   }
 
   useEffect(() => { load('ativos') }, [])
+  useEffect(() => { if (localCanInactivate) setCanInactivate(true) }, [localCanInactivate])
 
   const totais = useMemo(() => ({
     entradas: Number(summary.total_entradas || 0),
@@ -255,6 +267,9 @@ export default function MovimentoOrcadoPage() {
             <thead className="sticky top-0 z-20 bg-slate-950 text-white">
               <tr>
                 <th className="px-4 py-3 text-left">Data</th>
+                {status === 'ativos' && canInactivate ? (
+                  <th className="px-4 py-3 text-center">Ações</th>
+                ) : null}
                 <th className="px-4 py-3 text-left">Empresa</th>
                 <th className="px-4 py-3 text-left">Banco</th>
                 <th className="px-4 py-3 text-right">Entradas</th>
@@ -269,8 +284,6 @@ export default function MovimentoOrcadoPage() {
                     <th className="px-4 py-3 text-left">Inativado por</th>
                     <th className="px-4 py-3 text-left">Inativado em</th>
                   </>
-                ) : canInactivate ? (
-                  <th className="px-4 py-3 text-center">Ações</th>
                 ) : null}
               </tr>
             </thead>
@@ -284,6 +297,19 @@ export default function MovimentoOrcadoPage() {
               ) : rows.map(row => (
                 <tr key={row.id} className={`border-t border-zinc-100 ${status === 'inativos' ? 'bg-zinc-50/70' : 'hover:bg-slate-50/70'}`}>
                   <td className="px-4 py-3 whitespace-nowrap text-slate-600">{fmtDate(row.data)}</td>
+                  {status === 'ativos' && canInactivate ? (
+                    <td className="px-4 py-3 text-center whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => openInactivate(row)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 bg-white text-red-600 text-xs font-semibold hover:bg-red-50"
+                        title="Inativar sem excluir definitivamente"
+                      >
+                        <ArchiveX className="w-3.5 h-3.5" />
+                        Inativar
+                      </button>
+                    </td>
+                  ) : null}
                   <td className="px-4 py-3 whitespace-nowrap"><span className="px-2 py-1 rounded-full bg-slate-100 text-slate-700 text-xs">{row.empresa}</span></td>
                   <td className="px-4 py-3 whitespace-nowrap text-slate-600">{row.banco || '—'}</td>
                   <td className="px-4 py-3 text-right font-semibold text-green-600 whitespace-nowrap">{row.entradas ? fmtBRL(row.entradas) : '—'}</td>
@@ -301,18 +327,6 @@ export default function MovimentoOrcadoPage() {
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-slate-600">{fmtDateTime(row.inativado_em)}</td>
                     </>
-                  ) : canInactivate ? (
-                    <td className="px-4 py-3 text-center whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => openInactivate(row)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-200 text-red-600 text-xs font-semibold hover:bg-red-50"
-                        title="Inativar sem excluir definitivamente"
-                      >
-                        <ArchiveX className="w-3.5 h-3.5" />
-                        Inativar
-                      </button>
-                    </td>
                   ) : null}
                 </tr>
               ))}

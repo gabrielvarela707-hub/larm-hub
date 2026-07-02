@@ -6,6 +6,106 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.80",
+    "title": "Financeiro — inativação visível no Movimento Orçado e baixa manual no Contas a Receber",
+    "description": "Restaura a ação de inativar diretamente na área visível do Movimento Orçado, amplia a compatibilidade de permissões do grupo financeiro e adiciona baixa manual transacional no Contas a Receber com geração e vínculo do Movimento Bancário.",
+    "frontend_version": "0.3.80",
+    "backend_version": "0.3.80",
+    "released_at": "2026-07-02T23:45:00.000Z",
+    "changes": [
+      "O botão Inativar do Movimento Orçado passa a aparecer imediatamente após a coluna Data, sem depender de rolagem horizontal até o fim da tabela.",
+      "A permissão de inativação passa a reconhecer administradores, gerentes, controladoria e financeiro, incluindo nomes de perfis legados em português.",
+      "O frontend também utiliza o perfil e a permissão de escrita do usuário como fallback, evitando ocultar o botão quando respostas antigas da API não trouxerem o bloco de permissões.",
+      "Mantida a inativação sem exclusão física, com motivo obrigatório, usuário, data, hora e registro de auditoria.",
+      "Contas a Receber passa a exibir o botão Baixa manual nas parcelas abertas ou atrasadas.",
+      "A baixa manual permite informar data do recebimento, valor recebido, conta bancária, forma de pagamento e observações.",
+      "A operação cria uma entrada em fin_movimento, vincula o movimento à parcela por movimento_id e marca a origem da baixa como manual.",
+      "A baixa é executada dentro de transação PostgreSQL e bloqueia repetição, parcela já paga, conta bancária inativa e conta de empresa diferente da parcela.",
+      "O histórico de auditoria registra usuário, parcela, valor, data, empresa, banco e ID do Movimento Bancário criado.",
+      "Não foi criada nova tabela: a baixa utiliza os campos de conciliação e movimento já existentes em com_parcelas.",
+      "Atualizadas as versões técnicas do frontend e backend para 0.3.80."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Movimento Orçado com ação visível",
+        "Modal de baixa manual no Contas a Receber"
+      ],
+      "backend": [
+        "Node.js",
+        "Express",
+        "PostgreSQL",
+        "Transação para baixa e geração do movimento",
+        "Auditoria de inativação e baixa manual"
+      ],
+      "database": [
+        "fin_orcamento_movimento",
+        "com_parcelas",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_audit_logs",
+        "hub_system_releases"
+      ],
+      "deploy": [
+        "Publicar primeiro o backend 0.3.80",
+        "Executar a migration idempotente de inativação do Movimento Orçado",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API",
+        "Publicar o frontend 0.3.80 e atualizar a sessão do usuário"
+      ]
+    }
+  },
+  {
+    "version": "0.3.79",
+    "title": "Financeiro — movimento de 29/30 de junho, limpeza do Contas a Pagar e vencimento em destaque",
+    "description": "Inclui os lançamentos bancários faltantes de 29 e 30/06/2026, disponibiliza uma limpeza integral e auditável do Contas a Pagar para reinício manual em 01/07 e reposiciona o vencimento como primeira informação nas listagens de Contas a Pagar e Contas a Receber.",
+    "frontend_version": "0.3.79",
+    "backend_version": "0.3.79",
+    "released_at": "2026-07-02T22:30:00.000Z",
+    "changes": [
+      "Adicionado seed transacional para inserir somente os 20 movimentos bancários faltantes de 29 e 30/06/2026.",
+      "A carga de 29 e 30/06 totaliza R$ 129.498,99 em entradas e R$ 143.258,64 em saídas, com prévia, bloqueio de duplicidade, hash de importação e backup antes da execução.",
+      "Os campos auxiliares dia, mês e ano dos novos movimentos são calculados diretamente pela data, sem utilizar os valores incorretos em cache na planilha.",
+      "Adicionado seed de limpeza integral do Contas a Pagar, com prévia obrigatória, confirmação pela quantidade atual, backup compactado e cópia de segurança em fin_importacao_backup.",
+      "A limpeza do Contas a Pagar preserva integralmente o Movimento Bancário, evitando apagar o histórico bancário realizado até 30/06/2026.",
+      "A coluna Vencimento passa a ser a primeira coluna de dados na listagem de Contas a Pagar.",
+      "A coluna Vencimento passa a ser a primeira coluna de dados na listagem de Contas a Receber, imediatamente após o seletor de linhas.",
+      "Datas de vencimento e emissão em Contas a Pagar passam a ser exibidas no padrão brasileiro.",
+      "Atualizadas as versões técnicas do frontend e backend para 0.3.79."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Contas a Pagar",
+        "Contas a Receber"
+      ],
+      "backend": [
+        "Node.js",
+        "PostgreSQL",
+        "Seeds transacionais com prévia",
+        "Backup JSON compactado",
+        "Importação idempotente por comparação de conteúdo"
+      ],
+      "database": [
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "fin_lancamentos_cp_boletos",
+        "hub_system_releases"
+      ],
+      "deploy": [
+        "Executar a prévia do movimento bancário antes da inserção",
+        "Executar a prévia da limpeza do Contas a Pagar e usar a quantidade retornada na confirmação",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API e publicar o frontend"
+      ]
+    }
+  },
+  {
     "version": "0.3.78",
     "title": "Cash Flow — níveis sintético/analítico e posições mensais corrigidas",
     "description": "Corrige a separação entre contas sintéticas e analíticas e restaura os saldos mensais do Cash Flow conforme o fechamento da planilha original, eliminando a soma indevida de posições diárias.",

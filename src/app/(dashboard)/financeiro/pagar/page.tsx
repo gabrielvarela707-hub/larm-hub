@@ -1550,6 +1550,7 @@ export default function PagarPage() {
         >
           <table className="w-full table-fixed text-xs" style={{ minWidth: tableMinWidth }}>
             <colgroup>
+              <col style={{ width: 112 }} />
               <col style={{ width: 86 }} />
               <col style={{ width: 240 }} />
               <col style={{ width: 150 }} />
@@ -1557,12 +1558,12 @@ export default function PagarPage() {
               <col style={{ width: 78 }} />
               <col style={{ width: 120 }} />
               <col style={{ width: 112 }} />
-              <col style={{ width: 112 }} />
               <col style={{ width: 120 }} />
               <col style={{ width: 115 }} />
             </colgroup>
             <thead className="sticky top-0 z-20">
               <tr className="bg-[#0d1b2a] text-white">
+                <TH label="Vencimento" k="vencimento" />
                 <TH label="Empresa" k="empresa" />
                 <TH label="Fornecedor" k="fornecedor" />
                 <TH label="Tipo de documento" k="tipo_documento" />
@@ -1570,7 +1571,6 @@ export default function PagarPage() {
                 <TH label="Parcela" k="parcela" align="center" />
                 <TH label="Valor" k="valor" align="right" />
                 <TH label="Emissão" k="emissao" />
-                <TH label="Vencimento" k="vencimento" />
                 <TH label="Pagamento" k="pagamento" />
                 <TH label="Status" k="status" />
               </tr>
@@ -1602,6 +1602,7 @@ export default function PagarPage() {
                 const fornecedorSubtitulo = getFornecedorSubtitle(l)
                 return (
                   <tr key={`${l.id}-${l.parcela_id || l.parcela_numero || 'sem-parcela'}`} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                    <td className="px-3 py-2 whitespace-nowrap font-semibold text-slate-700">{fmtDate(l.parcela_vencimento || l.proximo_venc)}</td>
                     <td className="px-3 py-2.5">
                       <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-100 text-slate-600 font-medium">{l.empresa}</span>
                     </td>
@@ -1631,7 +1632,6 @@ export default function PagarPage() {
                       )}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.dt_emissao)}</td>
-                    <td className="px-3 py-2 whitespace-nowrap text-slate-500">{fmtDate(l.parcela_vencimento || l.proximo_venc)}</td>
                     <td className="px-3 py-2 text-slate-500 align-top">
                       <p className="whitespace-nowrap">{fmtDate(l.parcela_dt_pagamento)}</p>
                       {mostrarBaixa && (

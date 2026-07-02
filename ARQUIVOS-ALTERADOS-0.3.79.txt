@@ -1,0 +1,10 @@
+src/app/(dashboard)/financeiro/pagar/page.tsx
+src/app/(dashboard)/financeiro/contas-pagar/page.tsx
+src/app/(dashboard)/financeiro/receber/page.tsx
+src/lib/api/financeiro.ts
+src/data/system_releases_seed.js
+data/system_releases_seed.js
+package.json
+package-lock.json
+README-ATUALIZACAO-0.3.79.txt
+ARQUIVOS-ALTERADOS-0.3.79.txt

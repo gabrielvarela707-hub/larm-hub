@@ -543,6 +543,7 @@ export default function ContasPagarPage() {
   }
 
   const fmtBRL = (v: number) => v?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) ?? '—'
+  const fmtData = (v?: string) => v ? v.slice(0, 10).split('-').reverse().join('/') : '—'
 
   const parcelaValorFinal = (p: ParcelaForm) => {
     const v = parseFloat(p.valor || '0')
@@ -609,6 +610,7 @@ export default function ContasPagarPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-zinc-50 dark:bg-zinc-800/60 text-zinc-500 text-xs uppercase tracking-wide">
+                  <th className="px-3 py-3 text-left">Vencimento</th>
                   <th className="px-3 py-3 text-left">Emissão</th>
                   <th className="px-3 py-3 text-left">Fornecedor</th>
                   <th className="px-3 py-3 text-left">Histórico</th>
@@ -622,12 +624,13 @@ export default function ContasPagarPage() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={9} className="text-center py-8 text-zinc-400">Carregando...</td></tr>
+                  <tr><td colSpan={10} className="text-center py-8 text-zinc-400">Carregando...</td></tr>
                 ) : titulos.length === 0 ? (
-                  <tr><td colSpan={9} className="text-center py-8 text-zinc-400">Nenhum lançamento encontrado</td></tr>
+                  <tr><td colSpan={10} className="text-center py-8 text-zinc-400">Nenhum lançamento encontrado</td></tr>
                 ) : titulos.map(t => (
                   <tr key={t.id} className="border-t border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                    <td className="px-3 py-2.5 font-mono text-xs text-zinc-500">{t.dt_emissao?.slice(0,10) || t.data_emissao?.slice(0,10)}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs font-semibold text-zinc-700 dark:text-zinc-200 whitespace-nowrap">{fmtData(t.parcela_vencimento || t.proximo_venc)}</td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-zinc-500 whitespace-nowrap">{fmtData(t.dt_emissao || t.data_emissao)}</td>
                     <td className="px-3 py-2.5 max-w-[140px] truncate">{t.fornecedor_nome || '—'}</td>
                     <td className="px-3 py-2.5 text-zinc-500 max-w-[180px] truncate text-xs">{t.historico}</td>
                     <td className="px-3 py-2.5 font-mono text-xs text-zinc-400">{t.nf_doc || '—'}</td>

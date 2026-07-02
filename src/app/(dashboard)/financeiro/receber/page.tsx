@@ -19,8 +19,14 @@ import {
   X,
 } from 'lucide-react'
 import TableFloatingNav from '@/components/table-floating-nav'
-import { apiClient } from '@/lib/auth-store'
+import { apiClient, useAuthStore } from '@/lib/auth-store'
+import { hasModuleAccess } from '@/lib/module-access'
 import { cn } from '@/lib/utils'
+
+const FINANCE_WRITE_ROLES = new Set([
+  'super_admin', 'admin', 'manager', 'controller', 'financial',
+  'superadministrador', 'administrador', 'gerente', 'controladoria', 'financeiro',
+])
 
 type StatusReceber = 'aberta' | 'atrasada' | 'paga' | 'cancelada'
 type EmpresaCobranca = 'LARM' | 'LUCKY'
@@ -112,6 +118,25 @@ type SystemCompany = {
   telefone?: string | null
   empresa_cobranca?: EmpresaCobranca | null
 }
+
+type BankAccountOption = {
+  id: number
+  empresa: string
+  banco_nome: string
+  agencia?: string | null
+  conta?: string | null
+  digito?: string | null
+  ativo?: boolean
+}
+
+type ManualPaymentForm = {
+  data_recebimento: string
+  valor_recebido: string
+  banco_conta_id: string
+  forma_pagamento: string
+  observacoes: string
+}
+
 type FilterData = { clientes: FilterOption[]; tipos_receita: FilterOption[]; obras: FilterOption[]; empresas_cobranca: BillingCompanyOption[] }
 
 type Recalculation = {
@@ -287,6 +312,7 @@ function requestErrorMessage(error: unknown, fallback: string) {
 }
 
 function origemBaixaLabel(row: ParcelaReceber) {
+  if (row.origem_baixa === 'manual') return 'Baixa manual'
   if (row.origem_baixa === 'retorno_bradesco') return 'Retorno Bradesco'
   if (row.movimento_id || row.origem_baixa === 'conciliacao_bancaria') return 'Conciliação bancária'
   if (row.origem_baixa === 'importacao_historica') return 'Importação histórica'
@@ -407,6 +433,10 @@ function enhanceBoletoHtml(html: string, parcelIds: string[], rows: ParcelaReceb
 }
 
 export default function ContasReceberPage() {
+  const currentUser = useAuthStore(state => state.user)
+  const roleCanWriteFinance = FINANCE_WRITE_ROLES.has(String(currentUser?.role || '').trim().toLowerCase())
+  const canManualPayment = roleCanWriteFinance || hasModuleAccess(currentUser, 'fin_receber', 'write')
+
   const [rows, setRows] = useState<ParcelaReceber[]>([])
   const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY)
   const [filters, setFilters] = useState<FilterData>({ clientes: [], tipos_receita: [], obras: [], empresas_cobranca: [] })
@@ -436,6 +466,13 @@ export default function ContasReceberPage() {
   const [recalcSaving, setRecalcSaving] = useState(false)
   const [recalcSaved, setRecalcSaved] = useState(false)
   const [recalcError, setRecalcError] = useState('')
+
+  const [manualPaymentRow, setManualPaymentRow] = useState<ParcelaReceber | null>(null)
+  const [manualPaymentForm, setManualPaymentForm] = useState<ManualPaymentForm | null>(null)
+  const [manualPaymentBanks, setManualPaymentBanks] = useState<BankAccountOption[]>([])
+  const [manualPaymentBanksLoading, setManualPaymentBanksLoading] = useState(false)
+  const [manualPaymentSaving, setManualPaymentSaving] = useState(false)
+  const [manualPaymentError, setManualPaymentError] = useState('')
 
   const [configOpen, setConfigOpen] = useState(false)
   const [config, setConfig] = useState<BradescoConfig>(() => emptyBradescoConfig('LARM'))
@@ -594,6 +631,89 @@ export default function ContasReceberPage() {
       else eligibleIds.forEach(id => next.add(id))
       return next
     })
+  }
+
+  const openManualPayment = async (row: ParcelaReceber) => {
+    setManualPaymentRow(row)
+    setManualPaymentError('')
+    setManualPaymentBanks([])
+    setManualPaymentForm({
+      data_recebimento: todayIso(),
+      valor_recebido: Number(row.valor_total || 0).toFixed(2),
+      banco_conta_id: '',
+      forma_pagamento: 'Transferência',
+      observacoes: '',
+    })
+
+    setManualPaymentBanksLoading(true)
+    try {
+      const response = await apiClient.get('/financeiro/bancos', {
+        params: row.empresa_cobranca ? { empresa: row.empresa_cobranca } : {},
+      })
+      const accounts = (Array.isArray(response.data?.data) ? response.data.data : [])
+        .filter((account: BankAccountOption) => account.ativo !== false)
+      setManualPaymentBanks(accounts)
+      if (accounts.length) {
+        setManualPaymentForm(current => current ? { ...current, banco_conta_id: String(accounts[0].id) } : current)
+      }
+    } catch (requestError: unknown) {
+      setManualPaymentError(requestErrorMessage(requestError, 'Não foi possível carregar as contas bancárias disponíveis.'))
+    } finally {
+      setManualPaymentBanksLoading(false)
+    }
+  }
+
+  const closeManualPayment = () => {
+    if (manualPaymentSaving) return
+    setManualPaymentRow(null)
+    setManualPaymentForm(null)
+    setManualPaymentBanks([])
+    setManualPaymentError('')
+  }
+
+  const confirmManualPayment = async () => {
+    if (!manualPaymentRow || !manualPaymentForm) return
+
+    const amount = Number(manualPaymentForm.valor_recebido)
+    if (!manualPaymentForm.data_recebimento) {
+      setManualPaymentError('Informe a data do recebimento.')
+      return
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setManualPaymentError('Informe um valor recebido maior que zero.')
+      return
+    }
+    if (!manualPaymentForm.banco_conta_id) {
+      setManualPaymentError('Selecione a conta bancária que recebeu o valor.')
+      return
+    }
+    if (!manualPaymentForm.forma_pagamento.trim()) {
+      setManualPaymentError('Informe a forma de pagamento.')
+      return
+    }
+
+    setManualPaymentSaving(true)
+    setManualPaymentError('')
+    setError('')
+    setSuccess('')
+    try {
+      await apiClient.patch(`/financeiro/contas-receber/${manualPaymentRow.id}/baixar-manual`, {
+        data_recebimento: manualPaymentForm.data_recebimento,
+        valor_recebido: amount,
+        banco_conta_id: Number(manualPaymentForm.banco_conta_id),
+        forma_pagamento: manualPaymentForm.forma_pagamento.trim(),
+        observacoes: manualPaymentForm.observacoes.trim() || undefined,
+      })
+      setSuccess(`Baixa manual registrada para ${manualPaymentRow.cliente_nome || 'o cliente'} no valor de ${formatCurrency(amount)}.`)
+      setManualPaymentRow(null)
+      setManualPaymentForm(null)
+      setManualPaymentBanks([])
+      await load()
+    } catch (requestError: unknown) {
+      setManualPaymentError(requestErrorMessage(requestError, 'Não foi possível registrar a baixa manual.'))
+    } finally {
+      setManualPaymentSaving(false)
+    }
   }
 
   const openRecalculate = async (row: ParcelaReceber) => {
@@ -1210,11 +1330,12 @@ export default function ContasReceberPage() {
         <div ref={tableScrollRef} onScroll={event => syncHorizontalScroll(event.currentTarget, topScrollRef.current)} className="max-h-[70vh] overflow-auto">
           <table className="w-full table-fixed text-xs" style={{ minWidth: tableMinWidth }}>
             <colgroup>
-              <col style={{ width: 42 }} /><col style={{ width: 245 }} /><col style={{ width: 160 }} /><col style={{ width: 230 }} /><col style={{ width: 245 }} /><col style={{ width: 135 }} /><col style={{ width: 85 }} /><col style={{ width: 125 }} /><col style={{ width: 115 }} /><col style={{ width: 175 }} /><col style={{ width: 115 }} /><col style={{ width: 250 }} />
+              <col style={{ width: 42 }} /><col style={{ width: 115 }} /><col style={{ width: 245 }} /><col style={{ width: 160 }} /><col style={{ width: 230 }} /><col style={{ width: 245 }} /><col style={{ width: 135 }} /><col style={{ width: 85 }} /><col style={{ width: 125 }} /><col style={{ width: 175 }} /><col style={{ width: 115 }} /><col style={{ width: 250 }} />
             </colgroup>
             <thead className="sticky top-0 z-20">
               <tr className="bg-[#0d1b2a] text-white">
                 <th className="px-3 py-3 text-center"><input type="checkbox" checked={allEligibleSelected} onChange={toggleAll} aria-label="Selecionar parcelas em aberto da página" /></th>
+                <SortHeader label="Vencimento" sortKey="vencimento" active={sort} direction={direction} onSort={handleSort} />
                 <SortHeader label="Cliente" sortKey="cliente" active={sort} direction={direction} onSort={handleSort} />
                 <SortHeader label="Contrato" sortKey="contrato" active={sort} direction={direction} onSort={handleSort} />
                 <SortHeader label="Receita" sortKey="receita" active={sort} direction={direction} onSort={handleSort} />
@@ -1222,7 +1343,6 @@ export default function ContasReceberPage() {
                 <th className="px-3 py-3 text-left">Documento</th>
                 <SortHeader label="Parcela" sortKey="parcela" active={sort} direction={direction} onSort={handleSort} align="center" />
                 <SortHeader label="Valor" sortKey="valor" active={sort} direction={direction} onSort={handleSort} align="right" />
-                <SortHeader label="Vencimento" sortKey="vencimento" active={sort} direction={direction} onSort={handleSort} />
                 <SortHeader label="Recebimento" sortKey="recebimento" active={sort} direction={direction} onSort={handleSort} />
                 <SortHeader label="Status" sortKey="status" active={sort} direction={direction} onSort={handleSort} />
                 <th className="px-3 py-3 text-left">Ações</th>
@@ -1238,6 +1358,7 @@ export default function ContasReceberPage() {
                 return (
                   <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50/70 align-top">
                     <td className="px-3 py-3 text-center"><input type="checkbox" disabled={!eligible} checked={selected.has(row.id)} onChange={() => toggleSelected(row.id)} aria-label={`Selecionar parcela de ${row.cliente_nome || 'cliente'}`} /></td>
+                    <td className="px-3 py-3 font-semibold text-slate-700 whitespace-nowrap">{formatDate(row.vencimento)}</td>
                     <td className="px-3 py-3"><p className="font-semibold text-slate-800 truncate" title={row.cliente_nome || ''}>{row.cliente_nome || 'Cliente não informado'}</p><div className="mt-1 flex items-center gap-1.5"><span className="text-[10px] text-slate-400">{row.cliente_documento || 'Sem documento'}</span>{row.cliente_ativo === false && <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500">inativo</span>}</div></td>
                     <td className="px-3 py-3"><p className="font-medium text-slate-700 truncate" title={row.contrato_titulo || ''}>{row.contrato_numero || '—'}</p><p className="mt-1 text-[10px] text-slate-400 truncate" title={row.contrato_titulo || ''}>{row.contrato_titulo || 'Contrato'}</p></td>
                     <td className="px-3 py-3"><p className="font-medium text-slate-700 truncate" title={row.receita_titulo || ''}>{row.receita_titulo || row.tipo_receita_nome || 'Receita'}</p><p className="mt-1 text-[10px] text-slate-400">{row.tipo_receita_nome || row.tipo || '—'}</p></td>
@@ -1245,12 +1366,12 @@ export default function ContasReceberPage() {
                     <td className="px-3 py-3 text-slate-600 truncate" title={row.receita_documento || row.documento_legado || ''}>{row.receita_documento || row.documento_legado || '—'}</td>
                     <td className="px-3 py-3 text-center text-slate-600 whitespace-nowrap">{row.parcela_numero_legado || row.numero || '—'}{row.parcela_total_legado ? `/${row.parcela_total_legado}` : ''}</td>
                     <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-800 whitespace-nowrap"><p>{formatCurrency(row.valor_total)}</p>{row.valor_recalculado != null && <p className="mt-1 text-[9px] font-normal text-blue-600" title={`Recalculado para ${formatDate(row.data_recalculo)}`}>recalculado</p>}</td>
-                    <td className="px-3 py-3 text-slate-600 whitespace-nowrap">{formatDate(row.vencimento)}</td>
                     <td className="px-3 py-3"><p className={cn('whitespace-nowrap', row.status === 'paga' ? 'text-emerald-700 font-medium' : 'text-slate-400')}>{row.status === 'paga' ? formatDate(row.pago_em || row.conciliado_em) : '—'}</p><p className="mt-1 text-[10px] text-slate-400 truncate" title={origemBaixaLabel(row)}>{origemBaixaLabel(row)}</p>{row.movimento_banco && <p className="mt-0.5 text-[10px] text-slate-400 truncate">Banco: {row.movimento_banco}</p>}</td>
                     <td className="px-3 py-3"><span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold', statusClass(row.status))}>{statusLabel(row.status)}</span>{row.boleto_status && <p className="mt-1 text-[9px] text-slate-400">Boleto: {row.boleto_status.replace(/_/g, ' ')}</p>}{row.boleto_enviado_em && <p className="mt-0.5 text-[9px] font-medium text-emerald-600">Enviado por {row.boleto_envio_canal || 'canal registrado'} em {formatDate(row.boleto_enviado_em)}</p>}{row.boleto_envio_status === 'erro' && <p className="mt-0.5 text-[9px] text-red-600" title={row.boleto_envio_erro || ''}>Falha no envio</p>}</td>
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-1.5">
                         {row.status === 'atrasada' && <button type="button" onClick={() => openRecalculate(row)} className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700 hover:bg-amber-100"><Calculator className="h-3 w-3" /> Recalcular</button>}
+                        {eligible && canManualPayment && <button type="button" onClick={() => void openManualPayment(row)} className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-100"><Check className="h-3 w-3" /> Baixa manual</button>}
                         {eligible && <button type="button" disabled={boletoLoadingId === row.id} onClick={() => generateBoleto(row)} className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-wait disabled:opacity-60">{boletoLoadingId === row.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Printer className="h-3 w-3" />} {boletoLoadingId === row.id ? 'Gerando...' : 'Boleto'}</button>}
                       </div>
                       {row.indice_nome || row.indice_codigo_legado ? <p className="mt-2 text-[9px] text-slate-400">Índice: {row.indice_nome || row.indice_codigo_legado}</p> : null}
@@ -1265,6 +1386,59 @@ export default function ContasReceberPage() {
       </div>
 
       {!loading && rows.length > 0 ? <TableFloatingNav scrollRef={tableScrollRef} /> : null}
+
+      {manualPaymentRow && manualPaymentForm && (
+        <Modal
+          title="Registrar baixa manual"
+          subtitle={`${manualPaymentRow.cliente_nome || 'Cliente'} • Vencimento ${formatDate(manualPaymentRow.vencimento)}`}
+          onClose={closeManualPayment}
+          maxWidth="max-w-2xl"
+        >
+          <div className="space-y-4">
+            {manualPaymentError && <Notice type="error">{manualPaymentError}</Notice>}
+
+            <div className="grid grid-cols-1 gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4 sm:grid-cols-3">
+              <div><p className="text-[10px] uppercase text-slate-400">Cliente</p><p className="mt-1 text-sm font-semibold text-slate-800">{manualPaymentRow.cliente_nome || '—'}</p></div>
+              <div><p className="text-[10px] uppercase text-slate-400">Parcela</p><p className="mt-1 text-sm font-semibold text-slate-800">{manualPaymentRow.parcela_numero_legado || manualPaymentRow.numero || '—'}{manualPaymentRow.parcela_total_legado ? `/${manualPaymentRow.parcela_total_legado}` : ''}</p></div>
+              <div><p className="text-[10px] uppercase text-slate-400">Valor previsto</p><p className="mt-1 text-sm font-semibold text-slate-800">{formatCurrency(manualPaymentRow.valor_total)}</p></div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Data do recebimento"><input type="date" value={manualPaymentForm.data_recebimento} onChange={event => setManualPaymentForm(current => current ? { ...current, data_recebimento: event.target.value } : current)} className={inputClass} /></Field>
+              <Field label="Valor recebido"><MoneyInput value={manualPaymentForm.valor_recebido} onChange={value => setManualPaymentForm(current => current ? { ...current, valor_recebido: value } : current)} /></Field>
+              <Field label={<>Conta bancária {manualPaymentBanksLoading && <Loader2 className="ml-1 inline h-3.5 w-3.5 animate-spin" />}</>} className="sm:col-span-2">
+                <select value={manualPaymentForm.banco_conta_id} onChange={event => setManualPaymentForm(current => current ? { ...current, banco_conta_id: event.target.value } : current)} className={inputClass} disabled={manualPaymentBanksLoading}>
+                  <option value="">Selecione a conta que recebeu o valor</option>
+                  {manualPaymentBanks.map(account => <option key={account.id} value={account.id}>{account.empresa} • {account.banco_nome} • Ag. {account.agencia || '—'} • C/C {account.conta || '—'}{account.digito ? `-${account.digito}` : ''}</option>)}
+                </select>
+                {!manualPaymentBanksLoading && manualPaymentBanks.length === 0 && <p className="mt-1 text-[10px] text-red-600">Nenhuma conta bancária ativa foi encontrada para esta empresa.</p>}
+              </Field>
+              <Field label="Forma de pagamento" className="sm:col-span-2">
+                <select value={manualPaymentForm.forma_pagamento} onChange={event => setManualPaymentForm(current => current ? { ...current, forma_pagamento: event.target.value } : current)} className={inputClass}>
+                  <option value="Transferência">Transferência</option>
+                  <option value="PIX">PIX</option>
+                  <option value="Boleto">Boleto</option>
+                  <option value="TED/DOC">TED/DOC</option>
+                  <option value="Depósito">Depósito</option>
+                  <option value="Dinheiro">Dinheiro</option>
+                  <option value="Cartão">Cartão</option>
+                  <option value="Outro">Outro</option>
+                </select>
+              </Field>
+              <Field label="Observações da baixa" className="sm:col-span-2"><textarea rows={3} maxLength={500} value={manualPaymentForm.observacoes} onChange={event => setManualPaymentForm(current => current ? { ...current, observacoes: event.target.value } : current)} className={`${inputClass} h-auto py-2`} placeholder="Informação opcional para auditoria." /></Field>
+            </div>
+
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs text-blue-800">
+              A baixa marcará a parcela como recebida e criará uma entrada vinculada no Movimento Bancário. O registro ficará identificado como baixa manual no histórico.
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
+              <button type="button" onClick={closeManualPayment} disabled={manualPaymentSaving} className={cancelButtonClass}>Cancelar</button>
+              <button type="button" onClick={() => void confirmManualPayment()} disabled={manualPaymentSaving || manualPaymentBanksLoading || !manualPaymentBanks.length} className={primaryButtonClass}>{manualPaymentSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Confirmar baixa</button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {recalcRow && recalcForm && (
         <Modal title="Recalcular parcela em atraso" subtitle={`${recalcRow.cliente_nome || ''} • Contrato ${recalcRow.contrato_numero || '—'} • Vencimento ${formatDate(recalcRow.vencimento)}`} onClose={() => setRecalcRow(null)} maxWidth="max-w-5xl">
