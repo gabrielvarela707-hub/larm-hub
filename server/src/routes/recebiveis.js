@@ -1,6 +1,6 @@
 /**
  * server/src/routes/recebiveis.js
- * v0.3.64 — Contratos, parcelas, recálculo acumulado, boletos, comunicação e CNAB 400.
+ * v0.3.81 — Contratos, parcelas, baixa manual e retorno Bradesco integrado aos recebíveis Strato.
  */
 
 const express = require('express')
@@ -13,14 +13,25 @@ const {
   buildBoletoHtml,
   buildRemittance,
   nossoNumeroDv,
-  parseReturn,
   onlyDigits,
 } = require('../services/bradescoCnab400')
+const { processBradescoReturn } = require('../services/bradescoReturnProcessor')
 
 const router = express.Router()
 router.use(authenticate)
 
 const ADMIN_ROLES = new Set(['super_admin', 'admin', 'manager'])
+const FINANCE_WRITE_ROLES = new Set([
+  'super_admin', 'admin', 'manager', 'controller', 'financial',
+  'superadministrador', 'administrador', 'gerente', 'controladoria', 'financeiro',
+])
+
+function canWriteFinance(user) {
+  const candidates = [user?.role, user?.role_code, user?.perfil, user?.profile]
+    .map(value => String(value || '').trim().toLowerCase())
+    .filter(Boolean)
+  return candidates.some(role => FINANCE_WRITE_ROLES.has(role))
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -987,6 +998,264 @@ async function persistRecalculation(client, calculation, tenantId, userId) {
   return updated
 }
 
+// PATCH /financeiro/contas-receber/:id/baixar-manual
+// Registra a baixa definitiva da parcela e cria a entrada correspondente no Movimento Bancário.
+router.patch('/financeiro/contas-receber/:id/baixar-manual', async (req, res) => {
+  if (!canWriteFinance(req.user)) {
+    return res.status(403).json({
+      ok: false,
+      message: 'Somente usuários autorizados do grupo financeiro podem registrar baixa manual.',
+    })
+  }
+
+  const parcelaId = String(req.params.id || '').trim()
+  const bancoContaId = Number(req.body?.banco_conta_id)
+  const valorRecebido = roundMoney(req.body?.valor_recebido)
+  const formaPagamento = String(req.body?.forma_pagamento || '').trim().slice(0, 40)
+  const observacoes = String(req.body?.observacoes || '').trim().slice(0, 500)
+  let dataRecebimento
+
+  try {
+    dataRecebimento = normalizeDateOnly(req.body?.data_recebimento || isoToday(), 'Data do recebimento')
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message })
+  }
+
+  if (!parcelaId) return res.status(400).json({ ok: false, message: 'Parcela inválida.' })
+  if (!Number.isInteger(bancoContaId) || bancoContaId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Selecione a conta bancária que recebeu o valor.' })
+  }
+  if (!Number.isFinite(valorRecebido) || valorRecebido <= 0) {
+    return res.status(400).json({ ok: false, message: 'Informe um valor recebido maior que zero.' })
+  }
+  if (!formaPagamento) {
+    return res.status(400).json({ ok: false, message: 'Informe a forma de pagamento.' })
+  }
+
+  try {
+    const result = await transaction(async client => {
+      const { rows: [parcela] } = await client.query(
+        `SELECT
+            p.id,
+            p.numero,
+            p.status,
+            p.vencimento,
+            p.valor_nominal,
+            p.valor_recalculado,
+            p.valor_correcao,
+            p.valor_multa,
+            p.valor_juros_mora,
+            p.valor_outros_acrescimos,
+            p.valor_seguro,
+            p.valor_desconto,
+            p.movimento_id,
+            p.documento_legado,
+            p.parcela_numero_legado,
+            p.parcela_total_legado,
+            p.obra_codigo_legado,
+            c.numero AS contrato_numero,
+            c.titulo AS contrato_titulo,
+            c.obra_codigo_legado AS contrato_obra_codigo,
+            r.titulo AS receita_titulo,
+            r.numero_documento AS receita_documento,
+            pc.codigo AS plano_codigo,
+            pc.descricao AS plano_descricao,
+            COALESCE(cp.nome, cp.razao_social, c.comprador_nome, 'Cliente não identificado') AS cliente_nome,
+            CASE
+              WHEN COALESCE(c.obra_codigo_legado, p.obra_codigo_legado) = 7698 THEN 'LUCKY'
+              WHEN COALESCE(c.obra_codigo_legado, p.obra_codigo_legado) IN (7700, 7701) THEN 'LARM'
+              ELSE NULL
+            END AS empresa_cobranca,
+            COALESCE(
+              obra.nome,
+              CASE WHEN unidade.tipo = 'obra' THEN unidade.nome END,
+              'Obra ' || COALESCE(p.obra_codigo_legado::text, c.obra_codigo_legado::text, '')
+            ) AS obra_nome
+           FROM com_parcelas p
+           JOIN com_contratos c ON c.id = p.contrato_id
+           LEFT JOIN cad_clientes cl ON cl.id = c.cliente_id
+           LEFT JOIN cad_pessoas cp ON cp.id = cl.pessoa_id
+           LEFT JOIN fin_receitas r ON r.id = p.receita_id
+           LEFT JOIN fin_plano_contas pc ON pc.id = r.plano_conta_id
+           LEFT JOIN cad_produtos unidade ON unidade.id = p.produto_id
+           LEFT JOIN cad_produtos obra ON obra.id = unidade.produto_pai_id
+          WHERE p.id = $1 AND p.tenant_id = $2
+          FOR UPDATE OF p`,
+        [parcelaId, req.user.tenant_id],
+      )
+
+      if (!parcela) {
+        const error = new Error('Parcela não encontrada.')
+        error.statusCode = 404
+        throw error
+      }
+      if (!['aberta', 'atrasada'].includes(String(parcela.status || '').toLowerCase())) {
+        const error = new Error('Esta parcela não está em aberto ou já foi baixada.')
+        error.statusCode = 409
+        throw error
+      }
+      if (parcela.movimento_id) {
+        const error = new Error('Esta parcela já possui um Movimento Bancário vinculado.')
+        error.statusCode = 409
+        throw error
+      }
+
+      const { rows: [banco] } = await client.query(
+        `SELECT id, empresa, banco_nome, agencia, conta, digito, ativo
+           FROM fin_bancos_contas
+          WHERE id = $1
+          FOR UPDATE`,
+        [bancoContaId],
+      )
+      if (!banco || banco.ativo === false) {
+        const error = new Error('Conta bancária não encontrada ou inativa.')
+        error.statusCode = 400
+        throw error
+      }
+
+      const empresaParcela = String(parcela.empresa_cobranca || '').trim().toUpperCase()
+      const empresaBanco = String(banco.empresa || '').trim().toUpperCase()
+      if (empresaParcela && empresaBanco && empresaParcela !== empresaBanco) {
+        const error = new Error(`A conta selecionada pertence à empresa ${empresaBanco}, mas a parcela pertence à ${empresaParcela}.`)
+        error.statusCode = 400
+        throw error
+      }
+
+      const empresa = empresaParcela || empresaBanco
+      if (!empresa) {
+        const error = new Error('Não foi possível identificar a empresa da baixa.')
+        error.statusCode = 400
+        throw error
+      }
+
+      const [ano, mes, dia] = dataRecebimento.split('-').map(Number)
+      const clienteNome = String(parcela.cliente_nome || 'Cliente não identificado').trim()
+      const referencia = String(
+        parcela.receita_titulo || parcela.contrato_titulo || parcela.contrato_numero || 'Conta a receber',
+      ).trim()
+      const parcelaNumero = parcela.parcela_numero_legado || parcela.parcela_total_legado
+        ? `${parcela.parcela_numero_legado || parcela.numero || ''}${parcela.parcela_total_legado ? `/${parcela.parcela_total_legado}` : ''}`
+        : String(parcela.numero || '')
+      const historico = [
+        'Baixa manual de conta a receber',
+        parcelaNumero ? `parcela ${parcelaNumero}` : null,
+        referencia,
+        clienteNome,
+      ].filter(Boolean).join(' - ')
+      const nfDoc = String(
+        parcela.receita_documento || parcela.documento_legado || parcela.contrato_numero || '',
+      ).trim().slice(0, 100) || null
+      const naturezaFinanceira = String(parcela.plano_codigo || '1.1').trim().slice(0, 20) || '1.1'
+      const contaContabil = String(parcela.plano_descricao || 'VENDA DE IMÓVEIS').trim()
+      const obra = String(parcela.obra_nome || '').trim() || null
+      const bancoNome = String(banco.banco_nome || 'Banco não identificado').trim().slice(0, 60)
+
+      const { rows: [movimento] } = await client.query(
+        `INSERT INTO fin_movimento
+          (data, empresa, banco, entradas, saidas, fornecedor, historico, nf_doc,
+           conta_contabil, centro_custo, obra, natureza_financeira,
+           dia, mes, ano, tipo_lancamento, vencimento, banco_conta_id)
+         VALUES
+          ($1, $2, $3, $4, 0, $5, $6, $7,
+           $8, $9, $10, $11,
+           $12, $13, $14, 'financeiro', $15, $16)
+         RETURNING id, data, empresa, banco, entradas, historico, banco_conta_id`,
+        [
+          dataRecebimento,
+          empresa,
+          bancoNome,
+          valorRecebido,
+          clienteNome,
+          historico,
+          nfDoc,
+          contaContabil,
+          obra,
+          obra,
+          naturezaFinanceira,
+          dia,
+          mes,
+          ano,
+          parcela.vencimento,
+          bancoContaId,
+        ],
+      )
+
+      const conciliacaoDados = {
+        origem: 'baixa_manual_contas_receber',
+        movimento_id: movimento.id,
+        banco_conta_id: bancoContaId,
+        banco: bancoNome,
+        empresa,
+        valor_recebido: valorRecebido,
+        data_recebimento: dataRecebimento,
+        forma_pagamento: formaPagamento,
+        usuario_id: req.user.id,
+        usuario_nome: req.user.name || null,
+      }
+
+      const { rows: [parcelaAtualizada] } = await client.query(
+        `UPDATE com_parcelas
+            SET status = 'paga',
+                pago_em = $1::date,
+                valor_pago = $2,
+                forma_pagamento = $3,
+                observacoes_baixa = $4,
+                movimento_id = $5,
+                origem_baixa = 'manual',
+                conciliado_em = NOW(),
+                conciliacao_dados = COALESCE(conciliacao_dados, '{}'::jsonb) || $6::jsonb,
+                updated_at = NOW()
+          WHERE id = $7 AND tenant_id = $8
+          RETURNING id, status, pago_em, valor_pago, forma_pagamento, observacoes_baixa,
+                    movimento_id, origem_baixa, conciliado_em`,
+        [
+          dataRecebimento,
+          valorRecebido,
+          formaPagamento,
+          observacoes || null,
+          movimento.id,
+          JSON.stringify(conciliacaoDados),
+          parcelaId,
+          req.user.tenant_id,
+        ],
+      )
+
+      return { parcela: parcelaAtualizada, movimento, clienteNome, empresa, bancoNome }
+    })
+
+    await logAudit({
+      userId: req.user.id,
+      tenantId: req.user.tenant_id,
+      action: 'conta_receber_baixa_manual',
+      module: 'financeiro',
+      entityType: 'com_parcelas',
+      entityId: parcelaId,
+      meta: {
+        valor_recebido: valorRecebido,
+        data_recebimento: dataRecebimento,
+        forma_pagamento: formaPagamento,
+        banco_conta_id: bancoContaId,
+        movimento_id: result.movimento.id,
+        empresa: result.empresa,
+        banco: result.bancoNome,
+        cliente: result.clienteNome,
+      },
+    }).catch(() => {})
+
+    return res.json({
+      ok: true,
+      message: 'Baixa manual registrada e Movimento Bancário criado com sucesso.',
+      data: result,
+    })
+  } catch (error) {
+    logger.error(`Erro ao registrar baixa manual de conta a receber: ${error.message}`)
+    return res.status(error.statusCode || 500).json({
+      ok: false,
+      message: error.statusCode ? error.message : 'Não foi possível registrar a baixa manual.',
+    })
+  }
+})
+
 // POST /financeiro/contas-receber/:id/recalculo/preview
 router.post('/financeiro/contas-receber/:id/recalculo/preview', async (req, res) => {
   try {
@@ -1718,148 +1987,71 @@ router.post('/financeiro/contas-receber/bradesco/remessa', async (req, res) => {
 
 // POST /financeiro/contas-receber/bradesco/retorno
 router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
-  if (!ensureAdmin(req, res)) return
+  if (!canWriteFinance(req.user)) {
+    return res.status(403).json({
+      ok: false,
+      message: 'Somente usuários autorizados do grupo financeiro podem processar retornos bancários.',
+    })
+  }
+
   const filename = String(req.body?.filename || 'retorno.ret').slice(0, 160)
   const content = String(req.body?.content || '')
   const applyPayment = req.body?.baixar_liquidacoes !== false
+  const explicitCompany = normalizeBillingCompany(req.body?.empresa)
   if (!content) return res.status(400).json({ ok: false, message: 'Arquivo de retorno vazio.' })
 
   try {
-    const parsed = parseReturn(content)
-    const existing = await query(
-      `SELECT id, nome_arquivo, created_at FROM fin_retornos_cobranca WHERE tenant_id=$1 AND sha256=$2`,
-      [req.user.tenant_id, parsed.sha256],
-    )
-    if (existing.rowCount) {
-      return res.json({ ok: true, duplicated: true, message: 'Este retorno já foi processado.', data: existing.rows[0] })
+    const result = await transaction(async client => processBradescoReturn({
+      client,
+      tenantId: req.user.tenant_id,
+      userId: req.user.id,
+      filename,
+      content,
+      applyPayment,
+      persist: applyPayment,
+      explicitCompany,
+    }))
+
+    if (!result.duplicated && applyPayment) {
+      await logAudit({
+        userId: req.user.id,
+        tenantId: req.user.tenant_id,
+        action: 'contas_receber_retorno_bradesco',
+        module: 'financeiro',
+        entityType: 'fin_retornos_cobranca',
+        entityId: result.id,
+        meta: {
+          arquivo: filename,
+          empresa: result.empresa,
+          conciliados: result.conciliados,
+          nao_localizados: result.nao_localizados,
+          liquidacoes_baixadas: result.liquidacoes_baixadas,
+          ja_baixadas: result.ja_baixadas,
+          movimentos_criados: result.movimentos_criados,
+          valor_baixado: result.valor_baixado,
+        },
+      }).catch(() => {})
     }
 
-    const result = await transaction(async client => {
-      const returnCompany = normalizeBillingCompany(req.body?.empresa)
-      const config = returnCompany
-        ? await getBradescoConfig(req.user.tenant_id, client, { empresa: returnCompany })
-        : null
-      const { rows: [batch] } = await client.query(
-        `INSERT INTO fin_retornos_cobranca (
-           tenant_id, config_id, banco_codigo, nome_arquivo, data_arquivo,
-           quantidade_registros, sha256, conteudo, processado_por, baixa_automatica
-         ) VALUES ($1,$2,'237',$3,$4,$5,$6,$7,$8,$9)
-         RETURNING *`,
-        [req.user.tenant_id, config?.id || null, filename, parsed.header.fileDate, parsed.recordCount, parsed.sha256, content, req.user.id, applyPayment],
-      )
+    if (result.duplicated) {
+      return res.json({
+        ok: true,
+        duplicated: true,
+        message: 'Este retorno já foi processado. Nenhuma baixa foi duplicada.',
+        data: result,
+      })
+    }
 
-      let reconciled = 0
-      let notFound = 0
-      let paidTotal = 0
-      const occurrences = {}
-
-      for (const item of parsed.details) {
-        occurrences[item.occurrence] = (occurrences[item.occurrence] || 0) + 1
-        const { rows: matches } = await client.query(
-          `SELECT p.id, p.status, ri.id AS remessa_item_id
-             FROM com_parcelas p
-             LEFT JOIN fin_remessas_cobranca_itens ri
-               ON ri.parcela_id=p.id AND ri.tenant_id=p.tenant_id
-            WHERE p.tenant_id=$1
-              AND (
-                (NULLIF($2,'') IS NOT NULL AND p.nosso_numero=$2)
-                OR (NULLIF($3,'') IS NOT NULL AND p.controle_participante=$3)
-              )
-            ORDER BY ri.created_at DESC NULLS LAST
-            LIMIT 1`,
-          [req.user.tenant_id, item.nossoNumero, item.participantControl],
-        )
-        const match = matches[0]
-        let processingStatus = 'nao_localizado'
-        if (match) {
-          reconciled += 1
-          processingStatus = 'localizado'
-          if (item.occurrence === '02') {
-            await client.query(
-              `UPDATE com_parcelas SET boleto_status='registrado', updated_at=NOW() WHERE id=$1`,
-              [match.id],
-            )
-            processingStatus = 'entrada_confirmada'
-          } else if (item.occurrence === '03') {
-            await client.query(
-              `UPDATE com_parcelas SET boleto_status='rejeitado', updated_at=NOW() WHERE id=$1`,
-              [match.id],
-            )
-            processingStatus = 'rejeitado'
-          } else if (item.occurrence === '06') {
-            const paidValue = finiteNumber(item.paidAmount, item.titleAmount)
-            paidTotal += paidValue
-            if (applyPayment) {
-              await client.query(
-                `UPDATE com_parcelas
-                    SET status='paga',
-                        pago_em=COALESCE($1::date,$2::date,CURRENT_DATE),
-                        valor_pago=$3,
-                        forma_pagamento='Boleto',
-                        origem_baixa='retorno_bradesco',
-                        conciliado_em=NOW(),
-                        boleto_status='liquidado',
-                        conciliacao_dados=COALESCE(conciliacao_dados,'{}'::jsonb) || $4::jsonb,
-                        updated_at=NOW()
-                  WHERE id=$5`,
-                [item.creditDate, item.occurrenceDate, paidValue, JSON.stringify({ banco: '237', arquivo: filename, ocorrencia: item.occurrence, nosso_numero: item.nossoNumero, valor_pago: paidValue, baixa_automatica: true }), match.id],
-              )
-              processingStatus = 'liquidado'
-            } else {
-              await client.query(
-                `UPDATE com_parcelas
-                    SET boleto_status='liquidacao_pendente_baixa',
-                        conciliacao_dados=COALESCE(conciliacao_dados,'{}'::jsonb) || $1::jsonb,
-                        updated_at=NOW()
-                  WHERE id=$2`,
-                [JSON.stringify({ banco: '237', arquivo: filename, ocorrencia: item.occurrence, nosso_numero: item.nossoNumero, valor_pago: paidValue, baixa_automatica: false }), match.id],
-              )
-              processingStatus = 'liquidado_sem_baixa'
-            }
-          } else if (['09', '10'].includes(item.occurrence)) {
-            await client.query(
-              `UPDATE com_parcelas SET boleto_status='baixado_banco', updated_at=NOW() WHERE id=$1`,
-              [match.id],
-            )
-            processingStatus = 'baixado_banco'
-          }
-        } else {
-          notFound += 1
-        }
-
-        await client.query(
-          `INSERT INTO fin_retornos_cobranca_itens (
-             retorno_id, tenant_id, parcela_id, remessa_item_id,
-             nosso_numero, nosso_numero_dv, controle_participante,
-             ocorrencia, ocorrencia_descricao, data_ocorrencia, data_credito,
-             data_vencimento, valor_titulo, valor_pago, valor_juros,
-             valor_desconto, motivos_rejeicao, status_processamento, dados
-           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb)`,
-          [batch.id, req.user.tenant_id, match?.id || null, match?.remessa_item_id || null, item.nossoNumero, item.nossoNumeroDv, item.participantControl, item.occurrence, item.occurrenceLabel, item.occurrenceDate, item.creditDate, item.dueDate, item.titleAmount, item.paidAmount, item.interestAmount, item.discount, item.rejectionReasons, processingStatus, JSON.stringify(item)],
-        )
-      }
-
-      await client.query(
-        `UPDATE fin_retornos_cobranca
-            SET quantidade_conciliada=$1, quantidade_nao_localizada=$2, valor_liquidado=$3
-          WHERE id=$4`,
-        [reconciled, notFound, roundMoney(paidTotal), batch.id],
-      )
-      return {
-        id: batch.id,
-        arquivo: filename,
-        registros: parsed.recordCount,
-        titulos: parsed.details.length,
-        conciliados: reconciled,
-        nao_localizados: notFound,
-        valor_liquidado: roundMoney(paidTotal),
-        baixa_automatica: applyPayment,
-        ocorrencias: occurrences,
-      }
+    return res.json({
+      ok: true,
+      preview: !applyPayment,
+      message: applyPayment
+        ? 'Retorno processado e baixas elegíveis registradas.'
+        : 'Prévia concluída. Nenhum registro foi alterado.',
+      data: result,
     })
-
-    return res.json({ ok: true, data: result })
   } catch (error) {
+    logger.error(`Erro ao processar retorno Bradesco ${filename}: ${error.message}`)
     return res.status(400).json({ ok: false, message: error.message })
   }
 })

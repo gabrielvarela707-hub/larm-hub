@@ -13,7 +13,7 @@ Flags:
   --ano=2026     Importa apenas o ano especificado (somente movimento)
   --ate=2026-06-28 Importa movimentos somente até a data informada (somente movimento)
 """
-import sys, os
+import sys, os, re
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
@@ -104,6 +104,54 @@ def get_nivel_tipo(codigo, descricao):
 
 EMPRESAS_CF = ['Consolidado','LARM','LUCKY','LM','HOLDING','RM']
 
+MESES_PT = {
+    'jan': 1, 'fev': 2, 'mar': 3, 'abr': 4, 'mai': 5, 'jun': 6,
+    'jul': 7, 'ago': 8, 'set': 9, 'out': 10, 'nov': 11, 'dez': 12,
+}
+
+
+def get_month_summary_columns(df):
+    """Localiza a primeira coluna-resumo de cada mês (Jan-26, Fev-26...)."""
+    result = {}
+    if df.shape[0] <= 2:
+        return result
+
+    for col in range(4, df.shape[1]):
+        value = df.iloc[2, col]
+        if pd.isna(value):
+            continue
+        text = str(value).strip().lower()
+        match = re.search(r'\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[-/ ](\d{2}|\d{4})\b', text)
+        if not match:
+            continue
+        year = int(match.group(2))
+        if year < 100:
+            year += 2000
+        key = (year, MESES_PT[match.group(1)])
+        # A planilha possui mais de um bloco-resumo. O primeiro é o fechamento
+        # mensal exibido na tela e deve prevalecer.
+        result.setdefault(key, col)
+    return result
+
+
+def get_position_rows(df):
+    """Saldo Inicial e todas as linhas a partir de SALDO FINAL são posições."""
+    rows = set()
+    saldo_final_row = None
+    for row_i in range(4, df.shape[0]):
+        descricao = safe_str(df.iloc[row_i, 2])
+        if descricao == '(A) Saldo Inicial':
+            rows.add(row_i)
+        if descricao == 'SALDO FINAL':
+            saldo_final_row = row_i
+            break
+    if saldo_final_row is not None:
+        for row_i in range(saldo_final_row, df.shape[0]):
+            descricao = safe_str(df.iloc[row_i, 2])
+            if descricao:
+                rows.add(row_i)
+    return rows
+
 def import_cashflow(xlsx_path, limpar=False):
     print(f"\n{'='*60}\nImportando CashFlow: {xlsx_path}\n{'='*60}")
     conn = get_conn(); cur = conn.cursor()
@@ -130,7 +178,9 @@ def import_cashflow(xlsx_path, limpar=False):
             val = df.iloc[2, col]
             if pd.notna(val) and isinstance(val, datetime):
                 date_cols[col] = val.date()
-        print(f"  Colunas de data: {len(date_cols)}")
+        month_summary_cols = get_month_summary_columns(df)
+        position_rows = get_position_rows(df)
+        print(f"  Colunas diárias: {len(date_cols)} | fechamentos mensais: {len(month_summary_cols)}")
 
         if not linhas_inseridas:
             linhas = []
@@ -157,17 +207,56 @@ def import_cashflow(xlsx_path, limpar=False):
         row_id_map = {r: lid for r, lid in cur.fetchall()}
 
         vals = {}
+        position_value_keys = set()
+        daily_cols_by_month = {}
         for col_i, dt in date_cols.items():
-            ano, mes = dt.year, dt.month
-            for row_i, linha_id in row_id_map.items():
-                try: val = df.iloc[row_i, col_i]
-                except IndexError: continue
-                if pd.isna(val) or val == 0: continue
-                key = (linha_id, ano, mes)
+            daily_cols_by_month.setdefault((dt.year, dt.month), []).append(col_i)
+
+        for row_i, linha_id in row_id_map.items():
+            if row_i in position_rows:
+                # Posições mensais não podem ser somadas dia a dia. Usa a coluna
+                # de fechamento do mês; se ela não existir, usa o último saldo
+                # diário disponível daquele mês.
+                months = set(month_summary_cols) | set(daily_cols_by_month)
+                for ano_mes in months:
+                    ano, mes = ano_mes
+                    val = None
+                    summary_col = month_summary_cols.get(ano_mes)
+                    if summary_col is not None:
+                        try:
+                            val = df.iloc[row_i, summary_col]
+                        except IndexError:
+                            val = None
+                    if val is None or pd.isna(val):
+                        for daily_col in reversed(daily_cols_by_month.get(ano_mes, [])):
+                            try:
+                                candidate = df.iloc[row_i, daily_col]
+                            except IndexError:
+                                continue
+                            if pd.notna(candidate):
+                                val = candidate
+                                break
+                    number = safe_num(val)
+                    if number is None:
+                        continue
+                    key = (linha_id, ano, mes)
+                    vals[key] = float(number)
+                    position_value_keys.add(key)
+                continue
+
+            for col_i, dt in date_cols.items():
+                try:
+                    val = df.iloc[row_i, col_i]
+                except IndexError:
+                    continue
+                if pd.isna(val) or val == 0:
+                    continue
+                key = (linha_id, dt.year, dt.month)
                 vals[key] = vals.get(key, 0) + float(val)
 
         rows_val = [(lid, empresa, ano, mes, round(v, 4))
-                    for (lid, ano, mes), v in vals.items() if abs(v) > 0.001]
+                    for (lid, ano, mes), v in vals.items()
+                    if (lid, ano, mes) in position_value_keys or abs(v) > 0.001]
 
         if rows_val:
             execute_values(cur,

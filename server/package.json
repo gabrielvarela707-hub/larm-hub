@@ -1,6 +1,6 @@
 {
   "name": "larmhub-api",
-  "version": "0.3.75",
+  "version": "0.3.85",
   "description": "API backend LarmHub / Santa Clara HUB",
   "main": "src/server.js",
   "scripts": {
@@ -22,6 +22,7 @@
     "db:seed:contas-pagar:2026": "python3 scripts/import_contas_pagar_futuro.py scripts/imports/2026-contas-pagar.xlsx --ano=2026 --de=2026-06-29",
     "db:seed:contas-pagar:2026:limpar": "python3 scripts/import_contas_pagar_futuro.py scripts/imports/2026-contas-pagar.xlsx --ano=2026 --de=2026-06-29 --limpar-importados",
     "db:migrate:orcamento": "node scripts/migrate_orcamento_financeiro.js",
+    "db:migrate:movimento-orcado-inativacao": "node scripts/migrate_movimento_orcado_inativacao.js",
     "db:seed:orcamento:2026": "python3 scripts/import_orcamento_2026.py scripts/imports/orcamento-movimento-2026.xlsx --ano=2026 --limpar",
     "db:preview:movimento-futuro-2026": "node scripts/limpar_movimento_futuro_2026.js",
     "db:limpar:movimento-futuro-2026": "node scripts/limpar_movimento_futuro_2026.js --execute",
@@ -47,7 +48,17 @@
     "db:migrate:recebiveis-comunicacao": "node scripts/migrate_recebiveis_comunicacao_lote.js",
     "db:preview:recebiveis:posicao-2026-06-23": "node scripts/seed_recebiveis_posicao_2026_06_23.js --preview",
     "db:seed:recebiveis:posicao-2026-06-23": "node scripts/seed_recebiveis_posicao_2026_06_23.js --execute --test-fifo",
-    "db:migrate:system-releases": "node scripts/migrate_system_releases.js"
+    "db:migrate:system-releases": "node scripts/migrate_system_releases.js",
+    "db:preview:cashflow-posicoes-2026": "node scripts/migrate_cashflow_posicoes_2026.js",
+    "db:migrate:cashflow-posicoes-2026": "node scripts/migrate_cashflow_posicoes_2026.js --execute --confirmar=1080",
+    "db:preview:movimento:2026-06-29-30": "node scripts/seed_movimento_bancario_2026_06_29_30.js",
+    "db:seed:movimento:2026-06-29-30": "node scripts/seed_movimento_bancario_2026_06_29_30.js --execute --confirmar=20",
+    "db:preview:limpar:contas-pagar": "node scripts/seed_limpar_todas_contas_pagar.js",
+    "db:limpar:contas-pagar": "node scripts/seed_limpar_todas_contas_pagar.js --execute",
+    "db:migrate:retorno-bradesco-strato": "node scripts/migrate_retorno_bradesco_strato.js",
+    "db:preview:retornos-bradesco:ate-2026-07-01": "node scripts/seed_processar_retornos_bradesco_ate_2026_07_01.js",
+    "db:preview:movimento:2026-06-26-30": "node scripts/seed_movimento_bancario_2026_06_29_30.js",
+    "db:seed:movimento:2026-06-26-30": "node scripts/seed_movimento_bancario_2026_06_29_30.js --execute"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.750.0",

@@ -1,0 +1,13 @@
+LARMHUB BACKEND 0.3.81 — ARQUIVOS ALTERADOS/ADICIONADOS
+
+- src/routes/recebiveis.js
+- src/services/bradescoReturnProcessor.js (novo)
+- scripts/migrate_retorno_bradesco_strato.js (novo)
+- scripts/seed_processar_retornos_bradesco_ate_2026_07_01.js (novo)
+- scripts/imports/retornos-2026-07-01/*.RET (4 arquivos enviados pelo cliente)
+- src/data/system_releases_seed.js
+- data/system_releases_seed.js
+- scripts/system_releases_seed.js
+- system_releases_seed.js
+- package.json
+- package-lock.json

@@ -6,6 +6,446 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.85",
+    "title": "Financeiro — carga restrita aos movimentos de 29 e 30 de junho",
+    "description": "Corrige a conferência excessivamente rígida da versão anterior e impede qualquer reinserção dos movimentos já existentes de 26/06.",
+    "frontend_version": "0.3.82",
+    "backend_version": "0.3.85",
+    "released_at": "2026-07-03T13:00:00.000Z",
+    "changes": [
+      "O seed passa a usar 26/06 somente como conferência visual e nunca inclui linhas dessa data.",
+      "A execução fica limitada às 20 linhas validadas de 29 e 30/06: 13 em 29/06 e 7 em 30/06.",
+      "A identificação de movimentos existentes tolera diferenças de fornecedor, natureza, acentuação e grafia do banco, mantendo data, empresa, valores e histórico como chave segura.",
+      "Adicionada trava que interrompe qualquer tentativa de inserir mais de 20 movimentos.",
+      "Mantidos backup compactado, transação, bloqueio de tabela e idempotência da carga.",
+      "Nenhuma alteração de frontend foi necessária."
+    ],
+    "architecture": {
+      "frontend": ["Sem alterações — permanece na versão 0.3.82"],
+      "backend": ["Node.js", "PostgreSQL", "Seed transacional e idempotente"],
+      "database": ["fin_movimento"],
+      "deploy": [
+        "Copiar somente os arquivos incrementais do backend 0.3.85",
+        "Executar a prévia da carga de 29 e 30/06",
+        "Executar somente se a prévia indicar no máximo 20 registros"
+      ]
+    }
+  },
+  {
+    "version": "0.3.84",
+    "title": "Financeiro — carga confirmada de 26 a 30 de junho e identificação correta dos retornos LARM/LUCKY",
+    "description": "Confere o Movimento Bancário diretamente contra a planilha reenviada, insere somente os registros faltantes de 26 a 30/06 e corrige a classificação dos arquivos CNAB pelo código da empresa no cabeçalho.",
+    "frontend_version": "0.3.82",
+    "backend_version": "0.3.84",
+    "released_at": "2026-07-03T12:30:00.000Z",
+    "changes": [
+      "Confirmado na planilha que existem 11 movimentos em 26/06, nenhum em 27 e 28/06, 13 em 29/06 e 7 em 30/06.",
+      "O seed do Movimento Bancário passa a conferir todo o intervalo de 26 a 30/06 e inserir dinamicamente somente os registros faltantes, sem duplicar o dia 26.",
+      "Corrigida a classificação dos retornos: código 4352309 identifica LARM e código 4798045 identifica LUCKY antes de consultar configurações legadas.",
+      "A configuração legada da LUCKY com código de empresa igual ao da LARM deixa de interferir na identificação do arquivo.",
+      "O seed dos quatro retornos informa explicitamente a empresa de cada arquivo e valida divergência contra o cabeçalho CNAB.",
+      "A seleção automática do tenant passa a localizar o tenant que contém as configurações Bradesco de LARM/LUCKY e as parcelas de Contas a Receber.",
+      "Nenhuma alteração de frontend foi necessária."
+    ],
+    "architecture": {
+      "frontend": ["Sem alterações — permanece na versão 0.3.82"],
+      "backend": ["Node.js", "PostgreSQL", "Bradesco CNAB 400", "Seeds transacionais e idempotentes"],
+      "database": ["fin_movimento", "com_parcelas", "fin_cobranca_bancaria_config", "fin_retornos_cobranca"],
+      "deploy": [
+        "Copiar somente os arquivos incrementais do backend 0.3.84",
+        "Executar a prévia e a carga dos movimentos de 26 a 30/06",
+        "Executar novamente a prévia dos retornos e usar a quantidade numérica exibida",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API com pm2 restart larmhub-api"
+      ]
+    }
+  },
+  {
+    "version": "0.3.83",
+    "title": "Financeiro — correção do retorno Bradesco e carga de 29 e 30 de junho",
+    "description": "Corrige a falha de tipagem de parâmetros PostgreSQL na prévia do retorno Bradesco e disponibiliza novamente a carga idempotente dos movimentos bancários faltantes de 29 e 30/06/2026.",
+    "frontend_version": "0.3.82",
+    "backend_version": "0.3.83",
+    "released_at": "2026-07-03T01:10:00.000Z",
+    "changes": [
+      "Corrigidas lacunas de parâmetros SQL na prévia e na gravação dos itens de retorno, incluindo o erro could not determine data type of parameter $5.",
+      "A busca de parcelas por Nosso Número e Controle do Participante passa a usar conversões explícitas para texto.",
+      "A prévia dos quatro retornos Bradesco volta a funcionar sem alterar o banco e mantém a confirmação obrigatória antes das baixas.",
+      "Reincluído e revisado o seed idempotente dos 20 movimentos bancários de 29 e 30/06/2026.",
+      "A carga de movimentos valida separadamente as quantidades inseridas em 29/06 e 30/06 antes do COMMIT.",
+      "Ao processar o retorno, uma liquidação bancária consolidada já importada para a mesma empresa e data é reutilizada, evitando duplicar entradas no Movimento Bancário.",
+      "Nenhuma alteração de frontend foi necessária nesta versão."
+    ],
+    "architecture": {
+      "frontend": [
+        "Sem alterações — permanece na versão 0.3.82"
+      ],
+      "backend": [
+        "Node.js",
+        "PostgreSQL",
+        "Conciliação Bradesco CNAB 400",
+        "Seeds transacionais e idempotentes"
+      ],
+      "database": [
+        "com_parcelas",
+        "fin_retornos_cobranca",
+        "fin_retornos_cobranca_itens",
+        "fin_movimento"
+      ],
+      "deploy": [
+        "Copiar somente os arquivos incrementais do backend 0.3.83",
+        "Executar a prévia e a carga de 29 e 30/06",
+        "Executar a prévia e depois as baixas dos retornos Bradesco",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API com pm2 restart larmhub-api"
+      ]
+    }
+  },
+  {
+    "version": "0.3.82",
+    "title": "Financeiro — inativação compatível por POST e seleção automática do tenant LARM",
+    "description": "Corrige o erro de rota ao inativar lançamentos do Movimento Orçado e elimina a exigência manual de TENANT_ID no processamento controlado dos retornos Bradesco do LARM HUB.",
+    "frontend_version": "0.3.82",
+    "backend_version": "0.3.82",
+    "released_at": "2026-07-03T00:35:00.000Z",
+    "changes": [
+      "A inativação do Movimento Orçado passa a utilizar POST como método principal, evitando falhas 404 em proxies ou rotas legadas que não encaminham PATCH corretamente.",
+      "O backend mantém a rota PATCH anterior para compatibilidade e adiciona a mesma operação por POST, usando um único handler transacional.",
+      "Mantidos motivo obrigatório, inativação lógica, usuário responsável, data, hora e auditoria completa.",
+      "O seed dos retornos Bradesco seleciona automaticamente o tenant ativo identificado como LARM por slug, tipo ou nome.",
+      "Em bases com Santa Clara e LARM, a rotina deixa de interromper com a mensagem de múltiplos tenants.",
+      "A opção --tenant=UUID continua disponível para execução explícita e ambientes excepcionais.",
+      "Atualizadas as versões técnicas do frontend e backend para 0.3.82."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Axios POST para inativação",
+        "Compatibilidade com o modal existente"
+      ],
+      "backend": [
+        "Node.js",
+        "Express",
+        "Rotas POST e PATCH compartilhando o mesmo handler",
+        "Seleção segura de tenant em ambiente multi-tenant"
+      ],
+      "database": [
+        "fin_orcamento_movimento",
+        "hub_audit_logs",
+        "hub_tenants",
+        "com_parcelas",
+        "fin_movimento"
+      ],
+      "deploy": [
+        "Copiar somente os arquivos alterados da versão 0.3.82",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar obrigatoriamente a API com pm2 restart larmhub-api",
+        "Publicar o frontend 0.3.82",
+        "Executar a prévia e depois o processamento dos retornos Bradesco"
+      ]
+    }
+  },
+  {
+    "version": "0.3.81",
+    "title": "Contas a Receber — retorno Bradesco conciliado com títulos importados do Strato",
+    "description": "Corrige a leitura operacional do retorno CNAB 400 para localizar parcelas importadas do Strato, criar as baixas e os respectivos Movimentos Bancários sem duplicidade, com prévia segura e diagnóstico dos títulos não conciliados.",
+    "frontend_version": "0.3.81",
+    "backend_version": "0.3.81",
+    "released_at": "2026-07-02T23:58:00.000Z",
+    "changes": [
+      "O retorno Bradesco passa a localizar recebíveis importados do Strato pelo controle do participante, relacionando ts1_core.core1_cod ao contrato STR-<vend1_cod>-... do HUB.",
+      "Mantida a conciliação direta por Nosso Número e controle do participante para títulos gerados posteriormente pelo próprio LarmHub.",
+      "Adicionado fallback conservador por empresa, vencimento, tipo e valor, usado somente quando existe um único candidato dentro da tolerância segura.",
+      "A baixa por ocorrência 06 passa a criar uma entrada em fin_movimento, preencher movimento_id na parcela e registrar origem_baixa como retorno_bradesco.",
+      "A data contábil da baixa utiliza a data da ocorrência do arquivo, mantendo a data de crédito bancário nos metadados da conciliação.",
+      "O processamento identifica automaticamente LARM ou LUCKY pelo cabeçalho do CNAB e seleciona a conta Bradesco ativa da mesma empresa.",
+      "Parcelas já pagas ou que já possuem Movimento Bancário são reconhecidas e não geram uma segunda baixa.",
+      "Desmarcar Baixar liquidações agora executa uma prévia real, sem gravar o retorno, sem alterar boleto_status e sem impedir o processamento definitivo posterior.",
+      "A tela apresenta quantidades localizadas, não localizadas, baixadas, já baixadas, movimentos criados, valor processado e a lista dos itens que exigem conferência manual.",
+      "Adicionado procedimento para validar e processar os quatro arquivos enviados pelo cliente, limitando as ocorrências até 01/07/2026 e exigindo confirmação pela quantidade encontrada na prévia.",
+      "Os arquivos de 30/06 e 01/07 são incluídos no pacote do backend para execução controlada após a migration.",
+      "Adicionadas colunas de empresa, conta bancária, movimento, método de conciliação e divergência de valor ao histórico dos retornos."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Prévia sem gravação",
+        "Painel de resultado e itens não localizados"
+      ],
+      "backend": [
+        "Node.js",
+        "Express",
+        "Bradesco CNAB 400",
+        "Conciliação com ts1_core e contratos STR",
+        "Baixa transacional com Movimento Bancário",
+        "Idempotência por SHA-256 e por movimento_id"
+      ],
+      "database": [
+        "com_parcelas",
+        "com_contratos",
+        "ts1_core",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "fin_retornos_cobranca",
+        "fin_retornos_cobranca_itens"
+      ],
+      "deploy": [
+        "Executar node scripts/migrate_retorno_bradesco_strato.js",
+        "Executar a prévia seed_processar_retornos_bradesco_ate_2026_07_01.js",
+        "Executar novamente com --execute e a quantidade exata da prévia",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API e publicar o frontend 0.3.81"
+      ]
+    }
+  },
+  {
+    "version": "0.3.80",
+    "title": "Financeiro — inativação visível no Movimento Orçado e baixa manual no Contas a Receber",
+    "description": "Restaura a ação de inativar diretamente na área visível do Movimento Orçado, amplia a compatibilidade de permissões do grupo financeiro e adiciona baixa manual transacional no Contas a Receber com geração e vínculo do Movimento Bancário.",
+    "frontend_version": "0.3.80",
+    "backend_version": "0.3.80",
+    "released_at": "2026-07-02T23:45:00.000Z",
+    "changes": [
+      "O botão Inativar do Movimento Orçado passa a aparecer imediatamente após a coluna Data, sem depender de rolagem horizontal até o fim da tabela.",
+      "A permissão de inativação passa a reconhecer administradores, gerentes, controladoria e financeiro, incluindo nomes de perfis legados em português.",
+      "O frontend também utiliza o perfil e a permissão de escrita do usuário como fallback, evitando ocultar o botão quando respostas antigas da API não trouxerem o bloco de permissões.",
+      "Mantida a inativação sem exclusão física, com motivo obrigatório, usuário, data, hora e registro de auditoria.",
+      "Contas a Receber passa a exibir o botão Baixa manual nas parcelas abertas ou atrasadas.",
+      "A baixa manual permite informar data do recebimento, valor recebido, conta bancária, forma de pagamento e observações.",
+      "A operação cria uma entrada em fin_movimento, vincula o movimento à parcela por movimento_id e marca a origem da baixa como manual.",
+      "A baixa é executada dentro de transação PostgreSQL e bloqueia repetição, parcela já paga, conta bancária inativa e conta de empresa diferente da parcela.",
+      "O histórico de auditoria registra usuário, parcela, valor, data, empresa, banco e ID do Movimento Bancário criado.",
+      "Não foi criada nova tabela: a baixa utiliza os campos de conciliação e movimento já existentes em com_parcelas.",
+      "Atualizadas as versões técnicas do frontend e backend para 0.3.80."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Movimento Orçado com ação visível",
+        "Modal de baixa manual no Contas a Receber"
+      ],
+      "backend": [
+        "Node.js",
+        "Express",
+        "PostgreSQL",
+        "Transação para baixa e geração do movimento",
+        "Auditoria de inativação e baixa manual"
+      ],
+      "database": [
+        "fin_orcamento_movimento",
+        "com_parcelas",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_audit_logs",
+        "hub_system_releases"
+      ],
+      "deploy": [
+        "Publicar primeiro o backend 0.3.80",
+        "Executar a migration idempotente de inativação do Movimento Orçado",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API",
+        "Publicar o frontend 0.3.80 e atualizar a sessão do usuário"
+      ]
+    }
+  },
+  {
+    "version": "0.3.79",
+    "title": "Financeiro — movimento de 29/30 de junho, limpeza do Contas a Pagar e vencimento em destaque",
+    "description": "Inclui os lançamentos bancários faltantes de 29 e 30/06/2026, disponibiliza uma limpeza integral e auditável do Contas a Pagar para reinício manual em 01/07 e reposiciona o vencimento como primeira informação nas listagens de Contas a Pagar e Contas a Receber.",
+    "frontend_version": "0.3.79",
+    "backend_version": "0.3.79",
+    "released_at": "2026-07-02T22:30:00.000Z",
+    "changes": [
+      "Adicionado seed transacional para inserir somente os 20 movimentos bancários faltantes de 29 e 30/06/2026.",
+      "A carga de 29 e 30/06 totaliza R$ 129.498,99 em entradas e R$ 143.258,64 em saídas, com prévia, bloqueio de duplicidade, hash de importação e backup antes da execução.",
+      "Os campos auxiliares dia, mês e ano dos novos movimentos são calculados diretamente pela data, sem utilizar os valores incorretos em cache na planilha.",
+      "Adicionado seed de limpeza integral do Contas a Pagar, com prévia obrigatória, confirmação pela quantidade atual, backup compactado e cópia de segurança em fin_importacao_backup.",
+      "A limpeza do Contas a Pagar preserva integralmente o Movimento Bancário, evitando apagar o histórico bancário realizado até 30/06/2026.",
+      "A coluna Vencimento passa a ser a primeira coluna de dados na listagem de Contas a Pagar.",
+      "A coluna Vencimento passa a ser a primeira coluna de dados na listagem de Contas a Receber, imediatamente após o seletor de linhas.",
+      "Datas de vencimento e emissão em Contas a Pagar passam a ser exibidas no padrão brasileiro.",
+      "Atualizadas as versões técnicas do frontend e backend para 0.3.79."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Contas a Pagar",
+        "Contas a Receber"
+      ],
+      "backend": [
+        "Node.js",
+        "PostgreSQL",
+        "Seeds transacionais com prévia",
+        "Backup JSON compactado",
+        "Importação idempotente por comparação de conteúdo"
+      ],
+      "database": [
+        "fin_movimento",
+        "fin_lancamentos_cp",
+        "fin_parcelas_cp",
+        "fin_lancamentos_cp_boletos",
+        "hub_system_releases"
+      ],
+      "deploy": [
+        "Executar a prévia do movimento bancário antes da inserção",
+        "Executar a prévia da limpeza do Contas a Pagar e usar a quantidade retornada na confirmação",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API e publicar o frontend"
+      ]
+    }
+  },
+  {
+    "version": "0.3.78",
+    "title": "Cash Flow — níveis sintético/analítico e posições mensais corrigidas",
+    "description": "Corrige a separação entre contas sintéticas e analíticas e restaura os saldos mensais do Cash Flow conforme o fechamento da planilha original, eliminando a soma indevida de posições diárias.",
+    "frontend_version": "0.3.78",
+    "backend_version": "0.3.78",
+    "released_at": "2026-07-02T00:30:00.000Z",
+    "changes": [
+      "O modo Sintético passa a exibir somente contas numéricas de até dois níveis, como 4 e 4.1.",
+      "O modo Analítico passa a liberar explicitamente o terceiro nível, como 4.1.1 e 4.1.2, abaixo da conta sintética correspondente.",
+      "O frontend aplica um filtro defensivo por profundidade, impedindo que contas analíticas apareçam no modo Sintético mesmo diante de cache ou estruturas antigas.",
+      "O backend também filtra contas analíticas gravadas diretamente em bases antigas, evitando duplicidades entre linhas importadas e linhas geradas pelo Plano de Contas.",
+      "Corrigida a origem do erro de aproximadamente R$ 294 milhões em janeiro: saldos bancários e aplicações eram posições mensais, mas foram importados como soma dos saldos de todos os dias.",
+      "SALDO FINAL mensal volta a seguir a fórmula da planilha: Saldos Bancários em C/C + Aplicações Financeiras.",
+      "Janeiro do Consolidado volta aos valores de referência: Saldo Inicial R$ 9.666.473,96, Saldos Bancários R$ 328.152,96, Aplicações R$ 9.088.833,51 e Saldo Final R$ 9.416.986,47.",
+      "Adicionado procedimento transacional para corrigir 1.080 posições mensais de 2026, abrangendo seis empresas, quinze linhas e doze meses.",
+      "O procedimento gera backup JSON, valida os subtotais e pode ser executado novamente sem duplicar dados.",
+      "O importador do Cash Flow passa a usar a coluna de fechamento mensal para linhas de posição e continua somando diariamente apenas receitas, despesas e demais fluxos."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Seletor explícito Sintético/Analítico",
+        "Filtro defensivo por profundidade da conta"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "GET /financeiro/cashflow?modo=sintetico|analitico",
+        "Posições mensais separadas de fluxos",
+        "SALDO FINAL = C/C + Aplicações"
+      ],
+      "database": [
+        "PostgreSQL",
+        "fin_cashflow_linhas",
+        "fin_cashflow_valores",
+        "Correção transacional de 1.080 valores",
+        "Backup JSON antes da atualização"
+      ],
+      "deploy": [
+        "Executar a prévia migrate_cashflow_posicoes_2026.js",
+        "Executar a correção com --execute --confirmar=1080",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API e publicar o frontend"
+      ]
+    }
+  },
+  {
+      "version": "0.3.77",
+      "title": "Cash Flow — visão sintética padrão e Saldo Final corrigido",
+      "description": "Reduz a poluição visual do Cash Flow mantendo apenas contas sintéticas por padrão e corrige o encadeamento do Saldo Final com base nos saldos bancários ativos e nas variações mensais reais da estrutura financeira.",
+      "frontend_version": "0.3.77",
+      "backend_version": "0.3.77",
+      "released_at": "2026-07-01T22:30:00.000Z",
+      "changes": [
+          "O Cash Flow passa a abrir no modo sintético, exibindo somente as contas consolidadas do plano financeiro.",
+          "Adicionado botão Exibir analíticas/Ocultar analíticas para alternar o detalhamento sem perder os filtros selecionados.",
+          "As contas analíticas continuam disponíveis para conferência, mas não são somadas novamente às contas sintéticas.",
+          "O detalhe dos lançamentos permanece acessível ao clicar diretamente no valor da conta sintética.",
+          "O Saldo Inicial mensal passa a partir da soma das contas bancárias ativas cadastradas no sistema, substituindo a abertura antiga importada do Excel.",
+          "O Saldo Final passa a ser encadeado mês a mês pela fórmula Saldo Inicial + Geração de Caixa + Investimentos + Distribuição de Lucros + Sucessão + CP/CR em aberto.",
+          "O total anual da linha SALDO FINAL passa a mostrar a posição de dezembro, e não a soma incorreta dos doze saldos mensais.",
+          "Os cards de resumo passam a usar o mesmo Saldo Final calculado exibido na tabela.",
+          "A visão diária mantém o saldo de abertura real e calcula o encerramento com os movimentos e compromissos do mês.",
+          "Nenhuma migration ou alteração destrutiva de dados é necessária; valores legados permanecem preservados no banco e deixam apenas de ser usados no cálculo exibido."
+      ],
+      "architecture": {
+          "frontend": [
+              "Next.js App Router",
+              "React",
+              "TypeScript",
+              "Cash Flow sintético/analítico",
+              "Alternância de nível sem recarregar a página"
+          ],
+          "backend": [
+              "Node.js",
+              "Express.js",
+              "GET /financeiro/cashflow?modo=sintetico|analitico",
+              "Cálculo mensal encadeado do Saldo Final",
+              "Resumo diário e mensal consistente"
+          ],
+          "database": [
+              "PostgreSQL",
+              "fin_cashflow_linhas",
+              "fin_cashflow_valores",
+              "fin_bancos_contas",
+              "fin_parcelas_cp",
+              "fin_parcelas_cr",
+              "Sem alteração estrutural"
+          ],
+          "deploy": [
+              "Executar node scripts/migrate_system_releases.js",
+              "Reiniciar a API",
+              "Publicar o frontend"
+          ]
+      }
+  },
+  {
+    "version": "0.3.76",
+    "title": "Movimento Orçado — inativação auditável de lançamentos",
+    "description": "Permite retirar lançamentos incorretos ou cancelados da listagem ativa do Movimento Orçado sem apagar o histórico, registrando responsável, data e motivo da inativação.",
+    "frontend_version": "0.3.76",
+    "backend_version": "0.3.76",
+    "released_at": "2026-07-01T12:30:00.000Z",
+    "changes": [
+      "Adicionado botão Inativar em cada lançamento ativo do Movimento Orçado para usuários autorizados do grupo financeiro.",
+      "A inativação exige motivo e não exclui fisicamente o registro do banco de dados.",
+      "Lançamentos inativados deixam de aparecer na listagem ativa e nos totais exibidos nessa tela.",
+      "Criado botão Registros inativados para consultar responsável, data, e-mail e motivo da operação.",
+      "A ação passa a gerar um log específico movimento_orcado_inativado no módulo financeiro, além do log geral de requisição.",
+      "Criada migration própria para adicionar os campos ativo, inativado_em, inativado_por e motivo_inativacao.",
+      "A permissão de inativação no backend foi limitada aos perfis super_admin, admin, manager, controller e financial.",
+      "Nenhum lançamento existente é removido automaticamente durante a atualização."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Movimento Orçado",
+        "Modal de confirmação com motivo"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "PATCH /financeiro/orcamento/movimento/:id/inativar",
+        "Auditoria centralizada"
+      ],
+      "database": [
+        "PostgreSQL",
+        "fin_orcamento_movimento.ativo",
+        "fin_orcamento_movimento.inativado_em",
+        "fin_orcamento_movimento.inativado_por",
+        "fin_orcamento_movimento.motivo_inativacao",
+        "hub_audit_logs"
+      ],
+      "deploy": [
+        "Executar node scripts/migrate_movimento_orcado_inativacao.js",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API e publicar o frontend"
+      ]
+    }
+  },
+  {
     "version": "0.3.75",
     "title": "Clientes — histórico comercial e Orçamento com Saldo Final recalculado",
     "description": "Adiciona histórico de compras, contratos e recebíveis ao cadastro de clientes e recompõe os saldos mensais do Orçamento pela fórmula Saldo Inicial + Entradas - Saídas.",

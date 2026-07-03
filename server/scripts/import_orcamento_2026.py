@@ -163,6 +163,10 @@ CREATE TABLE IF NOT EXISTS fin_orcamento_movimento (
   saldo                NUMERIC(18,4),
   tipo_lancamento      VARCHAR(20) DEFAULT 'orcado',
   origem               VARCHAR(80) DEFAULT 'movimento_orcado',
+  ativo                BOOLEAN NOT NULL DEFAULT TRUE,
+  inativado_em         TIMESTAMP,
+  inativado_por        UUID,
+  motivo_inativacao    TEXT,
   created_at           TIMESTAMP DEFAULT NOW()
 );
 
@@ -172,6 +176,8 @@ CREATE INDEX IF NOT EXISTS idx_orcamento_valores_empresa_ano ON fin_orcamento_va
 CREATE INDEX IF NOT EXISTS idx_orcamento_mov_empresa_ano ON fin_orcamento_movimento(empresa, ano);
 CREATE INDEX IF NOT EXISTS idx_orcamento_mov_data ON fin_orcamento_movimento(data);
 CREATE INDEX IF NOT EXISTS idx_orcamento_mov_mes ON fin_orcamento_movimento(ano, mes);
+CREATE INDEX IF NOT EXISTS idx_orcamento_mov_ativo ON fin_orcamento_movimento(ativo);
+CREATE INDEX IF NOT EXISTS idx_orcamento_mov_ano_ativo ON fin_orcamento_movimento(ano, ativo);
 """
 
 

@@ -79,6 +79,10 @@ CREATE TABLE IF NOT EXISTS fin_orcamento_movimento (
   saldo                NUMERIC(18,4),
   tipo_lancamento      VARCHAR(20) DEFAULT 'orcado',
   origem               VARCHAR(80) DEFAULT 'movimento_orcado',
+  ativo                BOOLEAN NOT NULL DEFAULT TRUE,
+  inativado_em         TIMESTAMP,
+  inativado_por        UUID,
+  motivo_inativacao    TEXT,
   created_at           TIMESTAMP DEFAULT NOW()
 );
 
@@ -103,12 +107,18 @@ ALTER TABLE fin_orcamento_movimento
   ADD COLUMN IF NOT EXISTS saldo NUMERIC(18,4),
   ADD COLUMN IF NOT EXISTS tipo_lancamento VARCHAR(20) DEFAULT 'orcado',
   ADD COLUMN IF NOT EXISTS origem VARCHAR(80) DEFAULT 'movimento_orcado',
+  ADD COLUMN IF NOT EXISTS ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS inativado_em TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS inativado_por UUID,
+  ADD COLUMN IF NOT EXISTS motivo_inativacao TEXT,
   ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
 
 CREATE INDEX IF NOT EXISTS idx_orcamento_mov_empresa_ano ON fin_orcamento_movimento(empresa, ano);
 CREATE INDEX IF NOT EXISTS idx_orcamento_mov_data ON fin_orcamento_movimento(data);
 CREATE INDEX IF NOT EXISTS idx_orcamento_mov_mes ON fin_orcamento_movimento(ano, mes);
 CREATE INDEX IF NOT EXISTS idx_orcamento_mov_tipo ON fin_orcamento_movimento(tipo_lancamento);
+CREATE INDEX IF NOT EXISTS idx_orcamento_mov_ativo ON fin_orcamento_movimento(ativo);
+CREATE INDEX IF NOT EXISTS idx_orcamento_mov_ano_ativo ON fin_orcamento_movimento(ano, ativo);
 `
 
 async function migrate() {
