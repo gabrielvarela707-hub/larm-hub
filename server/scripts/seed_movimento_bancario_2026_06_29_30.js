@@ -1,5 +1,5 @@
 /**
- * v0.3.85 — Confere 26/06 apenas como referência e inclui somente os faltantes de 29 e 30/06/2026.
+ * v0.3.86 — Confere por data + linha de origem e bloqueia nova carga quando há lotes duplicados.
  *
  * Prévia:
  *   node scripts/seed_movimento_bancario_2026_06_29_30.js
@@ -14,8 +14,8 @@ const crypto = require('crypto')
 const zlib = require('zlib')
 const { pool, connectDB } = require('../src/config/database')
 
-const RELEASE = '0.3.85'
-const LOT = 'MOV-2026-20260629-30-0385'
+const RELEASE = '0.3.86'
+const LOT = 'MOV-2026-20260629-30-0386'
 const SOURCE = 'Movimento Bancário-2026 - LarmHub (1).xlsx'
 const EXPECTED = { count: 20, entries: 129498.99, outflows: 143258.64 }
 
@@ -111,18 +111,30 @@ function countKeys(rows, keyFn) {
   }
   return counts
 }
+function lineKey(r) {
+  const line = Number(r.line || r.linha_origem || 0)
+  return line > 0 ? `${isoDate(r.data)}|${line}` : ''
+}
 function findMissing(sourceRows, currentRows) {
+  // A linha de origem é a chave mais estável desta carga. Ela evita que diferenças
+  // de hash, fornecedor ou acentuação façam o seed reinserir movimentos já existentes.
+  const lineCounts = countKeys(currentRows.filter(row => lineKey(row)), lineKey)
   const exactCounts = countKeys(currentRows, exactKey)
   const safeCounts = countKeys(currentRows, safeKey)
   const missing = []
   const matched = []
 
   for (const row of sourceRows) {
+    const lk = lineKey(row)
     const ek = exactKey(row)
     const sk = safeKey(row)
+    if (lk && (lineCounts.get(lk) || 0) > 0) {
+      lineCounts.set(lk, lineCounts.get(lk) - 1)
+      matched.push({ row, method: 'linha_origem' })
+      continue
+    }
     if ((exactCounts.get(ek) || 0) > 0) {
       exactCounts.set(ek, exactCounts.get(ek) - 1)
-      safeCounts.set(sk, Math.max(0, (safeCounts.get(sk) || 0) - 1))
       matched.push({ row, method: 'exato' })
       continue
     }
@@ -141,11 +153,25 @@ async function main() {
   const execute = process.argv.includes('--execute')
   const client = await pool.connect()
   try {
+    const { rows: [duplicateCheck] } = await client.query(`
+      SELECT COUNT(*)::int AS count
+        FROM fin_movimento
+       WHERE lote_importacao=ANY($1::text[])
+         AND data BETWEEN DATE '2026-06-26' AND DATE '2026-06-30'`, [[
+      'MOV-2026-20260629-30-0379',
+      'MOV-2026-20260629-30-0383',
+      'MOV-2026-20260626-30-0384',
+      'MOV-2026-20260629-30-0385',
+    ]])
+    if (Number(duplicateCheck.count) > 0) {
+      throw new Error(`Existem ${duplicateCheck.count} registros de lotes incrementais duplicados. Execute primeiro seed_corrigir_duplicidades_movimento_26_29_30.js.`)
+    }
+
     const { rows: current } = await client.query(`SELECT * FROM fin_movimento WHERE data BETWEEN DATE '2026-06-26' AND DATE '2026-06-30' ORDER BY data,id`)
     const normalizedCurrent = current.map(r => ({
       data: isoDate(r.data), empresa:r.empresa, banco:r.banco,
       entradas:r.entradas, saidas:r.saidas, fornecedor:r.fornecedor,
-      historico:r.historico, natureza:r.natureza_financeira,
+      historico:r.historico, natureza:r.natureza_financeira, line:r.linha_origem,
     }))
     const referenceRows = ROWS.filter(r => r.data === '2026-06-26')
     const eligibleRows = ROWS.filter(r => r.data === '2026-06-29' || r.data === '2026-06-30')
@@ -201,7 +227,7 @@ async function main() {
     const lockedNormalized = lockedCurrent.map(r => ({
       data: isoDate(r.data), empresa:r.empresa, banco:r.banco,
       entradas:r.entradas, saidas:r.saidas, fornecedor:r.fornecedor,
-      historico:r.historico, natureza:r.natureza_financeira,
+      historico:r.historico, natureza:r.natureza_financeira, line:r.linha_origem,
     }))
     const lockedMissing = findMissing(eligibleRows, lockedNormalized).missing
     if (lockedMissing.length !== missing.length || lockedMissing.some((r,i) => safeKey(r) !== safeKey(missing[i]))) {
@@ -212,7 +238,7 @@ async function main() {
 
     const backupDir = path.join(__dirname,'backups'); fs.mkdirSync(backupDir,{recursive:true})
     const stamp = new Date().toISOString().replace(/[-:.TZ]/g,'').slice(0,14)
-    const backupPath = path.join(backupDir,`movimento-29-30-antes-0385-${stamp}.json.gz`)
+    const backupPath = path.join(backupDir,`movimento-29-30-antes-0386-${stamp}.json.gz`)
     fs.writeFileSync(backupPath,zlib.gzipSync(JSON.stringify({generated_at:new Date().toISOString(),current:lockedCurrent},null,2)))
 
     for (const r of lockedMissing) {

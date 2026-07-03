@@ -6,6 +6,32 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.86",
+    "title": "Financeiro — correção dos lotes duplicados de 26, 29 e 30 de junho",
+    "description": "Corrige a identificação dos movimentos existentes por linha de origem, bloqueia novas reinserções e adiciona uma limpeza cirúrgica dos lotes incrementais duplicados, preservando o lote oficial.",
+    "frontend_version": "0.3.82",
+    "backend_version": "0.3.86",
+    "released_at": "2026-07-03T15:00:00.000Z",
+    "changes": [
+      "Identificado que os movimentos de 26, 29 e 30/06 já estavam presentes no lote oficial e foram reinseridos por lotes incrementais posteriores.",
+      "Criado seed de limpeza que preserva o lote MOV-2026-ATE-0107-20260702020021 e remove somente os lotes 0.3.79, 0.3.83, 0.3.84 e, se existir, 0.3.85.",
+      "A limpeza valida as quantidades por lote, verifica vínculos em Contas a Receber, Contas a Pagar e lançamentos bancários, gera backup compactado e usa transação.",
+      "O seed de 29 e 30/06 passa a reconhecer movimentos por data e linha_origem, evitando reinserção por diferenças de hash, fornecedor, acentuação ou grafia do banco.",
+      "Adicionada trava que impede a carga enquanto existirem lotes incrementais duplicados.",
+      "Nenhuma alteração de frontend foi necessária."
+    ],
+    "architecture": {
+      "frontend": ["Sem alterações — permanece na versão 0.3.82"],
+      "backend": ["Node.js", "PostgreSQL", "Seeds transacionais e idempotentes"],
+      "database": ["fin_movimento", "com_parcelas", "fin_bancos_lancamentos", "fin_parcelas_cp"],
+      "deploy": [
+        "Executar a prévia da correção de duplicidades",
+        "Remover somente a quantidade confirmada pela prévia",
+        "Executar novamente a conferência de 29 e 30/06, que deverá indicar zero faltantes"
+      ]
+    }
+  },
+  {
     "version": "0.3.85",
     "title": "Financeiro — carga restrita aos movimentos de 29 e 30 de junho",
     "description": "Corrige a conferência excessivamente rígida da versão anterior e impede qualquer reinserção dos movimentos já existentes de 26/06.",
