@@ -1,0 +1,7 @@
+ARQUIVOS ALTERADOS — LARMHUB WEB 0.3.93
+
+- src/app/(dashboard)/financeiro/movimento/page.tsx
+- src/app/(dashboard)/financeiro/movimento/novo/page.tsx
+- src/app/(dashboard)/financeiro/fornecedores/page.tsx (mantida paginação 0.3.92)
+- package.json
+- package-lock.json

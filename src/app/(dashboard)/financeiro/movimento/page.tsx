@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { ReactNode } from 'react'
-import { Search, TrendingUp, TrendingDown, DollarSign, ChevronLeft, ChevronRight, Download } from 'lucide-react'
+import { Search, TrendingUp, TrendingDown, DollarSign, ChevronLeft, ChevronRight, Download, Plus } from 'lucide-react'
+import Link from 'next/link'
 import TableFloatingNav from '@/components/table-floating-nav'
 import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
@@ -363,6 +364,12 @@ export default function MovimentoPage() {
           <p className="text-sm text-slate-500 mt-0.5">Movimentações realizadas por empresa, banco e conta</p>
         </div>
         <div className="flex gap-2 flex-wrap justify-end">
+          <Link
+            href="/financeiro/movimento/novo"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-[#1e3a5f] text-white hover:bg-[#162d4a]"
+          >
+            <Plus className="w-3.5 h-3.5" /> Novo lançamento
+          </Link>
           {activeTab === 'lista' && (
             <button type="button" onClick={exportarExcel}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold bg-white border border-slate-200 text-slate-600 hover:bg-slate-50">
