@@ -28,6 +28,8 @@ import {
   Save,
   Paperclip,
   ExternalLink,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { apiClient } from "@/lib/auth-store";
@@ -697,8 +699,12 @@ export default function FornecedoresPage() {
   const [fEmpresa, setFEmpresa] = useState("");
   const [fCategoria, setFCategoria] = useState("");
   const [ordenacao, setOrdenacao] = useState("nome:asc");
+  const [page, setPage] = useState(1);
+  const limit = 50;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
 
   function toggleOrdenacao(campo: 'codigo' | 'nome' | 'categoria') {
+    setPage(1);
     setOrdenacao((atual) => {
       const [campoAtual, direcaoAtual] = atual.split(':');
       const proximaDirecao = campoAtual === campo && direcaoAtual === 'asc' ? 'desc' : 'asc';
@@ -757,6 +763,8 @@ export default function FornecedoresPage() {
       const [ordenar, direcao] = ordenacao.split(":");
       params.ordenar = ordenar;
       params.direcao = direcao;
+      params.page = String(page);
+      params.limit = String(limit);
       params._ts = String(Date.now());
       const r = await apiClient.get("/financeiro/fornecedores", { params });
       const received = Array.isArray(r.data?.data) ? r.data.data : [];
@@ -767,7 +775,7 @@ export default function FornecedoresPage() {
     } finally {
       setLoading(false);
     }
-  }, [fBusca, fEmpresa, fCategoria, ordenacao]);
+  }, [fBusca, fEmpresa, fCategoria, ordenacao, page]);
 
   useEffect(() => {
     load();
@@ -1357,7 +1365,7 @@ export default function FornecedoresPage() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             value={fBusca}
-            onChange={(e) => setFBusca(e.target.value)}
+            onChange={(e) => { setFBusca(e.target.value); setPage(1); }}
             onKeyDown={(e) => e.key === "Enter" && load()}
             placeholder="Buscar por nome ou CNPJ/CPF…"
             className="pl-9 pr-4 py-2 w-full text-sm bg-white border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:border-blue-400"
@@ -1365,7 +1373,7 @@ export default function FornecedoresPage() {
         </div>
         <select
           value={fEmpresa}
-          onChange={(e) => setFEmpresa(e.target.value)}
+          onChange={(e) => { setFEmpresa(e.target.value); setPage(1); }}
           className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700"
         >
           <option value="">Todas empresas</option>
@@ -1375,7 +1383,7 @@ export default function FornecedoresPage() {
         </select>
         <select
           value={fCategoria}
-          onChange={(e) => setFCategoria(e.target.value)}
+          onChange={(e) => { setFCategoria(e.target.value); setPage(1); }}
           className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700"
         >
           <option value="">Todas categorias</option>
@@ -1385,7 +1393,7 @@ export default function FornecedoresPage() {
         </select>
         <select
           value={ordenacao}
-          onChange={(e) => setOrdenacao(e.target.value)}
+          onChange={(e) => { setOrdenacao(e.target.value); setPage(1); }}
           aria-label="Ordenar fornecedores"
           className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700"
         >
@@ -1529,6 +1537,31 @@ export default function FornecedoresPage() {
                 ))}
             </tbody>
           </table>
+        </div>
+        <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
+          <span className="text-xs text-slate-500">Página {page} de {totalPages}</span>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              aria-label="Página anterior"
+              title="Página anterior"
+              disabled={page <= 1 || loading}
+              onClick={() => setPage((value) => Math.max(1, value - 1))}
+              className="rounded-md border border-slate-200 p-2 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              aria-label="Próxima página"
+              title="Próxima página"
+              disabled={page >= totalPages || loading}
+              onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+              className="rounded-md border border-slate-200 p-2 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </div>
 
