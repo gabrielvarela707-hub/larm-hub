@@ -6,6 +6,61 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.81",
+    "title": "Contas a Receber — retorno Bradesco conciliado com títulos importados do Strato",
+    "description": "Corrige a leitura operacional do retorno CNAB 400 para localizar parcelas importadas do Strato, criar as baixas e os respectivos Movimentos Bancários sem duplicidade, com prévia segura e diagnóstico dos títulos não conciliados.",
+    "frontend_version": "0.3.81",
+    "backend_version": "0.3.81",
+    "released_at": "2026-07-02T23:58:00.000Z",
+    "changes": [
+      "O retorno Bradesco passa a localizar recebíveis importados do Strato pelo controle do participante, relacionando ts1_core.core1_cod ao contrato STR-<vend1_cod>-... do HUB.",
+      "Mantida a conciliação direta por Nosso Número e controle do participante para títulos gerados posteriormente pelo próprio LarmHub.",
+      "Adicionado fallback conservador por empresa, vencimento, tipo e valor, usado somente quando existe um único candidato dentro da tolerância segura.",
+      "A baixa por ocorrência 06 passa a criar uma entrada em fin_movimento, preencher movimento_id na parcela e registrar origem_baixa como retorno_bradesco.",
+      "A data contábil da baixa utiliza a data da ocorrência do arquivo, mantendo a data de crédito bancário nos metadados da conciliação.",
+      "O processamento identifica automaticamente LARM ou LUCKY pelo cabeçalho do CNAB e seleciona a conta Bradesco ativa da mesma empresa.",
+      "Parcelas já pagas ou que já possuem Movimento Bancário são reconhecidas e não geram uma segunda baixa.",
+      "Desmarcar Baixar liquidações agora executa uma prévia real, sem gravar o retorno, sem alterar boleto_status e sem impedir o processamento definitivo posterior.",
+      "A tela apresenta quantidades localizadas, não localizadas, baixadas, já baixadas, movimentos criados, valor processado e a lista dos itens que exigem conferência manual.",
+      "Adicionado procedimento para validar e processar os quatro arquivos enviados pelo cliente, limitando as ocorrências até 01/07/2026 e exigindo confirmação pela quantidade encontrada na prévia.",
+      "Os arquivos de 30/06 e 01/07 são incluídos no pacote do backend para execução controlada após a migration.",
+      "Adicionadas colunas de empresa, conta bancária, movimento, método de conciliação e divergência de valor ao histórico dos retornos."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Prévia sem gravação",
+        "Painel de resultado e itens não localizados"
+      ],
+      "backend": [
+        "Node.js",
+        "Express",
+        "Bradesco CNAB 400",
+        "Conciliação com ts1_core e contratos STR",
+        "Baixa transacional com Movimento Bancário",
+        "Idempotência por SHA-256 e por movimento_id"
+      ],
+      "database": [
+        "com_parcelas",
+        "com_contratos",
+        "ts1_core",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "fin_retornos_cobranca",
+        "fin_retornos_cobranca_itens"
+      ],
+      "deploy": [
+        "Executar node scripts/migrate_retorno_bradesco_strato.js",
+        "Executar a prévia seed_processar_retornos_bradesco_ate_2026_07_01.js",
+        "Executar novamente com --execute e a quantidade exata da prévia",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar a API e publicar o frontend 0.3.81"
+      ]
+    }
+  },
+  {
     "version": "0.3.80",
     "title": "Financeiro — inativação visível no Movimento Orçado e baixa manual no Contas a Receber",
     "description": "Restaura a ação de inativar diretamente na área visível do Movimento Orçado, amplia a compatibilidade de permissões do grupo financeiro e adiciona baixa manual transacional no Contas a Receber com geração e vínculo do Movimento Bancário.",

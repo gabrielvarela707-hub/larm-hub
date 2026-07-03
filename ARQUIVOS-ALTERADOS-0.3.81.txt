@@ -1,0 +1,24 @@
+LARMHUB 0.3.81 — ARQUIVOS ALTERADOS/ADICIONADOS
+
+Frontend
+- src/app/(dashboard)/financeiro/receber/page.tsx
+- src/data/system_releases_seed.js
+- data/system_releases_seed.js
+- package.json
+- package-lock.json
+
+Backend
+- server/src/routes/recebiveis.js
+- server/src/services/bradescoReturnProcessor.js (novo)
+- server/scripts/migrate_retorno_bradesco_strato.js (novo)
+- server/scripts/seed_processar_retornos_bradesco_ate_2026_07_01.js (novo)
+- server/scripts/imports/retornos-2026-07-01/CB010700 Larm 30-06.RET (novo)
+- server/scripts/imports/retornos-2026-07-01/CB010700 Lucky 30-06.RET (novo)
+- server/scripts/imports/retornos-2026-07-01/CB020700 (Lucky 01-07).RET (novo)
+- server/scripts/imports/retornos-2026-07-01/CB020700 Larm 01-07.RET (novo)
+- server/src/data/system_releases_seed.js
+- server/data/system_releases_seed.js
+- server/scripts/system_releases_seed.js
+- server/system_releases_seed.js
+- server/package.json
+- server/package-lock.json

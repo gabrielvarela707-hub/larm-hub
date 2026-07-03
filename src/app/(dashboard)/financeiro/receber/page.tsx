@@ -206,6 +206,46 @@ type BradescoConfig = {
   homologado: boolean
 }
 
+type ReturnProcessingItem = {
+  linha: number
+  empresa?: string | null
+  ocorrencia: string
+  ocorrencia_descricao: string
+  nosso_numero?: string | null
+  controle_participante?: string | null
+  documento?: string | null
+  vencimento?: string | null
+  data_ocorrencia?: string | null
+  data_credito?: string | null
+  valor_titulo: number
+  valor_pago: number
+  parcela_id?: string | null
+  contrato?: string | null
+  cliente?: string | null
+  metodo_conciliacao?: string | null
+  movimento_id?: number | null
+  status_processamento: string
+}
+
+type ReturnProcessingResult = {
+  arquivo: string
+  empresa?: string | null
+  preview?: boolean
+  persisted?: boolean
+  conciliados: number
+  nao_localizados: number
+  liquidacoes_encontradas: number
+  liquidacoes_prontas: number
+  liquidacoes_baixadas: number
+  ja_baixadas: number
+  movimentos_criados: number
+  valor_liquidado: number
+  valor_baixado: number
+  conta_bancaria_localizada: boolean
+  conta_bancaria_ambigua: boolean
+  itens: ReturnProcessingItem[]
+}
+
 const EMPTY_SUMMARY: Summary = {
   total: 0,
   total_em_aberto: 0,
@@ -488,6 +528,7 @@ export default function ContasReceberPage() {
   const [whatsappLoading, setWhatsappLoading] = useState(false)
   const [returnApplyPayment, setReturnApplyPayment] = useState(true)
   const [returnLoading, setReturnLoading] = useState(false)
+  const [returnResult, setReturnResult] = useState<ReturnProcessingResult | null>(null)
   const [boletoLoadingId, setBoletoLoadingId] = useState<string | null>(null)
   const [boletoError, setBoletoError] = useState('')
 
@@ -1097,6 +1138,7 @@ export default function ContasReceberPage() {
     setReturnLoading(true)
     setError('')
     setSuccess('')
+    setReturnResult(null)
     try {
       const content = await file.text()
       const response = await apiClient.post('/financeiro/contas-receber/bradesco/retorno', {
@@ -1107,11 +1149,20 @@ export default function ContasReceberPage() {
       if (response.data?.duplicated) {
         setSuccess('Este retorno já havia sido processado. Nenhuma baixa foi duplicada.')
       } else {
-        const result = response.data?.data
-        setSuccess(
-          `Retorno processado: ${result?.conciliados || 0} localizado(s), ` +
-          `${result?.nao_localizados || 0} não localizado(s), ${formatCurrency(result?.valor_liquidado || 0)} liquidado.`,
-        )
+        const result = response.data?.data as ReturnProcessingResult
+        setReturnResult(result)
+        if (response.data?.preview || !returnApplyPayment) {
+          setSuccess(
+            `Prévia concluída: ${result?.liquidacoes_prontas || 0} liquidação(ões) pronta(s), ` +
+            `${result?.nao_localizados || 0} não localizada(s). Nenhum registro foi alterado.`,
+          )
+        } else {
+          setSuccess(
+            `Retorno processado: ${result?.liquidacoes_baixadas || 0} baixa(s), ` +
+            `${result?.movimentos_criados || 0} movimento(s) criado(s), ` +
+            `${formatCurrency(result?.valor_baixado || 0)} recebido.`,
+          )
+        }
       }
       await load()
     } catch (requestError: unknown) {
@@ -1220,7 +1271,7 @@ export default function ContasReceberPage() {
             className="hidden"
             onChange={event => processReturnFile(event.target.files?.[0])}
           />
-          <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-medium text-slate-600" title="Desmarque para apenas conferir as liquidações sem baixar as parcelas">
+          <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-medium text-slate-600" title="Desmarque para executar uma prévia totalmente segura, sem gravar o arquivo nem alterar parcelas">
             <input type="checkbox" checked={returnApplyPayment} onChange={event => setReturnApplyPayment(event.target.checked)} />
             Baixar liquidações
           </label>
@@ -1257,7 +1308,7 @@ export default function ContasReceberPage() {
       </div>
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-xs text-blue-800">
-        Parcelas vencidas podem ser recalculadas em conjunto com todas as anteriores em aberto. O retorno Bradesco pode apenas conferir as liquidações ou também aplicar as baixas, conforme a opção acima.
+        Parcelas vencidas podem ser recalculadas em conjunto com todas as anteriores em aberto. O retorno Bradesco localiza os títulos importados do Strato, cria o Movimento Bancário e vincula a baixa. Desmarque “Baixar liquidações” para uma prévia sem qualquer alteração.
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
@@ -1316,6 +1367,64 @@ export default function ContasReceberPage() {
 
       {error && <Notice type="error" onClose={() => setError('')}>{error}</Notice>}
       {success && <Notice type="success" onClose={() => setSuccess('')}>{success}</Notice>}
+
+      {returnResult && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <div className="flex items-center gap-2">
+                <Landmark className="h-4 w-4 text-blue-600" />
+                <h2 className="text-sm font-semibold text-slate-800">
+                  {returnResult.preview ? 'Prévia do retorno Bradesco' : 'Resultado do retorno Bradesco'}
+                </h2>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">{returnResult.arquivo} · {returnResult.empresa || 'empresa não identificada'}</p>
+            </div>
+            <button type="button" onClick={() => setReturnResult(null)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Fechar resultado">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ['Localizados', returnResult.conciliados],
+              ['Não localizados', returnResult.nao_localizados],
+              [returnResult.preview ? 'Prontos' : 'Baixados', returnResult.preview ? returnResult.liquidacoes_prontas : returnResult.liquidacoes_baixadas],
+              ['Já baixados', returnResult.ja_baixadas],
+              ['Movimentos', returnResult.movimentos_criados],
+              [returnResult.preview ? 'Valor localizado' : 'Valor baixado', formatCurrency(returnResult.preview ? returnResult.valor_liquidado : returnResult.valor_baixado)],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <p className="text-[10px] uppercase tracking-wide text-slate-400">{label}</p>
+                <p className="mt-0.5 text-sm font-semibold text-slate-700">{value}</p>
+              </div>
+            ))}
+          </div>
+          {!returnResult.conta_bancaria_localizada && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              {returnResult.conta_bancaria_ambigua
+                ? 'Existe mais de uma conta Bradesco ativa para a empresa. Nenhuma baixa automática foi feita até a conta ser definida.'
+                : 'A conta Bradesco ativa da empresa não foi localizada. Nenhuma baixa automática foi feita.'}
+            </div>
+          )}
+          {returnResult.itens?.some(item => item.status_processamento === 'nao_localizado') && (
+            <div className="mt-3 overflow-x-auto rounded-lg border border-amber-200">
+              <table className="min-w-[900px] w-full text-xs">
+                <thead className="bg-amber-50 text-amber-900"><tr>
+                  <th className="px-3 py-2 text-left">Linha</th><th className="px-3 py-2 text-left">Nosso número</th><th className="px-3 py-2 text-left">Controle</th><th className="px-3 py-2 text-left">Documento</th><th className="px-3 py-2 text-left">Vencimento</th><th className="px-3 py-2 text-right">Valor</th>
+                </tr></thead>
+                <tbody className="divide-y divide-amber-100 bg-white">
+                  {returnResult.itens.filter(item => item.status_processamento === 'nao_localizado').map(item => (
+                    <tr key={`${item.linha}-${item.nosso_numero}`}>
+                      <td className="px-3 py-2">{item.linha}</td><td className="px-3 py-2">{item.nosso_numero || '—'}</td><td className="px-3 py-2">{item.controle_participante || '—'}</td><td className="px-3 py-2">{item.documento || '—'}</td><td className="px-3 py-2">{formatDate(item.vencimento)}</td><td className="px-3 py-2 text-right">{formatCurrency(item.valor_pago || item.valor_titulo)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <SummaryBox label="Em aberto" quantity={summary.total_em_aberto} value={summary.valor_em_aberto} valueClass="text-amber-700" />
