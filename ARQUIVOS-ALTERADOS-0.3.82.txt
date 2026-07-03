@@ -1,0 +1,7 @@
+src/lib/api/financeiro.ts
+src/data/system_releases_seed.js
+data/system_releases_seed.js
+package.json
+package-lock.json
+README-ATUALIZACAO-0.3.82.txt
+ARQUIVOS-ALTERADOS-0.3.82.txt

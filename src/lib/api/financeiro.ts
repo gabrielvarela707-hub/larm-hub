@@ -424,7 +424,7 @@ export const getOrcamentoMovimento = (params?: OrcamentoMovimentoParams) =>
     .then(r => r.data)
 
 export const inativarOrcamentoMovimento = (id: number, motivo: string) =>
-  apiClient.patch<{ ok: boolean; message: string; data: Record<string, unknown> }>(
+  apiClient.post<{ ok: boolean; message: string; data: Record<string, unknown> }>(
     `/financeiro/orcamento/movimento/${id}/inativar`,
     { motivo },
   ).then(r => r.data)

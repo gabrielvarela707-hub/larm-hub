@@ -6,6 +6,50 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.3.82",
+    "title": "Financeiro — inativação compatível por POST e seleção automática do tenant LARM",
+    "description": "Corrige o erro de rota ao inativar lançamentos do Movimento Orçado e elimina a exigência manual de TENANT_ID no processamento controlado dos retornos Bradesco do LARM HUB.",
+    "frontend_version": "0.3.82",
+    "backend_version": "0.3.82",
+    "released_at": "2026-07-03T00:35:00.000Z",
+    "changes": [
+      "A inativação do Movimento Orçado passa a utilizar POST como método principal, evitando falhas 404 em proxies ou rotas legadas que não encaminham PATCH corretamente.",
+      "O backend mantém a rota PATCH anterior para compatibilidade e adiciona a mesma operação por POST, usando um único handler transacional.",
+      "Mantidos motivo obrigatório, inativação lógica, usuário responsável, data, hora e auditoria completa.",
+      "O seed dos retornos Bradesco seleciona automaticamente o tenant ativo identificado como LARM por slug, tipo ou nome.",
+      "Em bases com Santa Clara e LARM, a rotina deixa de interromper com a mensagem de múltiplos tenants.",
+      "A opção --tenant=UUID continua disponível para execução explícita e ambientes excepcionais.",
+      "Atualizadas as versões técnicas do frontend e backend para 0.3.82."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Axios POST para inativação",
+        "Compatibilidade com o modal existente"
+      ],
+      "backend": [
+        "Node.js",
+        "Express",
+        "Rotas POST e PATCH compartilhando o mesmo handler",
+        "Seleção segura de tenant em ambiente multi-tenant"
+      ],
+      "database": [
+        "fin_orcamento_movimento",
+        "hub_audit_logs",
+        "hub_tenants",
+        "com_parcelas",
+        "fin_movimento"
+      ],
+      "deploy": [
+        "Copiar somente os arquivos alterados da versão 0.3.82",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar obrigatoriamente a API com pm2 restart larmhub-api",
+        "Publicar o frontend 0.3.82",
+        "Executar a prévia e depois o processamento dos retornos Bradesco"
+      ]
+    }
+  },
+  {
     "version": "0.3.81",
     "title": "Contas a Receber — retorno Bradesco conciliado com títulos importados do Strato",
     "description": "Corrige a leitura operacional do retorno CNAB 400 para localizar parcelas importadas do Strato, criar as baixas e os respectivos Movimentos Bancários sem duplicidade, com prévia segura e diagnóstico dos títulos não conciliados.",
