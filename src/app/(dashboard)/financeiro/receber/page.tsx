@@ -394,7 +394,7 @@ function returnItemReason(item: ReturnProcessingItem) {
   if (item.status_processamento === 'pronto') return 'Localizado e pronto para baixa na execução.'
   if (item.status_processamento === 'nao_localizado') {
     if (item.ocorrencia && item.ocorrencia !== '06') return `${item.ocorrencia_descricao || 'Ocorrência bancária'}; não é liquidação de cobrança.`
-    return 'Não foi encontrada parcela correspondente por nosso número, controle/documento, vencimento e valor.'
+    return 'Não foi encontrada parcela correspondente por nosso número, controle/documento, vencimento e valor. O CNAB 400 do retorno não traz nome do pagador nesta linha; para identificar o cliente é preciso cruzar com relatório do Bradesco ou com a base legada.'
   }
   return item.ocorrencia_descricao || 'Sem detalhe informado pelo banco.'
 }
@@ -1535,7 +1535,11 @@ export default function ContasReceberPage() {
           )}
 
           {returnResult.itens?.length > 0 && (
-            <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+            <div className="mt-3">
+              <div className="mb-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
+                Listando todos os títulos lidos no retorno: localizados, já baixados, baixados agora, não localizados e ocorrências sem liquidação. Quando o CNAB não informa o nome do pagador e a parcela não é encontrada, o cliente aparece como “Não localizado”.
+              </div>
+              <div className="overflow-x-auto rounded-lg border border-slate-200">
               <table className="min-w-[1100px] w-full text-xs">
                 <thead className="bg-slate-50 text-slate-700"><tr>
                   <th className="px-3 py-2 text-left">Linha</th>
@@ -1560,8 +1564,8 @@ export default function ContasReceberPage() {
                       </td>
                       <td className="px-3 py-2">{item.ocorrencia} · {item.ocorrencia_descricao || '—'}</td>
                       <td className="px-3 py-2">
-                        <p className="font-medium text-slate-700">{item.cliente || '—'}</p>
-                        <p className="text-[10px] text-slate-400">{item.contrato || 'sem contrato localizado'}</p>
+                        <p className="font-medium text-slate-700">{item.cliente || 'Não localizado'}</p>
+                        <p className="text-[10px] text-slate-400">{item.contrato || (item.status_processamento === 'nao_localizado' ? 'sem parcela/contrato conciliado' : 'sem contrato localizado')}</p>
                       </td>
                       <td className="px-3 py-2">{item.nosso_numero || '—'}</td>
                       <td className="px-3 py-2">{item.controle_participante || '—'}</td>
@@ -1573,6 +1577,7 @@ export default function ContasReceberPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </div>
