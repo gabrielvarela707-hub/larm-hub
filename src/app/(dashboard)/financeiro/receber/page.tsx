@@ -223,13 +223,17 @@ type ReturnProcessingItem = {
   contrato?: string | null
   cliente?: string | null
   metodo_conciliacao?: string | null
-  movimento_id?: number | null
+  movimento_id?: number | string | null
+  divergencia_valor?: number | null
   status_processamento: string
 }
 
 type ReturnProcessingResult = {
+  id?: string
   arquivo: string
   empresa?: string | null
+  registros?: number
+  titulos?: number
   preview?: boolean
   persisted?: boolean
   conciliados: number
@@ -359,6 +363,74 @@ function origemBaixaLabel(row: ParcelaReceber) {
   if (row.origem_baixa === 'importacao_historica') return 'Importação histórica'
   if (row.status === 'paga') return 'Baixa registrada'
   return 'Aguardando conciliação'
+}
+
+function returnItemStatusLabel(item: ReturnProcessingItem) {
+  if (item.status_processamento === 'ja_baixado') return 'Já baixado'
+  if (item.status_processamento === 'baixado') return 'Baixado agora'
+  if (item.status_processamento === 'pronto') return 'Pronto para baixa'
+  if (item.status_processamento === 'nao_localizado') {
+    if (item.ocorrencia && item.ocorrencia !== '06') return 'Ocorrência sem liquidação'
+    return 'Não localizado'
+  }
+  if (item.status_processamento === 'ignorado') return 'Ignorado'
+  return item.status_processamento || '—'
+}
+
+function returnItemStatusClass(item: ReturnProcessingItem) {
+  if (item.status_processamento === 'baixado') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  if (item.status_processamento === 'ja_baixado') return 'bg-blue-50 text-blue-700 border-blue-200'
+  if (item.status_processamento === 'pronto') return 'bg-amber-50 text-amber-700 border-amber-200'
+  if (item.status_processamento === 'nao_localizado' && item.ocorrencia !== '06') return 'bg-slate-100 text-slate-600 border-slate-200'
+  if (item.status_processamento === 'nao_localizado') return 'bg-red-50 text-red-700 border-red-200'
+  return 'bg-slate-100 text-slate-600 border-slate-200'
+}
+
+function returnItemReason(item: ReturnProcessingItem) {
+  if (item.status_processamento === 'ja_baixado') {
+    return item.movimento_id ? `Já estava vinculado ao movimento ${item.movimento_id}.` : 'A parcela já estava marcada como recebida.'
+  }
+  if (item.status_processamento === 'baixado') return 'Baixa criada agora a partir do retorno.'
+  if (item.status_processamento === 'pronto') return 'Localizado e pronto para baixa na execução.'
+  if (item.status_processamento === 'nao_localizado') {
+    if (item.ocorrencia && item.ocorrencia !== '06') return `${item.ocorrencia_descricao || 'Ocorrência bancária'}; não é liquidação de cobrança.`
+    return 'Não foi encontrada parcela correspondente por nosso número, controle/documento, vencimento e valor.'
+  }
+  return item.ocorrencia_descricao || 'Sem detalhe informado pelo banco.'
+}
+
+function buildReturnSuccessMessage(filesCount: number, result: ReturnProcessingResult, preview: boolean) {
+  const fileLabel = filesCount === 1 ? '1 retorno' : `${filesCount} retornos`
+  if (result.duplicated) return `${fileLabel} já havia(m) sido processado(s). Nenhuma baixa foi duplicada.`
+  if (preview) {
+    return `Prévia de ${fileLabel}: ${result.liquidacoes_prontas || 0} título(s) pronto(s), ` +
+      `${result.ja_baixadas || 0} já baixado(s), ${result.nao_localizados || 0} não localizado(s). Nenhum registro foi alterado.`
+  }
+  if ((result.liquidacoes_baixadas || 0) > 0 || (result.movimentos_criados || 0) > 0) {
+    return `${fileLabel} processado(s): ${result.liquidacoes_baixadas || 0} baixa(s) nova(s), ` +
+      `${result.movimentos_criados || 0} movimento(s), ${formatCurrency(result.valor_baixado || 0)} recebido.`
+  }
+  return `${fileLabel} processado(s), mas nenhuma nova baixa foi criada: ` +
+    `${result.ja_baixadas || 0} título(s) já estavam baixados e ${result.nao_localizados || 0} item(ns) não foram localizados. Confira o detalhe abaixo.`
+}
+
+function buildReturnMainExplanation(result: ReturnProcessingResult) {
+  const naoLocalizadosLiquidacao = (result.itens || []).filter(item => item.status_processamento === 'nao_localizado' && item.ocorrencia === '06').length
+  const ocorrenciasSemLiquidacao = (result.itens || []).filter(item => item.status_processamento === 'nao_localizado' && item.ocorrencia !== '06').length
+  if (result.preview) {
+    return 'Prévia segura: o arquivo foi lido e conferido, mas nenhuma baixa foi gravada.'
+  }
+  if ((result.liquidacoes_baixadas || 0) > 0) {
+    return `${result.liquidacoes_baixadas} baixa(s) foram gravadas agora e ${result.movimentos_criados || 0} movimento(s) bancário(s) foram criado(s).`
+  }
+  if ((result.ja_baixadas || 0) > 0 || (result.nao_localizados || 0) > 0) {
+    const parts = []
+    if ((result.ja_baixadas || 0) > 0) parts.push(`${result.ja_baixadas} título(s) já estavam baixados antes deste processamento`)
+    if (naoLocalizadosLiquidacao > 0) parts.push(`${naoLocalizadosLiquidacao} liquidação(ões) não foram encontradas no Contas a Receber`)
+    if (ocorrenciasSemLiquidacao > 0) parts.push(`${ocorrenciasSemLiquidacao} ocorrência(s) não eram liquidação normal`)
+    return `${parts.join('; ')}. Por isso nenhum novo movimento foi criado.`
+  }
+  return 'Arquivo processado. Confira os indicadores e os detalhes abaixo.'
 }
 
 function filenameFromDisposition(value?: string) {
@@ -1196,20 +1268,7 @@ export default function ContasReceberPage() {
       })
 
       setReturnResult(aggregated)
-      if (aggregated.duplicated) {
-        setSuccess(`${files.length} arquivo(s) já haviam sido processados. Nenhuma baixa foi duplicada.`)
-      } else if (response.data?.preview || !returnApplyPayment) {
-        setSuccess(
-          `Prévia de ${files.length} arquivo(s): ${aggregated.liquidacoes_prontas || 0} liquidação(ões) pronta(s), ` +
-          `${aggregated.nao_localizados || 0} não localizada(s). Nenhum registro foi alterado.`,
-        )
-      } else {
-        setSuccess(
-          `${files.length} retorno(s) processado(s): ${aggregated.liquidacoes_baixadas || 0} baixa(s), ` +
-          `${aggregated.movimentos_criados || 0} movimento(s), ` +
-          `${formatCurrency(aggregated.valor_baixado || 0)} recebido.`,
-        )
-      }
+      setSuccess(buildReturnSuccessMessage(files.length, aggregated, Boolean(response.data?.preview || !returnApplyPayment)))
       await load()
     } catch (requestError: unknown) {
       setError(requestErrorMessage(requestError, 'Não foi possível processar o(s) retorno(s) bancário(s).'))
@@ -1425,20 +1484,29 @@ export default function ContasReceberPage() {
                   {returnResult.preview ? 'Prévia do retorno Bradesco' : 'Resultado do retorno Bradesco'}
                 </h2>
               </div>
-              <p className="mt-1 text-xs text-slate-500">{returnResult.arquivo} · {returnResult.empresa || 'empresa não identificada'}</p>
+              <p className="mt-1 text-xs text-slate-500">
+                {returnResult.arquivo} · {returnResult.empresa || 'empresa não identificada'}
+                {returnResult.titulos ? ` · ${returnResult.titulos} título(s)` : ''}
+                {returnResult.registros ? ` · ${returnResult.registros} registro(s) lido(s)` : ''}
+              </p>
             </div>
             <button type="button" onClick={() => setReturnResult(null)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Fechar resultado">
               <X className="h-4 w-4" />
             </button>
           </div>
+
+          <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+            {buildReturnMainExplanation(returnResult)}
+          </div>
+
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {[
-              ['Localizados', returnResult.conciliados],
+              ['Títulos localizados', returnResult.conciliados],
               ['Não localizados', returnResult.nao_localizados],
-              [returnResult.preview ? 'Prontos' : 'Baixados', returnResult.preview ? returnResult.liquidacoes_prontas : returnResult.liquidacoes_baixadas],
+              [returnResult.preview ? 'Prontos' : 'Baixados agora', returnResult.preview ? returnResult.liquidacoes_prontas : returnResult.liquidacoes_baixadas],
               ['Já baixados', returnResult.ja_baixadas],
-              ['Movimentos', returnResult.movimentos_criados],
-              [returnResult.preview ? 'Valor localizado' : 'Valor baixado', formatCurrency(returnResult.preview ? returnResult.valor_liquidado : returnResult.valor_baixado)],
+              ['Movimentos novos', returnResult.movimentos_criados],
+              [returnResult.preview ? 'Valor localizado' : 'Valor baixado agora', formatCurrency(returnResult.preview ? returnResult.valor_liquidado : returnResult.valor_baixado)],
             ].map(([label, value]) => (
               <div key={String(label)} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
                 <p className="text-[10px] uppercase tracking-wide text-slate-400">{label}</p>
@@ -1446,6 +1514,17 @@ export default function ContasReceberPage() {
               </div>
             ))}
           </div>
+
+          {returnResult.itens?.some(item => item.ocorrencia === '06' && item.status_processamento === 'nao_localizado') && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <p className="font-semibold">Há liquidações normais que não foram encontradas no Contas a Receber.</p>
+                <p className="mt-0.5">Normalmente isso indica boleto sem nosso número gravado, parcela importada com valor/vencimento diferente, cliente divergente ou arquivo de empresa diferente. Essas linhas precisam de conciliação manual antes de baixar.</p>
+              </div>
+            </div>
+          )}
+
           {!returnResult.conta_bancaria_localizada && (
             <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1454,16 +1533,42 @@ export default function ContasReceberPage() {
                 : 'A conta Bradesco ativa da empresa não foi localizada. Nenhuma baixa automática foi feita.'}
             </div>
           )}
-          {returnResult.itens?.some(item => item.status_processamento === 'nao_localizado') && (
-            <div className="mt-3 overflow-x-auto rounded-lg border border-amber-200">
-              <table className="min-w-[900px] w-full text-xs">
-                <thead className="bg-amber-50 text-amber-900"><tr>
-                  <th className="px-3 py-2 text-left">Linha</th><th className="px-3 py-2 text-left">Nosso número</th><th className="px-3 py-2 text-left">Controle</th><th className="px-3 py-2 text-left">Documento</th><th className="px-3 py-2 text-left">Vencimento</th><th className="px-3 py-2 text-right">Valor</th>
+
+          {returnResult.itens?.length > 0 && (
+            <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-[1100px] w-full text-xs">
+                <thead className="bg-slate-50 text-slate-700"><tr>
+                  <th className="px-3 py-2 text-left">Linha</th>
+                  <th className="px-3 py-2 text-left">Status</th>
+                  <th className="px-3 py-2 text-left">Ocorrência</th>
+                  <th className="px-3 py-2 text-left">Cliente / Contrato</th>
+                  <th className="px-3 py-2 text-left">Nosso número</th>
+                  <th className="px-3 py-2 text-left">Controle</th>
+                  <th className="px-3 py-2 text-left">Documento</th>
+                  <th className="px-3 py-2 text-left">Vencimento</th>
+                  <th className="px-3 py-2 text-right">Valor</th>
+                  <th className="px-3 py-2 text-left">Detalhe</th>
                 </tr></thead>
-                <tbody className="divide-y divide-amber-100 bg-white">
-                  {returnResult.itens.filter(item => item.status_processamento === 'nao_localizado').map(item => (
-                    <tr key={`${item.linha}-${item.nosso_numero}`}>
-                      <td className="px-3 py-2">{item.linha}</td><td className="px-3 py-2">{item.nosso_numero || '—'}</td><td className="px-3 py-2">{item.controle_participante || '—'}</td><td className="px-3 py-2">{item.documento || '—'}</td><td className="px-3 py-2">{formatDate(item.vencimento)}</td><td className="px-3 py-2 text-right">{formatCurrency(item.valor_pago || item.valor_titulo)}</td>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {returnResult.itens.map(item => (
+                    <tr key={`${item.linha}-${item.nosso_numero || item.documento || item.ocorrencia}`} className={item.status_processamento === 'nao_localizado' && item.ocorrencia === '06' ? 'bg-amber-50/60' : ''}>
+                      <td className="px-3 py-2">{item.linha}</td>
+                      <td className="px-3 py-2">
+                        <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold', returnItemStatusClass(item))}>
+                          {returnItemStatusLabel(item)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">{item.ocorrencia} · {item.ocorrencia_descricao || '—'}</td>
+                      <td className="px-3 py-2">
+                        <p className="font-medium text-slate-700">{item.cliente || '—'}</p>
+                        <p className="text-[10px] text-slate-400">{item.contrato || 'sem contrato localizado'}</p>
+                      </td>
+                      <td className="px-3 py-2">{item.nosso_numero || '—'}</td>
+                      <td className="px-3 py-2">{item.controle_participante || '—'}</td>
+                      <td className="px-3 py-2">{item.documento || '—'}</td>
+                      <td className="px-3 py-2">{formatDate(item.vencimento)}</td>
+                      <td className="px-3 py-2 text-right">{formatCurrency(item.valor_pago || item.valor_titulo)}</td>
+                      <td className="px-3 py-2 text-slate-500">{returnItemReason(item)}</td>
                     </tr>
                   ))}
                 </tbody>
