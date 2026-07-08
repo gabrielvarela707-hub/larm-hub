@@ -208,6 +208,7 @@ type BradescoConfig = {
 
 type ReturnProcessingItem = {
   linha: number
+  arquivo_origem?: string | null
   empresa?: string | null
   ocorrencia: string
   ocorrencia_descricao: string
@@ -413,6 +414,116 @@ function buildReturnSuccessMessage(filesCount: number, result: ReturnProcessingR
   return `${fileLabel} processado(s), mas nenhuma nova baixa foi criada: ` +
     `${result.ja_baixadas || 0} título(s) já estavam baixados e ${result.nao_localizados || 0} item(ns) não foram localizados. Confira o detalhe abaixo.`
 }
+function escapePdfHtml(value: unknown) {
+  return String(value ?? '—')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+function buildReturnPdfHtml(result: ReturnProcessingResult) {
+  const generatedAt = new Date().toLocaleString('pt-BR')
+  const title = result.preview ? 'Prévia do retorno Bradesco' : 'Resultado do retorno Bradesco'
+  const rows = (result.itens || []).map(item => {
+    const status = returnItemStatusLabel(item)
+    const reason = returnItemReason(item)
+    const rowClass = item.status_processamento === 'nao_localizado' && item.ocorrencia === '06'
+      ? ' class="not-found"'
+      : item.status_processamento === 'baixado' || item.status_processamento === 'ja_baixado'
+        ? ' class="ok"'
+        : ''
+    return `
+      <tr${rowClass}>
+        <td>${escapePdfHtml(item.linha)}</td>
+        <td>${escapePdfHtml(item.arquivo_origem || result.arquivo || '—')}</td>
+        <td>${escapePdfHtml(status)}</td>
+        <td>${escapePdfHtml(`${item.ocorrencia || '—'} · ${item.ocorrencia_descricao || '—'}`)}</td>
+        <td><strong>${escapePdfHtml(item.cliente || 'Não localizado')}</strong><br><span>${escapePdfHtml(item.contrato || (item.status_processamento === 'nao_localizado' ? 'sem parcela/contrato conciliado' : 'sem contrato localizado'))}</span></td>
+        <td>${escapePdfHtml(item.nosso_numero || '—')}</td>
+        <td>${escapePdfHtml(item.controle_participante || '—')}</td>
+        <td>${escapePdfHtml(item.documento || '—')}</td>
+        <td>${escapePdfHtml(formatDate(item.vencimento))}</td>
+        <td class="right">${escapePdfHtml(formatCurrency(item.valor_pago || item.valor_titulo))}</td>
+        <td>${escapePdfHtml(reason)}</td>
+      </tr>`
+  }).join('')
+
+  const cards = [
+    ['Títulos localizados', result.conciliados],
+    ['Não localizados', result.nao_localizados],
+    [result.preview ? 'Prontos' : 'Baixados agora', result.preview ? result.liquidacoes_prontas : result.liquidacoes_baixadas],
+    ['Já baixados', result.ja_baixadas],
+    ['Movimentos novos', result.movimentos_criados],
+    [result.preview ? 'Valor localizado' : 'Valor baixado agora', formatCurrency(result.preview ? result.valor_liquidado : result.valor_baixado)],
+  ].map(([label, value]) => `<div class="card"><small>${escapePdfHtml(label)}</small><strong>${escapePdfHtml(value)}</strong></div>`).join('')
+
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapePdfHtml(title)} - ${escapePdfHtml(result.arquivo)}</title>
+  <style>
+    @page { size: A4 landscape; margin: 10mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #0f172a; background: #fff; }
+    header { display: flex; justify-content: space-between; gap: 16px; border-bottom: 2px solid #0f172a; padding-bottom: 10px; margin-bottom: 12px; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    p { margin: 2px 0; font-size: 11px; color: #475569; }
+    .cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 10px 0 12px; }
+    .card { border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px; background: #f8fafc; }
+    .card small { display: block; font-size: 8px; text-transform: uppercase; color: #64748b; margin-bottom: 3px; }
+    .card strong { font-size: 12px; }
+    .note { border: 1px solid #bfdbfe; background: #eff6ff; color: #1e3a8a; border-radius: 6px; padding: 8px; margin-bottom: 10px; font-size: 10px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9px; }
+    th { background: #0f172a; color: #fff; text-align: left; padding: 6px 5px; border: 1px solid #0f172a; }
+    td { vertical-align: top; padding: 5px; border: 1px solid #dbe4ef; word-break: break-word; }
+    td span { color: #64748b; font-size: 8px; }
+    .right { text-align: right; white-space: nowrap; }
+    .not-found td { background: #fff7ed; }
+    .ok td { background: #f0fdf4; }
+    .footer { margin-top: 8px; color: #64748b; font-size: 9px; }
+    @media screen { body { padding: 14px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>${escapePdfHtml(title)}</h1>
+      <p><strong>Arquivo:</strong> ${escapePdfHtml(result.arquivo)} · <strong>Empresa:</strong> ${escapePdfHtml(result.empresa || 'empresa não identificada')}</p>
+      <p><strong>Registros:</strong> ${escapePdfHtml(result.registros || 0)} · <strong>Títulos:</strong> ${escapePdfHtml(result.titulos || 0)}</p>
+    </div>
+    <div>
+      <p><strong>Gerado em:</strong> ${escapePdfHtml(generatedAt)}</p>
+      <p><strong>Sistema:</strong> LarmHub</p>
+    </div>
+  </header>
+  <div class="note">${escapePdfHtml(buildReturnMainExplanation(result))}</div>
+  <div class="cards">${cards}</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 4%">Linha</th>
+        <th style="width: 10%">Arquivo</th>
+        <th style="width: 8%">Status</th>
+        <th style="width: 11%">Ocorrência</th>
+        <th style="width: 17%">Cliente / Contrato</th>
+        <th style="width: 10%">Nosso número</th>
+        <th style="width: 8%">Controle</th>
+        <th style="width: 9%">Documento</th>
+        <th style="width: 8%">Vencimento</th>
+        <th style="width: 8%">Valor</th>
+        <th style="width: 13%">Detalhe</th>
+      </tr>
+    </thead>
+    <tbody>${rows || '<tr><td colspan="11">Nenhum item retornado pelo banco.</td></tr>'}</tbody>
+  </table>
+  <div class="footer">PDF gerado pela tela de Contas a Receber > Retorno Bradesco.</div>
+</body>
+</html>`
+}
+
 
 function buildReturnMainExplanation(result: ReturnProcessingResult) {
   const naoLocalizadosLiquidacao = (result.itens || []).filter(item => item.status_processamento === 'nao_localizado' && item.ocorrencia === '06').length
@@ -1245,7 +1356,7 @@ export default function ContasReceberPage() {
         valor_baixado: total.valor_baixado + Number(result.valor_baixado || 0),
         conta_bancaria_localizada: total.conta_bancaria_localizada && result.conta_bancaria_localizada !== false,
         conta_bancaria_ambigua: total.conta_bancaria_ambigua || Boolean(result.conta_bancaria_ambigua),
-        itens: [...total.itens, ...(result.itens || [])],
+        itens: [...total.itens, ...(result.itens || []).map(item => ({ ...item, arquivo_origem: item.arquivo_origem || result.arquivo, empresa: item.empresa || result.empresa }))],
         duplicated: Boolean(total.duplicated && result.duplicated),
       }), {
         arquivo: responseResults.map(result => result.arquivo).join(' + '),
@@ -1277,6 +1388,23 @@ export default function ContasReceberPage() {
       if (returnInputRef.current) returnInputRef.current.value = ''
     }
   }
+
+  const exportReturnResultPdf = useCallback(() => {
+    if (!returnResult) return
+    const printWindow = window.open('', '_blank', 'width=1200,height=800')
+    if (!printWindow) {
+      setError('Não foi possível abrir a janela de impressão. Libere pop-ups para exportar o PDF do retorno.')
+      return
+    }
+    printWindow.document.open()
+    printWindow.document.write(buildReturnPdfHtml(returnResult))
+    printWindow.document.close()
+    printWindow.focus()
+    setTimeout(() => {
+      printWindow.print()
+    }, 350)
+  }, [returnResult])
+
 
   const loadBankConfig = async (company: EmpresaCobranca, sourceCompany?: SystemCompany | null) => {
     const companyRecord = sourceCompany || billingSystemCompanies.find(item => item.empresa_cobranca === company) || null
@@ -1490,9 +1618,19 @@ export default function ContasReceberPage() {
                 {returnResult.registros ? ` · ${returnResult.registros} registro(s) lido(s)` : ''}
               </p>
             </div>
-            <button type="button" onClick={() => setReturnResult(null)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Fechar resultado">
-              <X className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={exportReturnResultPdf}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Download className="h-4 w-4" />
+                Exportar PDF
+              </button>
+              <button type="button" onClick={() => setReturnResult(null)} className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Fechar resultado">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-900">
@@ -1537,12 +1675,13 @@ export default function ContasReceberPage() {
           {returnResult.itens?.length > 0 && (
             <div className="mt-3">
               <div className="mb-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
-                Listando todos os títulos lidos no retorno: localizados, já baixados, baixados agora, não localizados e ocorrências sem liquidação. Quando o CNAB não informa o nome do pagador e a parcela não é encontrada, o cliente aparece como “Não localizado”.
+                Listando todos os títulos lidos no retorno, separados por arquivo: localizados, já baixados, baixados agora, não localizados e ocorrências sem liquidação. Quando o CNAB não informa o nome do pagador e a parcela não é encontrada, o cliente aparece como “Não localizado”.
               </div>
               <div className="overflow-x-auto rounded-lg border border-slate-200">
-              <table className="min-w-[1100px] w-full text-xs">
+              <table className="min-w-[1220px] w-full text-xs">
                 <thead className="bg-slate-50 text-slate-700"><tr>
                   <th className="px-3 py-2 text-left">Linha</th>
+                  <th className="px-3 py-2 text-left">Arquivo</th>
                   <th className="px-3 py-2 text-left">Status</th>
                   <th className="px-3 py-2 text-left">Ocorrência</th>
                   <th className="px-3 py-2 text-left">Cliente / Contrato</th>
@@ -1555,8 +1694,9 @@ export default function ContasReceberPage() {
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {returnResult.itens.map(item => (
-                    <tr key={`${item.linha}-${item.nosso_numero || item.documento || item.ocorrencia}`} className={item.status_processamento === 'nao_localizado' && item.ocorrencia === '06' ? 'bg-amber-50/60' : ''}>
+                    <tr key={`${item.arquivo_origem || returnResult.arquivo}-${item.linha}-${item.nosso_numero || item.documento || item.ocorrencia}`} className={item.status_processamento === 'nao_localizado' && item.ocorrencia === '06' ? 'bg-amber-50/60' : ''}>
                       <td className="px-3 py-2">{item.linha}</td>
+                      <td className="px-3 py-2 text-[10px] text-slate-500">{item.arquivo_origem || returnResult.arquivo}</td>
                       <td className="px-3 py-2">
                         <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold', returnItemStatusClass(item))}>
                           {returnItemStatusLabel(item)}
