@@ -1,0 +1,12 @@
+8a9fc430943d444c20783c0620555463f3042050ef63157e3fe7b85665db2b9d  ./ARQUIVOS-ALTERADOS-0.4.1.txt
+f56c7b124d082d556c9b3060580ac12abee11dec5602d24fc1537a11ea2a25f7  ./README-ATUALIZACAO-0.4.1.txt
+e0bccef68a9c37ee0f94dce116b37958a4742ed1fd1f388572f2f66c360f615e  ./package-lock.json
+c187358b7d35217072e8deabdaac0025b14218092bb6dde1c228111b4c6461f1  ./package.json
+f45a2ec2f5f2796a75de7b1318b6ac00941b48a6016151aac2876d09e0734a12  ./server/data/system_releases_seed.js
+62900ac70fe05a80807419361b100078960d05cb203bbfa54cd68fe5ed33fa4c  ./server/package-lock.json
+86cd8ecebb4343e2ca11d832717a2eb7d6ec71e95f86fc54dbd84cd6a0f16c25  ./server/package.json
+f45a2ec2f5f2796a75de7b1318b6ac00941b48a6016151aac2876d09e0734a12  ./server/src/data/system_releases_seed.js
+c541b6d405715e618f185f17380b55fe490e5ced833068c30378de8bffeb2fb7  ./server/src/routes/recebiveis.js
+7f02f1d9388ea0e38cc1ca7c40af6393c8c925379d9208e71259ff8348e099b5  ./server/src/services/bradescoReturnProcessor.js
+c1ec4fa9eed08339201e04e40d28e988ab8bfca2672f59d0253641435cab44da  ./server/src/services/stratoReturnReportAnalyzer.js
+978c2b83f30ad9833d44726f219a7237c7376f58e7ad219dcf80496b488054a9  ./src/app/(dashboard)/financeiro/receber/page.tsx

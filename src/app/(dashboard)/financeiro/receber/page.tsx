@@ -7,6 +7,7 @@ import {
   Check,
   Download,
   Files,
+  FileSearch,
   Landmark,
   Loader2,
   Mail,
@@ -206,6 +207,22 @@ type BradescoConfig = {
   homologado: boolean
 }
 
+type ReturnStratoReportInfo = {
+  arquivo?: string | null
+  arquivo_retorno?: string | null
+  provider?: string | null
+  boleto?: string | null
+  obra?: string | null
+  unidade?: string | null
+  parcela?: string | null
+  cliente_codigo?: string | null
+  cliente_nome?: string | null
+  vencimento?: string | null
+  valor_titulo?: number | null
+  data_pagamento?: string | null
+  valor_pago?: number | null
+}
+
 type ReturnProcessingItem = {
   linha: number
   arquivo_origem?: string | null
@@ -224,6 +241,8 @@ type ReturnProcessingItem = {
   contrato?: string | null
   cliente?: string | null
   metodo_conciliacao?: string | null
+  confianca_conciliacao?: number | null
+  relatorio_strato?: ReturnStratoReportInfo | null
   movimento_id?: number | string | null
   divergencia_valor?: number | null
   status_processamento: string
@@ -244,6 +263,9 @@ type ReturnProcessingResult = {
   liquidacoes_baixadas: number
   ja_baixadas: number
   movimentos_criados: number
+  relatorios_strato_processados?: number
+  conciliados_por_relatorio?: number
+  ia_providers?: string[]
   valor_liquidado: number
   valor_baixado: number
   conta_bancaria_localizada: boolean
@@ -368,8 +390,16 @@ function origemBaixaLabel(row: ParcelaReceber) {
 
 function returnItemStatusLabel(item: ReturnProcessingItem) {
   if (item.status_processamento === 'ja_baixado') return 'Já baixado'
-  if (item.status_processamento === 'baixado') return 'Baixado agora'
-  if (item.status_processamento === 'pronto') return 'Pronto para baixa'
+  if (item.status_processamento === 'liquidado' || item.status_processamento === 'baixado') return 'Baixado agora'
+  if (item.status_processamento === 'pronto_para_baixa' || item.status_processamento === 'pronto') return 'Pronto para baixa'
+  if (item.status_processamento === 'pronto_para_baixa_movimento_existente') return 'Pronto — movimento localizado'
+  if (item.status_processamento === 'conta_bancaria_ambigua') return 'Conta bancária ambígua'
+  if (item.status_processamento === 'conta_bancaria_nao_localizada') return 'Conta bancária não localizada'
+  if (item.status_processamento === 'entrada_confirmada') return 'Entrada confirmada'
+  if (item.status_processamento === 'rejeitado') return 'Rejeitado pelo banco'
+  if (item.status_processamento === 'baixado_banco') return 'Baixado no banco'
+  if (item.status_processamento === 'localizado_sem_acao') return 'Localizado sem ação'
+  if (item.status_processamento === 'empresa_nao_identificada') return 'Empresa não identificada'
   if (item.status_processamento === 'nao_localizado') {
     if (item.ocorrencia && item.ocorrencia !== '06') return 'Ocorrência sem liquidação'
     return 'Não localizado'
@@ -379,23 +409,33 @@ function returnItemStatusLabel(item: ReturnProcessingItem) {
 }
 
 function returnItemStatusClass(item: ReturnProcessingItem) {
-  if (item.status_processamento === 'baixado') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+  if (item.status_processamento === 'liquidado' || item.status_processamento === 'baixado') return 'bg-emerald-50 text-emerald-700 border-emerald-200'
   if (item.status_processamento === 'ja_baixado') return 'bg-blue-50 text-blue-700 border-blue-200'
-  if (item.status_processamento === 'pronto') return 'bg-amber-50 text-amber-700 border-amber-200'
+  if (item.status_processamento === 'pronto_para_baixa' || item.status_processamento === 'pronto_para_baixa_movimento_existente' || item.status_processamento === 'pronto') return 'bg-amber-50 text-amber-700 border-amber-200'
   if (item.status_processamento === 'nao_localizado' && item.ocorrencia !== '06') return 'bg-slate-100 text-slate-600 border-slate-200'
   if (item.status_processamento === 'nao_localizado') return 'bg-red-50 text-red-700 border-red-200'
+  if (item.status_processamento === 'rejeitado' || item.status_processamento === 'empresa_nao_identificada') return 'bg-red-50 text-red-700 border-red-200'
   return 'bg-slate-100 text-slate-600 border-slate-200'
 }
 
 function returnItemReason(item: ReturnProcessingItem) {
+  const report = item.relatorio_strato
+  if (item.metodo_conciliacao === 'relatorio_strato_ia' && item.parcela_id) {
+    const confidence = item.confianca_conciliacao ? ` Confiança ${item.confianca_conciliacao}%.` : ''
+    return `Conciliado com o relatório Strato${report?.arquivo ? ` (${report.arquivo})` : ''}; os identificadores do boleto foram gravados para os próximos retornos.${confidence}`
+  }
+  if (item.metodo_conciliacao === 'relatorio_strato_sem_correspondencia_segura') {
+    return `A IA identificou ${report?.cliente_nome || 'o título'} no relatório Strato, mas o backend não encontrou uma parcela única com evidências suficientes. Nenhuma baixa automática foi feita.`
+  }
   if (item.status_processamento === 'ja_baixado') {
     return item.movimento_id ? `Já estava vinculado ao movimento ${item.movimento_id}.` : 'A parcela já estava marcada como recebida.'
   }
-  if (item.status_processamento === 'baixado') return 'Baixa criada agora a partir do retorno.'
-  if (item.status_processamento === 'pronto') return 'Localizado e pronto para baixa na execução.'
+  if (item.status_processamento === 'liquidado' || item.status_processamento === 'baixado') return 'Baixa criada agora a partir do retorno.'
+  if (item.status_processamento === 'pronto_para_baixa' || item.status_processamento === 'pronto') return 'Localizado e pronto para baixa na execução.'
+  if (item.status_processamento === 'pronto_para_baixa_movimento_existente') return 'Localizado e pronto para vincular ao movimento bancário já existente.'
   if (item.status_processamento === 'nao_localizado') {
     if (item.ocorrencia && item.ocorrencia !== '06') return `${item.ocorrencia_descricao || 'Ocorrência bancária'}; não é liquidação de cobrança.`
-    return 'Não foi encontrada parcela correspondente por nosso número, controle/documento, vencimento e valor. O CNAB 400 do retorno não traz nome do pagador nesta linha; para identificar o cliente é preciso cruzar com relatório do Bradesco ou com a base legada.'
+    return 'Não foi encontrada parcela correspondente por nosso número, controle/documento, vencimento e valor. Anexe o relatório Strato da mesma remessa para a conferência assistida por IA.'
   }
   return item.ocorrencia_descricao || 'Sem detalhe informado pelo banco.'
 }
@@ -431,7 +471,7 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
     const reason = returnItemReason(item)
     const rowClass = item.status_processamento === 'nao_localizado' && item.ocorrencia === '06'
       ? ' class="not-found"'
-      : item.status_processamento === 'baixado' || item.status_processamento === 'ja_baixado'
+      : item.status_processamento === 'liquidado' || item.status_processamento === 'baixado' || item.status_processamento === 'ja_baixado'
         ? ' class="ok"'
         : ''
     return `
@@ -440,7 +480,7 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
         <td>${escapePdfHtml(item.arquivo_origem || result.arquivo || '—')}</td>
         <td>${escapePdfHtml(status)}</td>
         <td>${escapePdfHtml(`${item.ocorrencia || '—'} · ${item.ocorrencia_descricao || '—'}`)}</td>
-        <td><strong>${escapePdfHtml(item.cliente || 'Não localizado')}</strong><br><span>${escapePdfHtml(item.contrato || (item.status_processamento === 'nao_localizado' ? 'sem parcela/contrato conciliado' : 'sem contrato localizado'))}</span></td>
+        <td><strong>${escapePdfHtml(item.cliente || item.relatorio_strato?.cliente_nome || 'Não localizado')}</strong><br><span>${escapePdfHtml(item.contrato || (item.relatorio_strato ? `${item.relatorio_strato.cliente_codigo || 'sem código'} · ${item.relatorio_strato.unidade || 'sem unidade'} · parcela ${item.relatorio_strato.parcela || '—'}` : (item.status_processamento === 'nao_localizado' ? 'sem parcela/contrato conciliado' : 'sem contrato localizado')))}</span></td>
         <td>${escapePdfHtml(item.nosso_numero || '—')}</td>
         <td>${escapePdfHtml(item.controle_participante || '—')}</td>
         <td>${escapePdfHtml(item.documento || '—')}</td>
@@ -456,6 +496,7 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
     [result.preview ? 'Prontos' : 'Baixados agora', result.preview ? result.liquidacoes_prontas : result.liquidacoes_baixadas],
     ['Já baixados', result.ja_baixadas],
     ['Movimentos novos', result.movimentos_criados],
+    ['Via relatório/IA', result.conciliados_por_relatorio || 0],
     [result.preview ? 'Valor localizado' : 'Valor baixado agora', formatCurrency(result.preview ? result.valor_liquidado : result.valor_baixado)],
   ].map(([label, value]) => `<div class="card"><small>${escapePdfHtml(label)}</small><strong>${escapePdfHtml(value)}</strong></div>`).join('')
 
@@ -471,7 +512,7 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
     header { display: flex; justify-content: space-between; gap: 16px; border-bottom: 2px solid #0f172a; padding-bottom: 10px; margin-bottom: 12px; }
     h1 { font-size: 18px; margin: 0 0 4px; }
     p { margin: 2px 0; font-size: 11px; color: #475569; }
-    .cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 10px 0 12px; }
+    .cards { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 10px 0 12px; }
     .card { border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px; background: #f8fafc; }
     .card small { display: block; font-size: 8px; text-transform: uppercase; color: #64748b; margin-bottom: 3px; }
     .card strong { font-size: 12px; }
@@ -528,20 +569,35 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
 function buildReturnMainExplanation(result: ReturnProcessingResult) {
   const naoLocalizadosLiquidacao = (result.itens || []).filter(item => item.status_processamento === 'nao_localizado' && item.ocorrencia === '06').length
   const ocorrenciasSemLiquidacao = (result.itens || []).filter(item => item.status_processamento === 'nao_localizado' && item.ocorrencia !== '06').length
+  const reportInfo = (result.relatorios_strato_processados || 0) > 0
+    ? ` ${result.relatorios_strato_processados} relatório(s) Strato analisado(s) e ${result.conciliados_por_relatorio || 0} título(s) conciliado(s) por essa conferência.`
+    : ''
   if (result.preview) {
-    return 'Prévia segura: o arquivo foi lido e conferido, mas nenhuma baixa foi gravada.'
+    return `Prévia segura: o arquivo foi lido e conferido, mas nenhuma baixa foi gravada.${reportInfo}`
   }
   if ((result.liquidacoes_baixadas || 0) > 0) {
-    return `${result.liquidacoes_baixadas} baixa(s) foram gravadas agora e ${result.movimentos_criados || 0} movimento(s) bancário(s) foram criado(s).`
+    return `${result.liquidacoes_baixadas} baixa(s) foram gravadas agora e ${result.movimentos_criados || 0} movimento(s) bancário(s) foram criado(s).${reportInfo}`
   }
   if ((result.ja_baixadas || 0) > 0 || (result.nao_localizados || 0) > 0) {
     const parts = []
     if ((result.ja_baixadas || 0) > 0) parts.push(`${result.ja_baixadas} título(s) já estavam baixados antes deste processamento`)
     if (naoLocalizadosLiquidacao > 0) parts.push(`${naoLocalizadosLiquidacao} liquidação(ões) não foram encontradas no Contas a Receber`)
     if (ocorrenciasSemLiquidacao > 0) parts.push(`${ocorrenciasSemLiquidacao} ocorrência(s) não eram liquidação normal`)
-    return `${parts.join('; ')}. Por isso nenhum novo movimento foi criado.`
+    return `${parts.join('; ')}. Por isso nenhum novo movimento foi criado.${reportInfo}`
   }
-  return 'Arquivo processado. Confira os indicadores e os detalhes abaixo.'
+  return `Arquivo processado. Confira os indicadores e os detalhes abaixo.${reportInfo}`
+}
+
+async function fileToBase64(file: File) {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error(`Não foi possível ler ${file.name}.`))
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      resolve(result.includes(',') ? result.slice(result.indexOf(',') + 1) : result)
+    }
+    reader.readAsDataURL(file)
+  })
 }
 
 function filenameFromDisposition(value?: string) {
@@ -713,12 +769,14 @@ export default function ContasReceberPage() {
   const [returnApplyPayment, setReturnApplyPayment] = useState(true)
   const [returnLoading, setReturnLoading] = useState(false)
   const [returnResult, setReturnResult] = useState<ReturnProcessingResult | null>(null)
+  const [stratoReportFiles, setStratoReportFiles] = useState<File[]>([])
   const [boletoLoadingId, setBoletoLoadingId] = useState<string | null>(null)
   const [boletoError, setBoletoError] = useState('')
 
   const topScrollRef = useRef<HTMLDivElement | null>(null)
   const tableScrollRef = useRef<HTMLDivElement | null>(null)
   const returnInputRef = useRef<HTMLInputElement | null>(null)
+  const stratoReportInputRef = useRef<HTMLInputElement | null>(null)
   const lastConfigCepRef = useRef('')
   const boletoChannelOwnerRef = useRef(`receber-${Math.random().toString(16).slice(2)}-${Date.now()}`)
   const tableMinWidth = 2030
@@ -1329,8 +1387,14 @@ export default function ContasReceberPage() {
         filename: file.name,
         content: new TextDecoder('windows-1252').decode(await file.arrayBuffer()),
       })))
+      const payloadReports = await Promise.all(stratoReportFiles.map(async file => ({
+        filename: file.name,
+        mime_type: file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream'),
+        base64: await fileToBase64(file),
+      })))
       const response = await apiClient.post('/financeiro/contas-receber/bradesco/retorno', {
         files: payloadFiles,
+        relatorios_strato: payloadReports,
         baixar_liquidacoes: returnApplyPayment,
       })
 
@@ -1352,6 +1416,9 @@ export default function ContasReceberPage() {
         liquidacoes_baixadas: total.liquidacoes_baixadas + Number(result.liquidacoes_baixadas || 0),
         ja_baixadas: total.ja_baixadas + Number(result.ja_baixadas || 0),
         movimentos_criados: total.movimentos_criados + Number(result.movimentos_criados || 0),
+        relatorios_strato_processados: Number(total.relatorios_strato_processados || 0) + Number(result.relatorios_strato_processados || 0),
+        conciliados_por_relatorio: Number(total.conciliados_por_relatorio || 0) + Number(result.conciliados_por_relatorio || 0),
+        ia_providers: Array.from(new Set([...(total.ia_providers || []), ...(result.ia_providers || [])])),
         valor_liquidado: total.valor_liquidado + Number(result.valor_liquidado || 0),
         valor_baixado: total.valor_baixado + Number(result.valor_baixado || 0),
         conta_bancaria_localizada: total.conta_bancaria_localizada && result.conta_bancaria_localizada !== false,
@@ -1370,6 +1437,9 @@ export default function ContasReceberPage() {
         liquidacoes_baixadas: 0,
         ja_baixadas: 0,
         movimentos_criados: 0,
+        relatorios_strato_processados: 0,
+        conciliados_por_relatorio: 0,
+        ia_providers: [],
         valor_liquidado: 0,
         valor_baixado: 0,
         conta_bancaria_localizada: true,
@@ -1379,6 +1449,8 @@ export default function ContasReceberPage() {
       })
 
       setReturnResult(aggregated)
+      setStratoReportFiles([])
+      if (stratoReportInputRef.current) stratoReportInputRef.current.value = ''
       setSuccess(buildReturnSuccessMessage(files.length, aggregated, Boolean(response.data?.preview || !returnApplyPayment)))
       await load()
     } catch (requestError: unknown) {
@@ -1505,6 +1577,36 @@ export default function ContasReceberPage() {
             className="hidden"
             onChange={event => processReturnFiles(event.target.files || undefined)}
           />
+          <input
+            ref={stratoReportInputRef}
+            type="file"
+            accept="application/pdf,image/*,.pdf"
+            multiple
+            className="hidden"
+            onChange={event => setStratoReportFiles(Array.from(event.target.files || []))}
+          />
+          <button
+            type="button"
+            onClick={() => stratoReportInputRef.current?.click()}
+            disabled={returnLoading}
+            className={secondaryButtonClass}
+            title="Anexe o relatório CRÍTICA COBRANÇA do Strato correspondente ao retorno"
+          >
+            <FileSearch className="w-3.5 h-3.5" />
+            Relatório Strato{stratoReportFiles.length ? ` (${stratoReportFiles.length})` : ''}
+          </button>
+          {stratoReportFiles.length > 0 && (
+            <button
+              type="button"
+              onClick={() => { setStratoReportFiles([]); if (stratoReportInputRef.current) stratoReportInputRef.current.value = '' }}
+              disabled={returnLoading}
+              className="rounded-lg border border-slate-200 bg-white p-2 text-slate-400 hover:text-red-600"
+              title="Remover relatórios Strato selecionados"
+              aria-label="Remover relatórios Strato selecionados"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
           <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-medium text-slate-600" title="Desmarque para executar uma prévia totalmente segura, sem gravar o arquivo nem alterar parcelas">
             <input type="checkbox" checked={returnApplyPayment} onChange={event => setReturnApplyPayment(event.target.checked)} />
             Baixar liquidações
@@ -1542,7 +1644,7 @@ export default function ContasReceberPage() {
       </div>
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-xs text-blue-800">
-        Parcelas vencidas podem ser recalculadas em conjunto com todas as anteriores em aberto. O retorno Bradesco localiza os títulos importados do Strato, cria o Movimento Bancário e vincula a baixa. Desmarque “Baixar liquidações” para uma prévia sem qualquer alteração.
+        Parcelas vencidas podem ser recalculadas em conjunto com todas as anteriores em aberto. Para divergências, selecione primeiro o relatório “CRÍTICA COBRANÇA” do Strato e depois importe o retorno. A IA extrai os dados do relatório, mas a baixa só ocorre quando o backend encontra uma correspondência única e segura. Desmarque “Baixar liquidações” para uma prévia sem qualquer alteração.
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
@@ -1637,13 +1739,14 @@ export default function ContasReceberPage() {
             {buildReturnMainExplanation(returnResult)}
           </div>
 
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
             {[
               ['Títulos localizados', returnResult.conciliados],
               ['Não localizados', returnResult.nao_localizados],
               [returnResult.preview ? 'Prontos' : 'Baixados agora', returnResult.preview ? returnResult.liquidacoes_prontas : returnResult.liquidacoes_baixadas],
               ['Já baixados', returnResult.ja_baixadas],
               ['Movimentos novos', returnResult.movimentos_criados],
+              ['Via relatório/IA', returnResult.conciliados_por_relatorio || 0],
               [returnResult.preview ? 'Valor localizado' : 'Valor baixado agora', formatCurrency(returnResult.preview ? returnResult.valor_liquidado : returnResult.valor_baixado)],
             ].map(([label, value]) => (
               <div key={String(label)} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
@@ -1658,7 +1761,7 @@ export default function ContasReceberPage() {
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <div>
                 <p className="font-semibold">Há liquidações normais que não foram encontradas no Contas a Receber.</p>
-                <p className="mt-0.5">Normalmente isso indica boleto sem nosso número gravado, parcela importada com valor/vencimento diferente, cliente divergente ou arquivo de empresa diferente. Essas linhas precisam de conciliação manual antes de baixar.</p>
+                <p className="mt-0.5">Normalmente isso indica boleto sem nosso número gravado, parcela importada com valor/vencimento diferente ou cliente divergente. Anexe o relatório Strato correspondente; quando não houver evidência única e segura, a linha continuará bloqueada para conferência manual.</p>
               </div>
             </div>
           )}
@@ -1675,7 +1778,7 @@ export default function ContasReceberPage() {
           {returnResult.itens?.length > 0 && (
             <div className="mt-3">
               <div className="mb-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600">
-                Listando todos os títulos lidos no retorno, separados por arquivo: localizados, já baixados, baixados agora, não localizados e ocorrências sem liquidação. Quando o CNAB não informa o nome do pagador e a parcela não é encontrada, o cliente aparece como “Não localizado”.
+                Listando todos os títulos lidos no retorno. Quando um relatório Strato é anexado, o nome do cliente e os dados identificados pela IA aparecem mesmo que a baixa automática seja recusada por falta de confiança.
               </div>
               <div className="overflow-x-auto rounded-lg border border-slate-200">
               <table className="min-w-[1220px] w-full text-xs">
@@ -1704,8 +1807,8 @@ export default function ContasReceberPage() {
                       </td>
                       <td className="px-3 py-2">{item.ocorrencia} · {item.ocorrencia_descricao || '—'}</td>
                       <td className="px-3 py-2">
-                        <p className="font-medium text-slate-700">{item.cliente || 'Não localizado'}</p>
-                        <p className="text-[10px] text-slate-400">{item.contrato || (item.status_processamento === 'nao_localizado' ? 'sem parcela/contrato conciliado' : 'sem contrato localizado')}</p>
+                        <p className="font-medium text-slate-700">{item.cliente || item.relatorio_strato?.cliente_nome || 'Não localizado'}</p>
+                        <p className="text-[10px] text-slate-400">{item.contrato || (item.relatorio_strato ? `${item.relatorio_strato.cliente_codigo || 'sem código'} · ${item.relatorio_strato.unidade || 'sem unidade'} · parcela ${item.relatorio_strato.parcela || '—'}` : (item.status_processamento === 'nao_localizado' ? 'sem parcela/contrato conciliado' : 'sem contrato localizado'))}</p>
                       </td>
                       <td className="px-3 py-2">{item.nosso_numero || '—'}</td>
                       <td className="px-3 py-2">{item.controle_participante || '—'}</td>
