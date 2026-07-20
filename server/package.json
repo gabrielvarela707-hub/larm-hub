@@ -1,6 +1,6 @@
 {
   "name": "larmhub-api",
-  "version": "0.3.86",
+  "version": "0.3.98",
   "description": "API backend LarmHub / Santa Clara HUB",
   "main": "src/server.js",
   "scripts": {

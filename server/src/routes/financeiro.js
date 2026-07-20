@@ -19,7 +19,7 @@ const STATUS_ABERTO_CP = ['pendente', 'vencido', 'aberto', 'aberta']
 const STATUS_PAGO_CR   = ['pago', 'paga', 'quitado', 'quitada', 'recebido', 'recebida', 'q']
 const STATUS_CANCELADO = ['cancelado', 'cancelada', 'c']
 const DEFAULT_MOVIMENTO_YEAR = 2026
-const MOVIMENTO_REALIZADO_CUTOFF_2026 = '2026-06-28'
+const MOVIMENTO_REALIZADO_CUTOFF_2026 = '2026-06-30'
 const MOVIMENTO_ORCADO_WRITE_ROLES = new Set([
   'super_admin', 'admin', 'manager', 'controller', 'financial',
   // Compatibilidade com bases/perfis legados que ainda gravam o nome em português.
@@ -31,6 +31,37 @@ function canInactivateMovimentoOrcado(user) {
     .map(value => String(value || '').trim().toLowerCase())
     .filter(Boolean)
   return candidates.some(role => MOVIMENTO_ORCADO_WRITE_ROLES.has(role))
+}
+
+function parseManualMovementMoney(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN
+
+  let raw = String(value ?? '').trim()
+  if (!raw) return NaN
+
+  raw = raw.replace(/R\$/gi, '').replace(/\s/g, '')
+  if (raw.includes(',')) {
+    raw = raw.replace(/\./g, '').replace(',', '.')
+  }
+  raw = raw.replace(/[^0-9.-]/g, '')
+
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) ? parsed : NaN
+}
+
+function isValidIsoDate(value) {
+  const raw = String(value || '').trim()
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return false
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(Date.UTC(year, month - 1, day))
+
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day
 }
 
 function xmlEscape(value) {
@@ -182,6 +213,7 @@ async function getMovimentoRealizadoGuardCondition(alias = 'fm') {
     COALESCE(${alias}.ano, EXTRACT(YEAR FROM ${alias}.data)::int) <> 2026
     OR ${alias}.data IS NULL
     OR ${alias}.data <= DATE '${MOVIMENTO_REALIZADO_CUTOFF_2026}'
+    OR LOWER(TRIM(COALESCE(${alias}.tipo_lancamento, ''))) = 'manual'
     ${linkedSql}
   )`
 }
@@ -245,6 +277,201 @@ async function getOrcamentoRealizadoFromMovimento(linhasBase, empresa, ano, mes 
   return realizadosPorRowIdx
 }
 
+function orcamentoNaturezaMatches(natureza, prefixo) {
+  const naturezaNormalizada = normalizeCashflowCodigo(natureza)
+  const prefixoNormalizado = normalizeCashflowCodigo(prefixo)
+  if (!naturezaNormalizada || !prefixoNormalizado) return false
+  return naturezaNormalizada === prefixoNormalizado
+    || naturezaNormalizada.startsWith(`${prefixoNormalizado}.`)
+}
+
+function somarOrcamentoPorPrefixos(movimentos, prefixos) {
+  return (movimentos || []).reduce((total, movimento) => {
+    const corresponde = prefixos.some(prefixo =>
+      orcamentoNaturezaMatches(movimento.natureza_financeira, prefixo)
+    )
+    if (!corresponde) return total
+    return total + Number(movimento.valor || 0)
+  }, 0)
+}
+
+function getOrcamentoValorCodigo(movimentos, linha) {
+  const codigoOriginal = String(linha?.codigo || '').trim().replace(',', '.')
+  const codigo = normalizeCashflowCodigo(codigoOriginal)
+  const descricao = normalizeText(linha?.descricao)
+
+  if (descricao === normalizeText('Receitas Brutas') || codigoOriginal === '1.') {
+    return somarOrcamentoPorPrefixos(movimentos, ['1.1', '1.2', '1.3', '1.4'])
+  }
+
+  if (descricao === normalizeText('Despesas Gerais e Administrativas') || codigoOriginal === '4.') {
+    return somarOrcamentoPorPrefixos(movimentos, [
+      '4.1', '4.2', '4.3', '4.4', '4.5', '4.6',
+      '4.7', '4.8', '4.9', '4.10', '4.11', '4.12', '6.1',
+    ])
+  }
+
+  if (descricao === normalizeText('Investimentos') || codigoOriginal === '7.') {
+    return somarOrcamentoPorPrefixos(movimentos, [
+      '7.2', '7.3',
+      '8.1', '8.2', '8.3', '8.4', '8.5', '8.6', '8.7',
+      '8.10', '8.11', '8.12', '8.13',
+    ])
+  }
+
+  // CDB, FI, LCA e outras posições sem código numérico não são fluxos do
+  // Movimento Orçado. Seus saldos continuam sendo tratados no bloco de saldo.
+  if (!codigo || !/\d/.test(codigo)) return 0
+  return somarOrcamentoPorPrefixos(movimentos, [codigo])
+}
+
+/**
+ * Recalcula o PREVISTO diretamente dos lançamentos ativos do Movimento Orçado.
+ * fin_orcamento_valores permanece apenas como fallback legado, pois o agregado
+ * persistido não é atualizado quando um lançamento é inativado.
+ */
+async function getOrcamentoPrevistoFromMovimento(linhasBase, empresa, ano, mes = null) {
+  const previstosPorLinha = {}
+  if (!(await tableExists('fin_orcamento_movimento'))) {
+    return { disponivel: false, valores: previstosPorLinha }
+  }
+
+  const columns = await getTableColumns('fin_orcamento_movimento')
+  const empresaFiltro = normalizeEmpresaFilter(empresa)
+  const params = [ano]
+  const conditions = [
+    `COALESCE(m.ano, EXTRACT(YEAR FROM m.data)::int) = $1`,
+  ]
+
+  if (columns.has('ativo')) {
+    conditions.push(`COALESCE(m.ativo, TRUE) = TRUE`)
+  }
+
+  if (mes) {
+    params.push(mes)
+    conditions.push(`COALESCE(m.mes, EXTRACT(MONTH FROM m.data)::int) = $${params.length}`)
+  }
+
+  if (empresaFiltro !== 'CONSOLIDADO') {
+    params.push(empresaFiltro)
+    conditions.push(`UPPER(TRIM(COALESCE(m.empresa::text, ''))) = $${params.length}`)
+  }
+
+  const { rows } = await query(
+    `SELECT TRIM(COALESCE(m.natureza_financeira::text, '')) AS natureza_financeira,
+            COALESCE(m.mes, EXTRACT(MONTH FROM m.data)::int)::int AS mes,
+            COALESCE(SUM(COALESCE(m.entradas, 0) - COALESCE(m.saidas, 0)), 0)::float AS valor
+       FROM fin_orcamento_movimento m
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY 1, 2`,
+    params,
+  )
+
+  const movimentosPorMes = new Map()
+  for (const row of rows) {
+    const numeroMes = Number(row.mes)
+    if (!movimentosPorMes.has(numeroMes)) movimentosPorMes.set(numeroMes, [])
+    movimentosPorMes.get(numeroMes).push({
+      natureza_financeira: row.natureza_financeira,
+      valor: Number(row.valor || 0),
+    })
+  }
+
+  const meses = mes ? [Number(mes)] : Array.from({ length: 12 }, (_, index) => index + 1)
+  const valorDescricao = (mapa, descricao) => Number(mapa.get(normalizeText(descricao)) || 0)
+
+  for (const numeroMes of meses) {
+    const movimentos = movimentosPorMes.get(numeroMes) || []
+    const valoresBase = new Map()
+    const valoresPorDescricao = new Map()
+
+    for (const linha of linhasBase) {
+      const valor = getOrcamentoValorCodigo(movimentos, linha)
+      valoresBase.set(Number(linha.id), valor)
+      // Mantém o comportamento da importação: quando a descrição se repete,
+      // a linha específica posterior prevalece para montar os subtotais.
+      valoresPorDescricao.set(normalizeText(linha.descricao), valor)
+    }
+
+    const receitasBrutas = [
+      'VENDA DE IMÓVEIS',
+      'ALUGUÉIS',
+      'VENDA DE MERCADORIAS/GADO',
+      'OUTRAS RECEITAS OPERACIONAIS',
+    ].reduce((total, descricao) => total + valorDescricao(valoresPorDescricao, descricao), 0)
+
+    const deducoes = valorDescricao(valoresPorDescricao, 'VENDAS CANCELADAS')
+      + valorDescricao(valoresPorDescricao, 'IMPOSTOS S/ VENDAS')
+    const receitaLiquida = receitasBrutas + deducoes
+
+    const despesasGerais = [
+      'DESPESAS COM PESSOAL (1)',
+      'OCUPACÃO (2)',
+      'UTILIDADES E SERVICOS (3)',
+      'DESPESAS GERAIS/TERCEIROS (4)',
+      'SERVICOS PROFISSIONAIS (5)',
+      'DESPESAS DE VIAGENS (6)',
+      'DESPESAS COM VEÍCULOS (7)',
+      'DESPESAS COMERCIAIS (8)',
+      'IMPOSTOS E TAXAS (9)',
+      'DESPESAS INDEDUTIVEIS (10)',
+      'CUSTO DO GADO (11)',
+      'DESPESAS MÉDICAS (12)',
+      'RECEITAS/DESPESAS NÃO OPERACIONAIS',
+    ].reduce((total, descricao) => total + valorDescricao(valoresPorDescricao, descricao), 0)
+
+    const receitasFinanceiras = valorDescricao(valoresPorDescricao, 'RECEITAS FINANCEIRAS')
+    const despesasFinanceiras = valorDescricao(valoresPorDescricao, 'DESPESAS FINANCEIRAS')
+    const emprestimos = valorDescricao(valoresPorDescricao, 'Emprestimos e Financiamentos')
+    const resultadoFinanceiro = receitasFinanceiras + despesasFinanceiras + emprestimos
+    const geracaoCaixa = receitaLiquida + despesasGerais + resultadoFinanceiro
+
+    const investimentos = [
+      'ATIVO IMOBILIZADO',
+      'OUTROS INVESTIMENTOS',
+      'ED. FCO. MELAO-CJ 23',
+      'ED. VENDOME-AP 131',
+      'FAZENDA-SÃO MANOEL',
+      'LOTEAMENTO-RES. SANTA CLARA',
+      'LOTEAMENTO-RES. SANTA CLARA QY',
+      'LOTEAMENTO-RES. SANTA CLARA QZ',
+      'LOTEAMENTO-RES. SANTA CLARA II',
+      'SEMOVENTES',
+      'CASA2-ESPERANÇA',
+      'BRASIL AGRO II',
+      'BRASIL AGRO III',
+    ].reduce((total, descricao) => total + valorDescricao(valoresPorDescricao, descricao), 0)
+
+    const distribuicao = valorDescricao(valoresPorDescricao, 'Lucros distribuidos')
+    const sucessao = valorDescricao(valoresPorDescricao, 'Impostos/ Taxas / Comissões')
+
+    const overrides = new Map([
+      [normalizeText('Receitas Brutas'), receitasBrutas],
+      [normalizeText('Deduções das Receitas'), deducoes],
+      [normalizeText('Receita Líquida'), receitaLiquida],
+      [normalizeText('Despesas Gerais e Administrativas'), despesasGerais],
+      [normalizeText('Resultado Financeiro'), resultadoFinanceiro],
+      [normalizeText('Receitas Financeiras'), receitasFinanceiras],
+      [normalizeText('Despesas Financeiras'), despesasFinanceiras],
+      [normalizeText('Emprestimos e Financiamentos'), emprestimos],
+      [normalizeText('Geração de Caixa'), geracaoCaixa],
+      [normalizeText('Investimentos'), investimentos],
+      [normalizeText('Distribuição de Lucros'), distribuicao],
+      [normalizeText('Sucessão'), sucessao],
+    ])
+
+    for (const linha of linhasBase) {
+      const descricao = normalizeText(linha.descricao)
+      const valor = overrides.has(descricao)
+        ? Number(overrides.get(descricao) || 0)
+        : Number(valoresBase.get(Number(linha.id)) || 0)
+      setMesValue(previstosPorLinha, linha.id, numeroMes, valor)
+    }
+  }
+
+  return { disponivel: true, valores: previstosPorLinha }
+}
+
 async function getOrcamentoSaldosMensais(tabelaMovimento, empresa, ano, mes = null) {
   const saldoInicial = emptyMonthMap()
   const saldoFinal = emptyMonthMap()
@@ -289,6 +516,11 @@ async function getOrcamentoSaldosMensais(tabelaMovimento, empresa, ano, mes = nu
 
   if (tabelaMovimento === 'fin_movimento') {
     conditions.push(await getMovimentoRealizadoGuardCondition('fm'))
+  }
+
+  if (tabelaMovimento === 'fin_orcamento_movimento') {
+    const columns = await getTableColumns(tabelaMovimento)
+    if (columns.has('ativo')) conditions.push(`COALESCE(fm.ativo, TRUE) = TRUE`)
   }
 
   if (empresaFiltro !== 'CONSOLIDADO') {
@@ -2550,6 +2782,7 @@ router.post('/orcamento/movimento/:id/inativar', inativarMovimentoOrcadoHandler)
 router.patch('/orcamento/movimento/:id/inativar', inativarMovimentoOrcadoHandler)
 
 router.get('/orcamento', async (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
   const empresa = normalizeEmpresaFilter(req.query.empresa)
   const ano = parseInt(req.query.ano || DEFAULT_MOVIMENTO_YEAR)
   const mes = req.query.mes ? parseInt(req.query.mes, 10) : null
@@ -2564,7 +2797,17 @@ router.get('/orcamento', async (req, res) => {
     const realizadosPorRowIdx = {}
     const mesesSet = new Set()
 
-    if (await tableExists('fin_orcamento_valores')) {
+    const previstosAtivos = await getOrcamentoPrevistoFromMovimento(linhasBase, empresa, ano, mes)
+    if (previstosAtivos.disponivel) {
+      Object.assign(previstosPorLinha, previstosAtivos.valores)
+      for (const valores of Object.values(previstosAtivos.valores)) {
+        for (const [mesKey, valor] of Object.entries(valores || {})) {
+          if (Number(valor || 0) !== 0) mesesSet.add(Number(mesKey))
+        }
+      }
+    } else if (await tableExists('fin_orcamento_valores')) {
+      // Compatibilidade com instalações antigas que ainda não possuem a tabela
+      // de Movimento Orçado. Novas instalações calculam sempre dos ativos.
       const params = [empresa, ano]
       const mesFilter = mes ? `AND v.mes = $3` : ''
       if (mes) params.push(mes)
@@ -3229,6 +3472,163 @@ router.get('/cashflow/resumo', async (req, res) => {
     return res.json({ ok: true, data: result })
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+
+// ─── POST /financeiro/movimento/manual ───────────────────────────────────────
+// Cadastro direto de tarifas bancárias e rendimentos de aplicação.
+// A conta bancária define empresa e banco; o lançamento não altera o saldo inicial.
+router.post('/movimento/manual', async (req, res) => {
+  const contaId = Number.parseInt(String(req.body?.banco_conta_id || ''), 10)
+  const tipo = String(req.body?.tipo || '').trim().toLowerCase()
+  const data = String(req.body?.data || '').trim()
+  const valor = parseManualMovementMoney(req.body?.valor)
+  const descricaoInformada = String(req.body?.descricao || '').trim()
+
+  const TIPOS = {
+    tarifa_bancaria: {
+      historico: 'Tarifas bancárias',
+      conta_contabil: 'DESPESAS BANCARIAS E COMISSOES',
+      natureza_financeira: '5.2.2',
+      entrada: false,
+    },
+    rendimento_aplicacao: {
+      historico: 'Rendimento de aplicação',
+      conta_contabil: 'REND. S/APLICACOES FINANCEIRAS',
+      natureza_financeira: '5.1.3',
+      entrada: true,
+    },
+  }
+
+  if (!Number.isInteger(contaId) || contaId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Selecione uma conta bancária.' })
+  }
+  if (!Object.prototype.hasOwnProperty.call(TIPOS, tipo)) {
+    return res.status(400).json({ ok: false, message: 'Tipo de lançamento inválido.' })
+  }
+  if (!isValidIsoDate(data)) {
+    return res.status(400).json({ ok: false, message: 'Informe uma data válida.' })
+  }
+  if (!Number.isFinite(valor) || valor <= 0) {
+    return res.status(400).json({ ok: false, message: 'Informe um valor maior que zero.' })
+  }
+  if (descricaoInformada.length > 500) {
+    return res.status(400).json({ ok: false, message: 'A descrição deve ter no máximo 500 caracteres.' })
+  }
+
+  const configuracao = TIPOS[tipo]
+
+  try {
+    const created = await transaction(async client => {
+      const { rows: contas } = await client.query(
+        `SELECT id, empresa, banco_nome, agencia, conta, digito, ativo
+           FROM fin_bancos_contas
+          WHERE id = $1
+          FOR SHARE`,
+        [contaId]
+      )
+
+      if (!contas.length) {
+        const error = new Error('Conta bancária não encontrada.')
+        error.statusCode = 404
+        throw error
+      }
+
+      const conta = contas[0]
+      if (!conta.ativo) {
+        const error = new Error('A conta bancária selecionada está inativa.')
+        error.statusCode = 409
+        throw error
+      }
+
+      const [ano, mes, dia] = data.split('-').map(Number)
+      const historico = descricaoInformada || configuracao.historico
+      const entradas = configuracao.entrada ? valor : 0
+      const saidas = configuracao.entrada ? 0 : valor
+
+      const { rows } = await client.query(
+        `INSERT INTO fin_movimento (
+           data, empresa, banco, entradas, saidas, fornecedor, historico,
+           nf_doc, emissao_doc, conta_contabil, centro_custo, obra,
+           natureza_financeira, n_cheque, dia, mes, ano, saldo,
+           tipo_lancamento, vencimento, fornecedor_id, banco_conta_id
+         )
+         VALUES (
+           $1, $2, $3, $4, $5, NULL, $6,
+           NULL, NULL, $7, NULL, NULL,
+           $8, NULL, $9, $10, $11, NULL,
+           'manual', NULL, NULL, $12
+         )
+         RETURNING
+           id,
+           TO_CHAR(data, 'YYYY-MM-DD') AS data,
+           empresa,
+           banco,
+           entradas::float AS entradas,
+           saidas::float AS saidas,
+           historico,
+           conta_contabil,
+           natureza_financeira,
+           banco_conta_id,
+           tipo_lancamento`,
+        [
+          data,
+          String(conta.empresa || '').trim().toUpperCase(),
+          conta.banco_nome || null,
+          entradas,
+          saidas,
+          historico,
+          configuracao.conta_contabil,
+          configuracao.natureza_financeira,
+          dia,
+          mes,
+          ano,
+          conta.id,
+        ]
+      )
+
+      return {
+        movimento: rows[0],
+        conta: {
+          id: conta.id,
+          empresa: conta.empresa,
+          banco_nome: conta.banco_nome,
+          agencia: conta.agencia,
+          conta: conta.conta,
+          digito: conta.digito,
+        },
+      }
+    })
+
+    await logAudit({
+      tenantId: req.user?.tenant_id,
+      userId: req.user?.id,
+      action: 'movimento_bancario_manual_criado',
+      module: 'financeiro',
+      entityType: 'fin_movimento',
+      entityId: created.movimento.id,
+      ip: req.ip || req.socket?.remoteAddress,
+      userAgent: req.headers['user-agent'] || '',
+      details: {
+        tipo,
+        conta_bancaria: created.conta,
+        movimento: created.movimento,
+      },
+    })
+
+    return res.status(201).json({
+      ok: true,
+      message: tipo === 'tarifa_bancaria'
+        ? 'Tarifa bancária lançada com sucesso.'
+        : 'Rendimento de aplicação lançado com sucesso.',
+      data: created.movimento,
+    })
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({
+      ok: false,
+      message: err.message || 'Não foi possível salvar o lançamento.',
+    })
   }
 })
 

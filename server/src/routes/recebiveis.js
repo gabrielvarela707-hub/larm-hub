@@ -1986,6 +1986,7 @@ router.post('/financeiro/contas-receber/bradesco/remessa', async (req, res) => {
 })
 
 // POST /financeiro/contas-receber/bradesco/retorno
+// Aceita um arquivo no formato legado ou vários arquivos no campo `files`.
 router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
   if (!canWriteFinance(req.user)) {
     return res.status(403).json({
@@ -1994,64 +1995,131 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
     })
   }
 
-  const filename = String(req.body?.filename || 'retorno.ret').slice(0, 160)
-  const content = String(req.body?.content || '')
   const applyPayment = req.body?.baixar_liquidacoes !== false
-  const explicitCompany = normalizeBillingCompany(req.body?.empresa)
-  if (!content) return res.status(400).json({ ok: false, message: 'Arquivo de retorno vazio.' })
+  const defaultCompany = normalizeBillingCompany(req.body?.empresa)
+  const submittedFiles = Array.isArray(req.body?.files)
+    ? req.body.files
+    : [{ filename: req.body?.filename, content: req.body?.content, empresa: req.body?.empresa }]
+
+  if (!submittedFiles.length) {
+    return res.status(400).json({ ok: false, message: 'Nenhum arquivo de retorno foi informado.' })
+  }
+  if (submittedFiles.length > 20) {
+    return res.status(400).json({ ok: false, message: 'Envie no máximo 20 arquivos de retorno por processamento.' })
+  }
+
+  const files = submittedFiles.map((file, index) => ({
+    filename: String(file?.filename || `retorno-${index + 1}.ret`).slice(0, 160),
+    content: String(file?.content || ''),
+    explicitCompany: normalizeBillingCompany(file?.empresa) || defaultCompany,
+  }))
+  const emptyFile = files.find(file => !file.content)
+  if (emptyFile) {
+    return res.status(400).json({ ok: false, message: `O arquivo ${emptyFile.filename} está vazio.` })
+  }
+
+  const requestLabel = files.map(file => file.filename).join(', ')
 
   try {
-    const result = await transaction(async client => processBradescoReturn({
-      client,
-      tenantId: req.user.tenant_id,
-      userId: req.user.id,
-      filename,
-      content,
-      applyPayment,
-      persist: applyPayment,
-      explicitCompany,
-    }))
+    const results = await transaction(async client => {
+      const processed = []
+      for (const file of files) {
+        processed.push(await processBradescoReturn({
+          client,
+          tenantId: req.user.tenant_id,
+          userId: req.user.id,
+          filename: file.filename,
+          content: file.content,
+          applyPayment,
+          persist: applyPayment,
+          explicitCompany: file.explicitCompany,
+        }))
+      }
+      return processed
+    })
 
-    if (!result.duplicated && applyPayment) {
-      await logAudit({
-        userId: req.user.id,
-        tenantId: req.user.tenant_id,
-        action: 'contas_receber_retorno_bradesco',
-        module: 'financeiro',
-        entityType: 'fin_retornos_cobranca',
-        entityId: result.id,
-        meta: {
-          arquivo: filename,
-          empresa: result.empresa,
-          conciliados: result.conciliados,
-          nao_localizados: result.nao_localizados,
-          liquidacoes_baixadas: result.liquidacoes_baixadas,
-          ja_baixadas: result.ja_baixadas,
-          movimentos_criados: result.movimentos_criados,
-          valor_baixado: result.valor_baixado,
-        },
-      }).catch(() => {})
+    if (applyPayment) {
+      for (let index = 0; index < results.length; index += 1) {
+        const result = results[index]
+        if (result.duplicated) continue
+        await logAudit({
+          userId: req.user.id,
+          tenantId: req.user.tenant_id,
+          action: 'contas_receber_retorno_bradesco',
+          module: 'financeiro',
+          entityType: 'fin_retornos_cobranca',
+          entityId: result.id,
+          meta: {
+            arquivo: files[index].filename,
+            empresa: result.empresa,
+            conciliados: result.conciliados,
+            nao_localizados: result.nao_localizados,
+            liquidacoes_baixadas: result.liquidacoes_baixadas,
+            ja_baixadas: result.ja_baixadas,
+            movimentos_criados: result.movimentos_criados,
+            valor_baixado: result.valor_baixado,
+          },
+        }).catch(() => {})
+      }
     }
 
-    if (result.duplicated) {
+    // Compatibilidade total com a tela/integrações antigas de arquivo único.
+    if (results.length === 1 && !Array.isArray(req.body?.files)) {
+      const result = results[0]
+      if (result.duplicated) {
+        return res.json({
+          ok: true,
+          duplicated: true,
+          message: 'Este retorno já foi processado. Nenhuma baixa foi duplicada.',
+          data: result,
+        })
+      }
       return res.json({
         ok: true,
-        duplicated: true,
-        message: 'Este retorno já foi processado. Nenhuma baixa foi duplicada.',
+        preview: !applyPayment,
+        message: applyPayment
+          ? 'Retorno processado e baixas elegíveis registradas.'
+          : 'Prévia concluída. Nenhum registro foi alterado.',
         data: result,
       })
     }
 
+    const summary = results.reduce((total, result) => {
+      total.arquivos += 1
+      total.duplicados += result.duplicated ? 1 : 0
+      total.conciliados += Number(result.conciliados || 0)
+      total.nao_localizados += Number(result.nao_localizados || 0)
+      total.liquidacoes_prontas += Number(result.liquidacoes_prontas || 0)
+      total.liquidacoes_baixadas += Number(result.liquidacoes_baixadas || 0)
+      total.ja_baixadas += Number(result.ja_baixadas || 0)
+      total.movimentos_criados += Number(result.movimentos_criados || 0)
+      total.valor_liquidado += Number(result.valor_liquidado || 0)
+      total.valor_baixado += Number(result.valor_baixado || 0)
+      return total
+    }, {
+      arquivos: 0,
+      duplicados: 0,
+      conciliados: 0,
+      nao_localizados: 0,
+      liquidacoes_prontas: 0,
+      liquidacoes_baixadas: 0,
+      ja_baixadas: 0,
+      movimentos_criados: 0,
+      valor_liquidado: 0,
+      valor_baixado: 0,
+    })
+
     return res.json({
       ok: true,
       preview: !applyPayment,
+      duplicated: summary.duplicados === summary.arquivos,
       message: applyPayment
-        ? 'Retorno processado e baixas elegíveis registradas.'
-        : 'Prévia concluída. Nenhum registro foi alterado.',
-      data: result,
+        ? `${summary.arquivos} retorno(s) processado(s) em uma única operação.`
+        : `Prévia de ${summary.arquivos} retorno(s) concluída. Nenhum registro foi alterado.`,
+      data: { arquivos: results, resumo: summary },
     })
   } catch (error) {
-    logger.error(`Erro ao processar retorno Bradesco ${filename}: ${error.message}`)
+    logger.error(`Erro ao processar retorno(s) Bradesco ${requestLabel}: ${error.message}`)
     return res.status(400).json({ ok: false, message: error.message })
   }
 })

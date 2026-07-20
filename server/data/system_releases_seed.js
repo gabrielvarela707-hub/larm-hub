@@ -6,6 +6,480 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.4.0",
+    "title": "Contas a Receber — exportação em PDF do resultado do retorno Bradesco",
+    "description": "Adiciona botão para exportar/imprimir em PDF a planilha de resultado do retorno Bradesco, mantendo todos os títulos lidos no arquivo e seus detalhes de conciliação.",
+    "frontend_version": "0.4.0",
+    "backend_version": "0.3.97",
+    "released_at": "2026-07-08T18:05:00.000Z",
+    "changes": [
+      "Incluído botão Exportar PDF no card de Resultado do retorno Bradesco.",
+      "O PDF inclui o resumo do processamento, arquivo, empresa, quantidade de registros e títulos.",
+      "A planilha exportada contém todos os itens do retorno: localizados, já baixados, baixados agora, não localizados e ocorrências sem liquidação.",
+      "Os itens não localizados ficam destacados no PDF para facilitar conferência com relatório Strato/Bradesco.",
+      "A geração usa a impressão do navegador, permitindo salvar como PDF sem alterar o backend.",
+      "Nenhuma regra financeira, baixa, movimento bancário ou estrutura de banco foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Financeiro > Contas a Receber > Retorno Bradesco",
+        "Frontend 0.4.0"
+      ],
+      "backend": [
+        "API preservada",
+        "Sem alteração de rota"
+      ],
+      "database": [
+        "Sem alteração de estrutura ou dados",
+        "hub_system_releases — atualização do changelog"
+      ],
+      "regras": [
+        "Exportação é somente visual",
+        "Não altera processamento de retorno",
+        "Não cria nem remove baixas"
+      ]
+    }
+  },
+  {
+    "version": "0.3.97",
+    "title": "Contas a Receber — retorno Bradesco com todos os títulos e diagnóstico de não localizados",
+    "description": "Ajusta a tela do retorno Bradesco para listar todos os títulos lidos no arquivo e adiciona diagnóstico seguro para verificar se os títulos LUCKY não localizados existem como clientes, contratos ou parcelas no banco.",
+    "frontend_version": "0.3.97",
+    "backend_version": "0.3.97",
+    "released_at": "2026-07-03T20:40:00.000Z",
+    "changes": [
+      "A tabela de resultado do retorno passa a explicitar que lista todos os itens do arquivo: localizados, já baixados, baixados agora, não localizados e ocorrências sem liquidação.",
+      "Quando a parcela não é localizada, a tela passa a mostrar 'Não localizado' no campo de cliente/contrato em vez de parecer que a informação foi omitida.",
+      "A mensagem de detalhe informa que o CNAB 400 de retorno não traz o nome do pagador em linhas não conciliadas; nesses casos a identificação depende do relatório Bradesco ou da base legada.",
+      "Incluído script somente leitura para diagnosticar Juliana, Leonete, Hudson e a ocorrência 10 do retorno LUCKY CB010700.RET.",
+      "O diagnóstico procura por nosso número, controle participante, documento/vencimento/valor, nome do cliente, contrato/parcela e base legada ts1_core, quando existir.",
+      "Nenhuma baixa automática nova é criada por esta atualização e nenhuma estrutura de banco é alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Financeiro > Contas a Receber",
+        "Frontend 0.3.97"
+      ],
+      "backend": [
+        "Node.js",
+        "PostgreSQL",
+        "scripts/diagnosticar_retorno_lucky_nao_localizados_2026_07_01.js",
+        "API 0.3.97 sem alteração de rota financeira"
+      ],
+      "database": [
+        "com_parcelas",
+        "com_contratos",
+        "cad_clientes",
+        "cad_pessoas",
+        "ts1_core somente leitura",
+        "hub_system_releases",
+        "Sem migration de estrutura"
+      ],
+      "regras": [
+        "Ocorrência 06 = liquidação normal elegível a baixa quando conciliada",
+        "Ocorrência 10 não é baixa por recebimento no Movimento Bancário",
+        "Não localizado não deve ser baixado sem conferência"
+      ]
+    }
+  },
+  {
+    "version": "0.3.96",
+    "title": "Contas a Receber — resultado do retorno Bradesco mais explicativo",
+    "description": "Melhora a tela de importação de retorno Bradesco para explicar quando o arquivo foi processado, mas não criou novas baixas por já existirem parcelas baixadas ou por haver títulos não localizados.",
+    "frontend_version": "0.3.96",
+    "backend_version": "0.3.95",
+    "released_at": "2026-07-03T20:10:00.000Z",
+    "changes": [
+      "A tela passa a entender corretamente o retorno agrupado da API com data.arquivos e data.resumo.",
+      "A mensagem de sucesso agora diferencia baixa criada, título já baixado, título não localizado e ocorrência sem liquidação.",
+      "O painel de resultado mostra uma explicação objetiva quando nenhuma nova baixa foi criada.",
+      "A tabela de detalhes passa a listar todas as linhas do retorno, com status, ocorrência, cliente/contrato localizado, nosso número, controle, documento, vencimento, valor e motivo.",
+      "Ocorrências Bradesco diferentes de 06 são exibidas como ocorrências sem liquidação, evitando confundir baixa bancária com título recebido.",
+      "Quando houver liquidação 06 não localizada, a tela orienta que é necessário conciliar pelo nosso número, controle/documento, vencimento e valor.",
+      "Nenhuma regra financeira, rota de backend ou estrutura de banco foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Financeiro > Contas a Receber",
+        "Frontend 0.3.96"
+      ],
+      "backend": [
+        "API preservada em 0.3.95",
+        "Sem alteração funcional de rota"
+      ],
+      "database": [
+        "Sem alteração de estrutura ou dados",
+        "hub_system_releases — atualização do changelog"
+      ],
+      "regras": [
+        "Recebido baixa apenas quando localizado",
+        "Já baixado não duplica movimento",
+        "Não localizado exige conciliação manual"
+      ]
+    }
+  },
+  {
+    "version": "0.3.95",
+    "title": "Contas a Receber — reparo LUCKY retorno Bradesco 30/06",
+    "description": "Adiciona seed seguro para reconciliar os títulos pagos da LUCKY em 30/06/2026 que constam no relatório do Bradesco, mas ficaram sem baixa individual no Movimento Bancário.",
+    "frontend_version": "0.3.93",
+    "backend_version": "0.3.95",
+    "released_at": "2026-07-03T19:45:00.000Z",
+    "changes": [
+      "Incluído seed específico para o relatório Títulos Pagos por Conta Crédito da LUCKY de 30/06/2026.",
+      "O reparo procura as parcelas por empresa, cliente, vencimento e valor, sem alterar parcelas canceladas.",
+      "O seed não duplica lançamentos: parcelas que já possuem movimento_id são apenas reportadas como já corretas.",
+      "Quando a parcela foi encontrada de forma única, o script cria ou vincula o Movimento Bancário e marca a parcela como paga via retorno Bradesco.",
+      "A data de pago_em permanece 30/06/2026 e a data padrão do Movimento Bancário é 01/07/2026 para bater com o extrato bancário.",
+      "A data do Movimento pode ser forçada para 30/06/2026 usando --data-movimento=2026-06-30, caso seja necessário manter o mesmo padrão dos lançamentos já existentes.",
+      "O seed roda em prévia por padrão e só grava com --execute --confirmar=N.",
+      "Não há alteração de estrutura no PostgreSQL."
+    ],
+    "architecture": {
+      "backend": [
+        "Node.js",
+        "PostgreSQL",
+        "scripts/seed_reparar_lucky_retorno_2026_06_30.js"
+      ],
+      "database": [
+        "com_parcelas",
+        "com_contratos",
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_system_releases",
+        "Sem migration de estrutura"
+      ],
+      "regras": [
+        "Aberto continua em Contas a Receber Futuro",
+        "Recebido passa ao Movimento Bancário",
+        "Sem duplicar movimento já vinculado"
+      ]
+    }
+  },
+  {
+    "version": "0.3.94",
+    "title": "Contas a Receber — baixas recebidas no Movimento Bancário",
+    "description": "Corrige a visibilidade dos recebimentos de Contas a Receber após 30/06/2026 no Movimento Bancário, mantendo a trava das importações futuras e liberando somente movimentos efetivamente baixados/recebidos.",
+    "frontend_version": "0.3.93",
+    "backend_version": "0.3.94",
+    "released_at": "2026-07-03T19:10:00.000Z",
+    "changes": [
+      "Movimentos vinculados a com_parcelas.movimento_id passam a aparecer no Movimento Bancário mesmo depois do corte de importação de 30/06/2026.",
+      "A trava geral de importações futuras foi mantida para evitar que parcelas abertas ou movimentos futuros inflem o saldo realizado.",
+      "A origem da listagem do Movimento Bancário passa a identificar recebimentos vinculados como Contas a Receber.",
+      "A exportação Excel do Movimento Bancário passa a incluir a coluna Origem.",
+      "Adicionado seed de reparo para parcelas já pagas/recebidas em com_parcelas que ficaram sem movimento_id, criando ou vinculando Movimento Bancário somente quando houver conta bancária e dados suficientes.",
+      "O seed de reparo roda em modo prévia por padrão e só grava com --execute --confirmar=N.",
+      "Não há alteração de estrutura no PostgreSQL."
+    ],
+    "architecture": {
+      "frontend": [
+        "Frontend preservado em 0.3.93",
+        "Sem alteração de tela obrigatória"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "GET /financeiro/movimento",
+        "GET /financeiro/movimento/exportar",
+        "Regra de visibilidade por vínculo em com_parcelas"
+      ],
+      "database": [
+        "fin_movimento",
+        "com_parcelas",
+        "fin_bancos_contas",
+        "fin_retornos_cobranca",
+        "fin_retornos_cobranca_itens",
+        "Sem migration de estrutura"
+      ],
+      "regras": [
+        "Aberto permanece em Contas a Receber Futuro",
+        "Recebido/baixado aparece no Movimento Bancário",
+        "Importações futuras sem vínculo continuam bloqueadas"
+      ]
+    }
+  },
+  {
+    "version": "0.3.93",
+    "title": "Movimento Bancário — novo lançamento manual",
+    "description": "Adiciona uma tela própria para lançar tarifas bancárias e rendimentos de aplicação diretamente no Movimento Bancário, com classificação automática e vínculo à conta bancária.",
+    "frontend_version": "0.3.93",
+    "backend_version": "0.3.93",
+    "released_at": "2026-07-03T18:30:00.000Z",
+    "changes": [
+      "Adicionado o botão Novo lançamento na tela Financeiro > Movimento Bancário.",
+      "Criada a tela /financeiro/movimento/novo para informar conta bancária, tipo, data, valor e histórico.",
+      "Disponibilizados os tipos Tarifa bancária e Rendimento de aplicação.",
+      "Tarifas são gravadas automaticamente como saída, na conta DESPESAS BANCARIAS E COMISSOES e natureza financeira 5.2.2.",
+      "Rendimentos são gravados automaticamente como entrada, na conta REND. S/APLICACOES FINANCEIRAS e natureza financeira 5.1.3.",
+      "Empresa e banco são obtidos da conta bancária selecionada, evitando divergência entre o lançamento e o cadastro da conta.",
+      "Criada a rota POST /financeiro/movimento/manual com validação transacional e registro de auditoria.",
+      "Lançamentos manuais aparecem no extrato, resumo, exportação, CashFlow e Orçamento mesmo quando possuem data posterior ao corte das importações de 2026.",
+      "O cadastro manual não altera o saldo inicial da conta bancária e não recria movimentos importados.",
+      "Não foi necessária alteração de estrutura no PostgreSQL."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Tela dedicada de lançamento",
+        "Frontend 0.3.93"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "POST /financeiro/movimento/manual",
+        "Transação PostgreSQL",
+        "Auditoria",
+        "API 0.3.93"
+      ],
+      "database": [
+        "fin_movimento",
+        "fin_bancos_contas",
+        "hub_audit_logs",
+        "hub_system_releases",
+        "Sem migration de estrutura"
+      ],
+      "regras": [
+        "Tarifa bancária = saída / natureza 5.2.2",
+        "Rendimento de aplicação = entrada / natureza 5.1.3",
+        "Saldo inicial permanece inalterado"
+      ]
+    }
+  },
+  {
+    "version": "0.3.92",
+    "title": "Cadastros — paginação de fornecedores igual à tela de clientes",
+    "description": "Adiciona paginação real à listagem de fornecedores, utilizando os parâmetros page e limit já suportados pela API e preservando todas as funções existentes do cadastro.",
+    "frontend_version": "0.3.92",
+    "backend_version": "0.3.91",
+    "released_at": "2026-07-03T16:30:00.000Z",
+    "changes": [
+      "A tela Cadastros > Fornecedores passa a exibir 50 registros por página, seguindo o padrão visual já usado em Clientes.",
+      "Adicionados indicador Página X de Y e botões de página anterior e próxima abaixo da tabela.",
+      "A listagem passa a enviar page e limit para a rota existente GET /financeiro/fornecedores.",
+      "Busca, empresa, categoria e ordenação retornam automaticamente para a primeira página.",
+      "Mantidas sem alteração as funções de cadastro, edição, inativação, reativação, histórico, contratos, importação e exportação de fornecedores.",
+      "Nenhuma alteração de banco de dados ou rota da API foi necessária.",
+      "Atualizada a versão técnica do frontend para 0.3.92; backend permanece em 0.3.91."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Paginação server-side",
+        "Frontend 0.3.92"
+      ],
+      "backend": [
+        "API 0.3.91 sem alteração funcional",
+        "Rota existente com suporte a page e limit"
+      ],
+      "database": [
+        "Sem alteração de estrutura ou dados",
+        "hub_system_releases — atualização do changelog"
+      ],
+      "deploy": [
+        "Publicar o frontend 0.3.92 na Vercel",
+        "Executar node scripts/migrate_system_releases.js na API",
+        "Não é necessário reiniciar a API por causa desta paginação"
+      ]
+    }
+  },
+  {
+    "version": "0.3.91",
+    "title": "Sessão — correção do bloqueio indevido por limite de requisições",
+    "description": "Ajusta o rate limit global para o volume normal de uso do LarmHub e impede que o limite das telas financeiras bloqueie login ou renovação da sessão.",
+    "frontend_version": "0.3.87",
+    "backend_version": "0.3.91",
+    "released_at": "2026-07-03T15:10:00.000Z",
+    "changes": [
+      "Aumentado o limite global padrão de 100 para 1000 requisições por 15 minutos por IP.",
+      "Rotas /auth e /health deixam de consumir o limite global.",
+      "A renovação do token não é mais bloqueada pelo uso intenso das telas de Contas a Pagar.",
+      "Mantido o bloqueio específico de login em 10 tentativas sem sucesso por 15 minutos.",
+      "Logins corretos deixam de consumir o limite de tentativas inválidas.",
+      "Nenhum dado financeiro ou registro do banco é apagado ou alterado por esta atualização."
+    ],
+    "architecture": {
+      "frontend": [
+        "Sem alteração funcional nesta versão — permanece em 0.3.87"
+      ],
+      "backend": [
+        "Node.js",
+        "Express.js",
+        "express-rate-limit",
+        "JWT com refresh token",
+        "PM2",
+        "API 0.3.91"
+      ],
+      "database": [
+        "Sem alteração de estrutura ou dados",
+        "hub_system_releases — atualização do changelog"
+      ],
+      "security": [
+        "Rate limit global de 1000 requisições por 15 minutos",
+        "Login limitado a 10 falhas por 15 minutos",
+        "Rotas de sessão separadas do limite de navegação"
+      ]
+    }
+  },
+  {
+    "version": "0.3.90",
+    "title": "Orçamento — exclusão automática de lançamentos inativados",
+    "description": "O Orçamento Mensal passa a recalcular o previsto e o saldo diretamente dos lançamentos ativos do Movimento Orçado, sem manter valores de registros inativados no agregado exibido.",
+    "frontend_version": "0.3.87",
+    "backend_version": "0.3.90",
+    "released_at": "2026-07-03T14:40:00.000Z",
+    "changes": [
+      "O previsto do Orçamento deixa de depender do agregado histórico fin_orcamento_valores quando existe Movimento Orçado.",
+      "Receitas, despesas, investimentos, subtotais e totais são recalculados diretamente dos registros ativos de fin_orcamento_movimento.",
+      "Registros com ativo=false deixam de participar imediatamente do Saldo Inicial, fluxo mensal e Saldo Final previsto.",
+      "Mantido o agregado antigo apenas como fallback para instalações sem a tabela de Movimento Orçado.",
+      "A rota do Orçamento passa a responder sem cache para refletir a inativação na próxima abertura ou atualização da tela.",
+      "Nenhum lançamento existente é apagado ou alterado por esta atualização."
+    ],
+    "architecture": {
+      "frontend": [
+        "Sem alteração funcional nesta versão — permanece em 0.3.87"
+      ],
+      "backend": [
+        "Node.js",
+        "Express",
+        "Rota financeiro.js",
+        "Recálculo dinâmico do Orçamento",
+        "API 0.3.90"
+      ],
+      "database": [
+        "fin_orcamento_movimento — somente leitura no recálculo",
+        "fin_orcamento_valores — fallback legado",
+        "hub_system_releases"
+      ],
+      "deploy": [
+        "Copiar os arquivos incrementais 0.3.90 para a API",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar com pm2 restart larmhub-api",
+        "Atualizar a página do Orçamento"
+      ]
+    }
+  },
+  {
+    "version": "0.3.89",
+    "title": "Movimento Bancário — exibição dos lançamentos de 29 e 30/06/2026",
+    "description": "Corrige o corte interno da API que ocultava no frontend movimentos bancários válidos de 29 e 30 de junho, embora eles já estivessem gravados corretamente no PostgreSQL.",
+    "frontend_version": "0.3.87",
+    "backend_version": "0.3.89",
+    "released_at": "2026-07-03T14:20:00.000Z",
+    "changes": [
+      "Atualizado o limite de movimentos realizados de 28/06/2026 para 30/06/2026 na rota financeira.",
+      "Os registros de 29 e 30/06 passam a aparecer na listagem, no resumo e nas exportações do Movimento Bancário.",
+      "Nenhum registro financeiro é inserido, alterado ou removido por esta atualização.",
+      "Movimentos posteriores a 30/06 continuam sujeitos à regra operacional existente.",
+      "Incluído o versionamento 0.3.89 no changelog interno e atualizado o package.json da API."
+    ],
+    "architecture": {
+      "frontend": [
+        "Sem alteração funcional nesta versão — permanece em 0.3.87"
+      ],
+      "backend": [
+        "Node.js",
+        "Express",
+        "Rota financeiro.js",
+        "API 0.3.89"
+      ],
+      "database": [
+        "hub_system_releases",
+        "fin_movimento — somente leitura pela rota"
+      ],
+      "deploy": [
+        "Copiar os arquivos incrementais 0.3.89 para a API",
+        "Executar node scripts/migrate_system_releases.js",
+        "Reiniciar com pm2 restart larmhub-api",
+        "Atualizar a página do Movimento Bancário com Ctrl+F5"
+      ]
+    }
+  },
+  {
+    "version": "0.3.88",
+    "title": "Movimento Bancário — validação correta dos dias 26, 29 e 30/06",
+    "description": "Corrige a validação do seed de duplicidades para trabalhar com a data lógica do PostgreSQL e ignorar movimentos de outras datas pertencentes ao lote oficial.",
+    "frontend_version": "0.3.87",
+    "backend_version": "0.3.88",
+    "released_at": "2026-07-03T14:00:00.000Z",
+    "changes": [
+      "O seed deixa de rejeitar o lote oficial por conter movimentos de datas fora do intervalo corrigido.",
+      "A análise fica restrita aos movimentos de 26, 29 e 30/06/2026.",
+      "A data é comparada no PostgreSQL sem deslocamento causado por conversão UTC do Node.js.",
+      "Mantidos prévia, backup, validação financeira e rollback integral em caso de divergência."
+    ],
+    "architecture": {
+      "frontend": [
+        "Sem alteração — permanece em 0.3.87"
+      ],
+      "backend": [
+        "Node.js",
+        "PostgreSQL",
+        "Seed transacional 0.3.88"
+      ],
+      "database": [
+        "fin_movimento",
+        "backup de duplicidades"
+      ],
+      "deploy": [
+        "Executar primeiro a prévia",
+        "Executar a correção somente com a quantidade confirmada"
+      ]
+    }
+  },
+  {
+    "version": "0.3.87",
+    "title": "Contas a Receber — retornos Bradesco múltiplos e correção dos movimentos duplicados",
+    "description": "Adiciona processamento manual idempotente dos retornos Bradesco, suporte ao envio simultâneo de arquivos e uma rotina segura para conferir e remover cópias dos movimentos de 26, 29 e 30/06.",
+    "frontend_version": "0.3.87",
+    "backend_version": "0.3.87",
+    "released_at": "2026-07-03T13:40:00.000Z",
+    "changes": [
+      "A rota de retorno passa a aceitar um ou vários arquivos sem remover a compatibilidade com o upload individual.",
+      "Adicionado seed manual e idempotente para processar retornos Bradesco com prévia antes da execução.",
+      "Arquivos repetidos são identificados por SHA-256 e não geram baixa duplicada.",
+      "Adicionada conferência segura dos lotes dos movimentos bancários de 26, 29 e 30/06.",
+      "O frontend permite selecionar múltiplos arquivos de retorno na mesma operação."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js",
+        "Upload múltiplo de arquivos",
+        "Versão 0.3.87"
+      ],
+      "backend": [
+        "Node.js",
+        "Express",
+        "CNAB 400 Bradesco",
+        "Versão 0.3.87"
+      ],
+      "database": [
+        "fin_retornos_cobranca",
+        "com_parcelas",
+        "fin_movimento"
+      ],
+      "deploy": [
+        "Publicar frontend 0.3.87",
+        "Reiniciar API 0.3.87",
+        "Executar seeds somente após a prévia"
+      ]
+    }
+  },
+  {
     "version": "0.3.86",
     "title": "Financeiro — correção dos lotes duplicados de 26, 29 e 30 de junho",
     "description": "Corrige a identificação dos movimentos existentes por linha de origem, bloqueia novas reinserções e adiciona uma limpeza cirúrgica dos lotes incrementais duplicados, preservando o lote oficial.",
