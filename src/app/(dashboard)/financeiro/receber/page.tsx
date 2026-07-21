@@ -13,6 +13,7 @@ import {
   Mail,
   MessageCircle,
   Plus,
+  Pencil,
   Printer,
   Search,
   Settings,
@@ -235,9 +236,12 @@ type ReturnProcessingItem = {
   vencimento?: string | null
   data_ocorrencia?: string | null
   data_credito?: string | null
+  data_recebimento?: string | null
   valor_titulo: number
   valor_pago: number
   parcela_id?: string | null
+  parcela_numero?: number | null
+  parcela_total?: number | null
   contrato?: string | null
   cliente?: string | null
   metodo_conciliacao?: string | null
@@ -252,6 +256,13 @@ type ReturnProcessingResult = {
   id?: string
   arquivo: string
   empresa?: string | null
+  data_arquivo?: string | null
+  processado_em?: string | null
+  processado_por?: string | null
+  data_recebimento?: string | null
+  banco_codigo?: string | null
+  baixa_automatica?: boolean
+  movimentos_vinculados?: number
   registros?: number
   titulos?: number
   preview?: boolean
@@ -341,6 +352,12 @@ function firstDayOfCurrentMonth() {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
 }
 
+function lastDayOfCurrentMonth() {
+  const now = new Date()
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  return `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`
+}
+
 function todayIso() {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
@@ -359,6 +376,13 @@ function formatDate(value?: string | null) {
   const raw = String(value).slice(0, 10)
   const [year, month, day] = raw.split('-')
   return year && month && day ? `${day}/${month}/${year}` : raw
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return String(value)
+  return parsed.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
 }
 
 function statusLabel(status: StatusReceber) {
@@ -388,9 +412,9 @@ function origemBaixaLabel(row: ParcelaReceber) {
   return 'Aguardando conciliação'
 }
 
-function returnItemStatusLabel(item: ReturnProcessingItem) {
+function returnItemStatusLabel(item: ReturnProcessingItem, historical = false) {
   if (item.status_processamento === 'ja_baixado') return 'Já baixado'
-  if (item.status_processamento === 'liquidado' || item.status_processamento === 'baixado') return 'Baixado agora'
+  if (item.status_processamento === 'liquidado' || item.status_processamento === 'baixado') return historical ? 'Baixa registrada' : 'Baixado agora'
   if (item.status_processamento === 'pronto_para_baixa' || item.status_processamento === 'pronto') return 'Pronto para baixa'
   if (item.status_processamento === 'pronto_para_baixa_movimento_existente') return 'Pronto — movimento localizado'
   if (item.status_processamento === 'conta_bancaria_ambigua') return 'Conta bancária ambígua'
@@ -418,31 +442,35 @@ function returnItemStatusClass(item: ReturnProcessingItem) {
   return 'bg-slate-100 text-slate-600 border-slate-200'
 }
 
-function returnItemReason(item: ReturnProcessingItem) {
+function returnItemReason(item: ReturnProcessingItem, historical = false) {
   const report = item.relatorio_strato
   if (item.metodo_conciliacao === 'relatorio_strato_ia' && item.parcela_id) {
     const confidence = item.confianca_conciliacao ? ` Confiança ${item.confianca_conciliacao}%.` : ''
     return `Conciliado com o relatório Strato${report?.arquivo ? ` (${report.arquivo})` : ''}; os identificadores do boleto foram gravados para os próximos retornos.${confidence}`
   }
-  if (item.metodo_conciliacao === 'relatorio_strato_sem_correspondencia_segura') {
-    return `A IA identificou ${report?.cliente_nome || 'o título'} no relatório Strato, mas o backend não encontrou uma parcela única com evidências suficientes. Nenhuma baixa automática foi feita.`
+  if (['relatorio_strato_sem_correspondencia_segura', 'relatorio_strato_sem_match_seguro'].includes(String(item.metodo_conciliacao || ''))) {
+    return `O relatório Strato identificou ${report?.cliente_nome || 'o título'}, mas o backend não encontrou uma parcela única com evidências suficientes. Nenhuma baixa automática foi feita.`
   }
   if (item.status_processamento === 'ja_baixado') {
     return item.movimento_id ? `Já estava vinculado ao movimento ${item.movimento_id}.` : 'A parcela já estava marcada como recebida.'
   }
-  if (item.status_processamento === 'liquidado' || item.status_processamento === 'baixado') return 'Baixa criada agora a partir do retorno.'
+  if (item.status_processamento === 'liquidado' || item.status_processamento === 'baixado') return historical ? 'Baixa registrada no processamento original deste retorno.' : 'Baixa criada agora a partir do retorno.'
   if (item.status_processamento === 'pronto_para_baixa' || item.status_processamento === 'pronto') return 'Localizado e pronto para baixa na execução.'
   if (item.status_processamento === 'pronto_para_baixa_movimento_existente') return 'Localizado e pronto para vincular ao movimento bancário já existente.'
   if (item.status_processamento === 'nao_localizado') {
     if (item.ocorrencia && item.ocorrencia !== '06') return `${item.ocorrencia_descricao || 'Ocorrência bancária'}; não é liquidação de cobrança.`
-    return 'Não foi encontrada parcela correspondente por nosso número, controle/documento, vencimento e valor. Anexe o relatório Strato da mesma remessa para a conferência assistida por IA.'
+    return 'Não foi encontrada parcela correspondente por nosso número, controle/documento, vencimento e valor. Anexe o relatório Strato da mesma remessa para ampliar a conferência com os dados do cliente, unidade, parcela e boleto.'
   }
   return item.ocorrencia_descricao || 'Sem detalhe informado pelo banco.'
 }
 
 function buildReturnSuccessMessage(filesCount: number, result: ReturnProcessingResult, preview: boolean) {
   const fileLabel = filesCount === 1 ? '1 retorno' : `${filesCount} retornos`
-  if (result.duplicated) return `${fileLabel} já havia(m) sido processado(s). Nenhuma baixa foi duplicada.`
+  if (result.duplicated) {
+    return filesCount === 1
+      ? 'Este retorno já havia sido processado. Nenhuma baixa foi duplicada; o processamento original, as parcelas, os valores e os movimentos estão detalhados abaixo.'
+      : `${fileLabel} já haviam sido processados. Nenhuma baixa foi duplicada; os processamentos originais, as parcelas, os valores e os movimentos estão detalhados abaixo.`
+  }
   if (preview) {
     return `Prévia de ${fileLabel}: ${result.liquidacoes_prontas || 0} título(s) pronto(s), ` +
       `${result.ja_baixadas || 0} já baixado(s), ${result.nao_localizados || 0} não localizado(s). Nenhum registro foi alterado.`
@@ -465,10 +493,10 @@ function escapePdfHtml(value: unknown) {
 
 function buildReturnPdfHtml(result: ReturnProcessingResult) {
   const generatedAt = new Date().toLocaleString('pt-BR')
-  const title = result.preview ? 'Prévia do retorno Bradesco' : 'Resultado do retorno Bradesco'
+  const title = result.preview ? 'Prévia do retorno Bradesco' : result.duplicated ? 'Retorno Bradesco já processado' : 'Resultado do retorno Bradesco'
   const rows = (result.itens || []).map(item => {
-    const status = returnItemStatusLabel(item)
-    const reason = returnItemReason(item)
+    const status = returnItemStatusLabel(item, Boolean(result.duplicated))
+    const reason = returnItemReason(item, Boolean(result.duplicated))
     const rowClass = item.status_processamento === 'nao_localizado' && item.ocorrencia === '06'
       ? ' class="not-found"'
       : item.status_processamento === 'liquidado' || item.status_processamento === 'baixado' || item.status_processamento === 'ja_baixado'
@@ -485,6 +513,7 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
         <td>${escapePdfHtml(item.controle_participante || '—')}</td>
         <td>${escapePdfHtml(item.documento || '—')}</td>
         <td>${escapePdfHtml(formatDate(item.vencimento))}</td>
+        <td>${escapePdfHtml(formatDate(item.data_recebimento || result.data_recebimento))}</td>
         <td class="right">${escapePdfHtml(formatCurrency(item.valor_pago || item.valor_titulo))}</td>
         <td>${escapePdfHtml(reason)}</td>
       </tr>`
@@ -493,11 +522,11 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
   const cards = [
     ['Títulos localizados', result.conciliados],
     ['Não localizados', result.nao_localizados],
-    [result.preview ? 'Prontos' : 'Baixados agora', result.preview ? result.liquidacoes_prontas : result.liquidacoes_baixadas],
+    [result.preview ? 'Prontos' : result.duplicated ? 'Baixas registradas' : 'Baixados agora', result.preview ? result.liquidacoes_prontas : result.liquidacoes_baixadas],
     ['Já baixados', result.ja_baixadas],
-    ['Movimentos novos', result.movimentos_criados],
+    [result.duplicated ? 'Movimentos vinculados' : 'Movimentos novos', result.movimentos_criados],
     ['Via relatório/IA', result.conciliados_por_relatorio || 0],
-    [result.preview ? 'Valor localizado' : 'Valor baixado agora', formatCurrency(result.preview ? result.valor_liquidado : result.valor_baixado)],
+    [result.preview ? 'Valor localizado' : result.duplicated ? 'Valor registrado' : 'Valor baixado agora', formatCurrency(result.preview ? result.valor_liquidado : result.valor_baixado)],
   ].map(([label, value]) => `<div class="card"><small>${escapePdfHtml(label)}</small><strong>${escapePdfHtml(value)}</strong></div>`).join('')
 
   return `<!doctype html>
@@ -533,7 +562,8 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
     <div>
       <h1>${escapePdfHtml(title)}</h1>
       <p><strong>Arquivo:</strong> ${escapePdfHtml(result.arquivo)} · <strong>Empresa:</strong> ${escapePdfHtml(result.empresa || 'empresa não identificada')}</p>
-      <p><strong>Registros:</strong> ${escapePdfHtml(result.registros || 0)} · <strong>Títulos:</strong> ${escapePdfHtml(result.titulos || 0)}</p>
+      <p><strong>Registros:</strong> ${escapePdfHtml(result.registros || 0)} · <strong>Títulos:</strong> ${escapePdfHtml(result.titulos || 0)} · <strong>Recebimento:</strong> ${escapePdfHtml(formatDate(result.data_recebimento))}</p>
+      ${result.duplicated ? `<p><strong>Processamento original:</strong> ${escapePdfHtml(formatDateTime(result.processado_em))} · <strong>Operador:</strong> ${escapePdfHtml(result.processado_por || 'não identificado')}</p>` : ''}
     </div>
     <div>
       <p><strong>Gerado em:</strong> ${escapePdfHtml(generatedAt)}</p>
@@ -553,12 +583,13 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
         <th style="width: 10%">Nosso número</th>
         <th style="width: 8%">Controle</th>
         <th style="width: 9%">Documento</th>
-        <th style="width: 8%">Vencimento</th>
+        <th style="width: 7%">Vencimento</th>
+        <th style="width: 7%">Recebimento</th>
         <th style="width: 8%">Valor</th>
-        <th style="width: 13%">Detalhe</th>
+        <th style="width: 12%">Detalhe</th>
       </tr>
     </thead>
-    <tbody>${rows || '<tr><td colspan="11">Nenhum item retornado pelo banco.</td></tr>'}</tbody>
+    <tbody>${rows || '<tr><td colspan="12">Nenhum item retornado pelo banco.</td></tr>'}</tbody>
   </table>
   <div class="footer">PDF gerado pela tela de Contas a Receber > Retorno Bradesco.</div>
 </body>
@@ -567,6 +598,11 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
 
 
 function buildReturnMainExplanation(result: ReturnProcessingResult) {
+  if (result.duplicated) {
+    const processed = result.processado_em ? ` em ${formatDateTime(result.processado_em)}` : ''
+    const operator = result.processado_por ? ` por ${result.processado_por}` : ''
+    return `Este arquivo já havia sido processado${processed}${operator}. Nenhuma baixa foi repetida. Abaixo estão os títulos, parcelas, valores e movimentos registrados no processamento original.`
+  }
   const naoLocalizadosLiquidacao = (result.itens || []).filter(item => item.status_processamento === 'nao_localizado' && item.ocorrencia === '06').length
   const ocorrenciasSemLiquidacao = (result.itens || []).filter(item => item.status_processamento === 'nao_localizado' && item.ocorrencia !== '06').length
   const reportInfo = (result.relatorios_strato_processados || 0) > 0
@@ -735,6 +771,8 @@ export default function ContasReceberPage() {
   const [empresa, setEmpresa] = useState<EmpresaCobranca | ''>('')
   const [vencimentoInicio, setVencimentoInicio] = useState(firstDayOfCurrentMonth())
   const [vencimentoFim, setVencimentoFim] = useState('')
+  const [recebimentoInicio, setRecebimentoInicio] = useState('')
+  const [recebimentoFim, setRecebimentoFim] = useState('')
   const [status, setStatus] = useState('todos')
   const [sort, setSort] = useState<SortKey>('vencimento')
   const [direction, setDirection] = useState<SortDirection>('asc')
@@ -753,6 +791,9 @@ export default function ContasReceberPage() {
   const [manualPaymentBanksLoading, setManualPaymentBanksLoading] = useState(false)
   const [manualPaymentSaving, setManualPaymentSaving] = useState(false)
   const [manualPaymentError, setManualPaymentError] = useState('')
+  const [editingReceiptDateId, setEditingReceiptDateId] = useState<string | null>(null)
+  const [editingReceiptDateValue, setEditingReceiptDateValue] = useState('')
+  const [receiptDateSavingId, setReceiptDateSavingId] = useState<string | null>(null)
 
   const [configOpen, setConfigOpen] = useState(false)
   const [config, setConfig] = useState<BradescoConfig>(() => emptyBradescoConfig('LARM'))
@@ -791,10 +832,12 @@ export default function ContasReceberPage() {
     empresa: empresa || undefined,
     venc_inicio: vencimentoInicio || undefined,
     venc_fim: vencimentoFim || undefined,
+    receb_inicio: recebimentoInicio || undefined,
+    receb_fim: recebimentoFim || undefined,
     status,
     sort,
     direction,
-  }), [page, limit, busca, clienteId, tipoReceitaId, obraId, empresa, vencimentoInicio, vencimentoFim, status, sort, direction])
+  }), [page, limit, busca, clienteId, tipoReceitaId, obraId, empresa, vencimentoInicio, vencimentoFim, recebimentoInicio, recebimentoFim, status, sort, direction])
 
   const eligibleIds = useMemo(() => rows.filter(row => ['aberta', 'atrasada'].includes(row.status)).map(row => row.id), [rows])
   const allEligibleSelected = eligibleIds.length > 0 && eligibleIds.every(id => selected.has(id))
@@ -802,6 +845,7 @@ export default function ContasReceberPage() {
     () => systemCompanies.filter(item => item.empresa_cobranca === 'LARM' || item.empresa_cobranca === 'LUCKY'),
     [systemCompanies],
   )
+
 
   const syncHorizontalScroll = (source: HTMLDivElement, target: HTMLDivElement | null) => {
     if (!target || target.scrollLeft === source.scrollLeft) return
@@ -879,6 +923,8 @@ export default function ContasReceberPage() {
     setEmpresa('')
     setVencimentoInicio(firstDayOfCurrentMonth())
     setVencimentoFim('')
+    setRecebimentoInicio('')
+    setRecebimentoFim('')
     setStatus('todos')
     setSort('vencimento')
     setDirection('asc')
@@ -996,6 +1042,42 @@ export default function ContasReceberPage() {
       setManualPaymentError(requestErrorMessage(requestError, 'Não foi possível registrar a baixa manual.'))
     } finally {
       setManualPaymentSaving(false)
+    }
+  }
+
+  const startEditingReceiptDate = (row: ParcelaReceber) => {
+    if (row.status !== 'paga') return
+    setEditingReceiptDateId(row.id)
+    setEditingReceiptDateValue(String(row.pago_em || row.conciliado_em || '').slice(0, 10))
+    setError('')
+  }
+
+  const cancelEditingReceiptDate = () => {
+    if (receiptDateSavingId) return
+    setEditingReceiptDateId(null)
+    setEditingReceiptDateValue('')
+  }
+
+  const saveReceiptDate = async (row: ParcelaReceber) => {
+    if (!editingReceiptDateValue) {
+      setError('Informe a data do recebimento.')
+      return
+    }
+    setReceiptDateSavingId(row.id)
+    setError('')
+    setSuccess('')
+    try {
+      const response = await apiClient.patch(`/financeiro/contas-receber/${row.id}/data-recebimento`, {
+        data_recebimento: editingReceiptDateValue,
+      })
+      setSuccess(response.data?.message || 'Data de recebimento atualizada.')
+      setEditingReceiptDateId(null)
+      setEditingReceiptDateValue('')
+      await load()
+    } catch (requestError: unknown) {
+      setError(requestErrorMessage(requestError, 'Não foi possível alterar a data de recebimento.'))
+    } finally {
+      setReceiptDateSavingId(null)
     }
   }
 
@@ -1407,8 +1489,11 @@ export default function ContasReceberPage() {
       if (!responseResults.length) throw new Error('O backend não retornou o resultado dos arquivos.')
 
       const companies = Array.from(new Set(responseResults.map(result => result.empresa).filter(Boolean)))
+      const receiptDates = Array.from(new Set(responseResults.map(result => result.data_recebimento).filter(Boolean)))
       const aggregated = responseResults.reduce<ReturnProcessingResult>((total, result) => ({
         ...total,
+        registros: Number(total.registros || 0) + Number(result.registros || 0),
+        titulos: Number(total.titulos || 0) + Number(result.titulos || 0),
         conciliados: total.conciliados + Number(result.conciliados || 0),
         nao_localizados: total.nao_localizados + Number(result.nao_localizados || 0),
         liquidacoes_encontradas: total.liquidacoes_encontradas + Number(result.liquidacoes_encontradas || 0),
@@ -1430,6 +1515,11 @@ export default function ContasReceberPage() {
         empresa: companies.join(' e ') || null,
         preview: response.data?.preview || !returnApplyPayment,
         persisted: returnApplyPayment,
+        processado_em: responseResults.length === 1 ? responseResults[0].processado_em : null,
+        processado_por: responseResults.length === 1 ? responseResults[0].processado_por : null,
+        data_recebimento: receiptDates.length === 1 ? receiptDates[0] : null,
+        registros: 0,
+        titulos: 0,
         conciliados: 0,
         nao_localizados: 0,
         liquidacoes_encontradas: 0,
@@ -1644,11 +1734,11 @@ export default function ContasReceberPage() {
       </div>
 
       <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 text-xs text-blue-800">
-        Parcelas vencidas podem ser recalculadas em conjunto com todas as anteriores em aberto. Para divergências, selecione primeiro o relatório “CRÍTICA COBRANÇA” do Strato e depois importe o retorno. A IA extrai os dados do relatório, mas a baixa só ocorre quando o backend encontra uma correspondência única e segura. Desmarque “Baixar liquidações” para uma prévia sem qualquer alteração.
+        Parcelas vencidas podem ser recalculadas em conjunto com todas as anteriores em aberto. Para divergências, selecione primeiro o relatório “CRÍTICA COBRANÇA” do Strato e depois importe o retorno. O sistema cruza cliente, contrato, unidade, parcela, boleto, vencimento e valor; a baixa só ocorre quando encontra uma correspondência única e segura. Desmarque “Baixar liquidações” para uma prévia sem qualquer alteração.
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-8 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-10 gap-3">
           <FilterField label="Busca" className="xl:col-span-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -1688,9 +1778,15 @@ export default function ContasReceberPage() {
           <FilterField label="Vencimento até">
             <input type="date" value={vencimentoFim} onChange={event => { setVencimentoFim(event.target.value); setPage(1) }} className={inputClass} />
           </FilterField>
+          <FilterField label="Recebimento de">
+            <input type="date" value={recebimentoInicio} onChange={event => { setRecebimentoInicio(event.target.value); if (event.target.value) { setVencimentoInicio(''); setVencimentoFim('') }; setPage(1) }} className={inputClass} />
+          </FilterField>
+          <FilterField label="Recebimento até">
+            <input type="date" value={recebimentoFim} onChange={event => { setRecebimentoFim(event.target.value); if (event.target.value) { setVencimentoInicio(''); setVencimentoFim('') }; setPage(1) }} className={inputClass} />
+          </FilterField>
         </div>
         <div className="mt-3 flex items-center justify-between gap-3 flex-wrap border-t border-slate-100 pt-3">
-          <p className="text-[10px] text-slate-400">A tela inicia no primeiro dia do mês atual. Altere “Vencimento de” para consultar períodos anteriores.</p>
+          <p className="text-[10px] text-slate-400">A tela inicia pelo vencimento do mês atual. Use “Recebimento de/até” para localizar parcelas pela data em que o retorno foi enviado ao sistema.</p>
           <div className="flex items-center gap-2">
             <select value={status} onChange={event => { setStatus(event.target.value); setPage(1) }} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-700">
               <option value="todos">Todos status</option><option value="em_aberto">Em aberto</option><option value="aberta">Abertas</option><option value="atrasada">Atrasadas</option><option value="paga">Recebidas</option><option value="cancelada">Canceladas</option>
@@ -1711,13 +1807,15 @@ export default function ContasReceberPage() {
               <div className="flex items-center gap-2">
                 <Landmark className="h-4 w-4 text-blue-600" />
                 <h2 className="text-sm font-semibold text-slate-800">
-                  {returnResult.preview ? 'Prévia do retorno Bradesco' : 'Resultado do retorno Bradesco'}
+                  {returnResult.preview ? 'Prévia do retorno Bradesco' : returnResult.duplicated ? 'Retorno Bradesco já processado' : 'Resultado do retorno Bradesco'}
                 </h2>
               </div>
               <p className="mt-1 text-xs text-slate-500">
                 {returnResult.arquivo} · {returnResult.empresa || 'empresa não identificada'}
                 {returnResult.titulos ? ` · ${returnResult.titulos} título(s)` : ''}
                 {returnResult.registros ? ` · ${returnResult.registros} registro(s) lido(s)` : ''}
+                {returnResult.data_recebimento ? ` · recebimento ${formatDate(returnResult.data_recebimento)}` : ''}
+                {returnResult.duplicated && returnResult.processado_em ? ` · processado em ${formatDateTime(returnResult.processado_em)}` : ''}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -1743,11 +1841,11 @@ export default function ContasReceberPage() {
             {[
               ['Títulos localizados', returnResult.conciliados],
               ['Não localizados', returnResult.nao_localizados],
-              [returnResult.preview ? 'Prontos' : 'Baixados agora', returnResult.preview ? returnResult.liquidacoes_prontas : returnResult.liquidacoes_baixadas],
+              [returnResult.preview ? 'Prontos' : returnResult.duplicated ? 'Baixas registradas' : 'Baixados agora', returnResult.preview ? returnResult.liquidacoes_prontas : returnResult.liquidacoes_baixadas],
               ['Já baixados', returnResult.ja_baixadas],
-              ['Movimentos novos', returnResult.movimentos_criados],
+              [returnResult.duplicated ? 'Movimentos vinculados' : 'Movimentos novos', returnResult.movimentos_criados],
               ['Via relatório/IA', returnResult.conciliados_por_relatorio || 0],
-              [returnResult.preview ? 'Valor localizado' : 'Valor baixado agora', formatCurrency(returnResult.preview ? returnResult.valor_liquidado : returnResult.valor_baixado)],
+              [returnResult.preview ? 'Valor localizado' : returnResult.duplicated ? 'Valor registrado' : 'Valor baixado agora', formatCurrency(returnResult.preview ? returnResult.valor_liquidado : returnResult.valor_baixado)],
             ].map(([label, value]) => (
               <div key={String(label)} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
                 <p className="text-[10px] uppercase tracking-wide text-slate-400">{label}</p>
@@ -1792,6 +1890,7 @@ export default function ContasReceberPage() {
                   <th className="px-3 py-2 text-left">Controle</th>
                   <th className="px-3 py-2 text-left">Documento</th>
                   <th className="px-3 py-2 text-left">Vencimento</th>
+                  <th className="px-3 py-2 text-left">Recebimento</th>
                   <th className="px-3 py-2 text-right">Valor</th>
                   <th className="px-3 py-2 text-left">Detalhe</th>
                 </tr></thead>
@@ -1802,20 +1901,21 @@ export default function ContasReceberPage() {
                       <td className="px-3 py-2 text-[10px] text-slate-500">{item.arquivo_origem || returnResult.arquivo}</td>
                       <td className="px-3 py-2">
                         <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold', returnItemStatusClass(item))}>
-                          {returnItemStatusLabel(item)}
+                          {returnItemStatusLabel(item, Boolean(returnResult.duplicated))}
                         </span>
                       </td>
                       <td className="px-3 py-2">{item.ocorrencia} · {item.ocorrencia_descricao || '—'}</td>
                       <td className="px-3 py-2">
                         <p className="font-medium text-slate-700">{item.cliente || item.relatorio_strato?.cliente_nome || 'Não localizado'}</p>
-                        <p className="text-[10px] text-slate-400">{item.contrato || (item.relatorio_strato ? `${item.relatorio_strato.cliente_codigo || 'sem código'} · ${item.relatorio_strato.unidade || 'sem unidade'} · parcela ${item.relatorio_strato.parcela || '—'}` : (item.status_processamento === 'nao_localizado' ? 'sem parcela/contrato conciliado' : 'sem contrato localizado'))}</p>
+                        <p className="text-[10px] text-slate-400">{item.contrato ? `${item.contrato}${item.parcela_numero ? ` · parcela ${item.parcela_numero}${item.parcela_total ? `/${item.parcela_total}` : ''}` : ''}` : (item.relatorio_strato ? `${item.relatorio_strato.cliente_codigo || 'sem código'} · ${item.relatorio_strato.unidade || 'sem unidade'} · parcela ${item.relatorio_strato.parcela || '—'}` : (item.status_processamento === 'nao_localizado' ? 'sem parcela/contrato conciliado' : 'sem contrato localizado'))}</p>
                       </td>
                       <td className="px-3 py-2">{item.nosso_numero || '—'}</td>
                       <td className="px-3 py-2">{item.controle_participante || '—'}</td>
                       <td className="px-3 py-2">{item.documento || '—'}</td>
                       <td className="px-3 py-2">{formatDate(item.vencimento)}</td>
+                      <td className="px-3 py-2">{formatDate(item.data_recebimento)}</td>
                       <td className="px-3 py-2 text-right">{formatCurrency(item.valor_pago || item.valor_titulo)}</td>
-                      <td className="px-3 py-2 text-slate-500">{returnItemReason(item)}</td>
+                      <td className="px-3 py-2 text-slate-500">{returnItemReason(item, Boolean(returnResult.duplicated))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1875,7 +1975,22 @@ export default function ContasReceberPage() {
                     <td className="px-3 py-3 text-slate-600 truncate" title={row.receita_documento || row.documento_legado || ''}>{row.receita_documento || row.documento_legado || '—'}</td>
                     <td className="px-3 py-3 text-center text-slate-600 whitespace-nowrap">{row.parcela_numero_legado || row.numero || '—'}{row.parcela_total_legado ? `/${row.parcela_total_legado}` : ''}</td>
                     <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-800 whitespace-nowrap"><p>{formatCurrency(row.valor_total)}</p>{row.valor_recalculado != null && <p className="mt-1 text-[9px] font-normal text-blue-600" title={`Recalculado para ${formatDate(row.data_recalculo)}`}>recalculado</p>}</td>
-                    <td className="px-3 py-3"><p className={cn('whitespace-nowrap', row.status === 'paga' ? 'text-emerald-700 font-medium' : 'text-slate-400')}>{row.status === 'paga' ? formatDate(row.pago_em || row.conciliado_em) : '—'}</p><p className="mt-1 text-[10px] text-slate-400 truncate" title={origemBaixaLabel(row)}>{origemBaixaLabel(row)}</p>{row.movimento_banco && <p className="mt-0.5 text-[10px] text-slate-400 truncate">Banco: {row.movimento_banco}</p>}</td>
+                    <td className="px-3 py-3">
+                      {editingReceiptDateId === row.id ? (
+                        <div className="flex items-center gap-1">
+                          <input type="date" value={editingReceiptDateValue} onChange={event => setEditingReceiptDateValue(event.target.value)} className="h-8 w-[122px] rounded-md border border-blue-300 px-2 text-[11px] outline-none focus:ring-2 focus:ring-blue-100" />
+                          <button type="button" disabled={receiptDateSavingId === row.id} onClick={() => void saveReceiptDate(row)} className="rounded-md border border-emerald-200 bg-emerald-50 p-1.5 text-emerald-700 disabled:opacity-50" title="Salvar data"><Check className="h-3 w-3" /></button>
+                          <button type="button" disabled={receiptDateSavingId === row.id} onClick={cancelEditingReceiptDate} className="rounded-md border border-slate-200 bg-white p-1.5 text-slate-500 disabled:opacity-50" title="Cancelar"><X className="h-3 w-3" /></button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <p className={cn('whitespace-nowrap', row.status === 'paga' ? 'text-emerald-700 font-medium' : 'text-slate-400')}>{row.status === 'paga' ? formatDate(row.pago_em || row.conciliado_em) : '—'}</p>
+                          {row.status === 'paga' && canManualPayment && <button type="button" onClick={() => startEditingReceiptDate(row)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600" title="Editar a data do recebimento e do Movimento Bancário"><Pencil className="h-3 w-3" /></button>}
+                        </div>
+                      )}
+                      <p className="mt-1 text-[10px] text-slate-400 truncate" title={origemBaixaLabel(row)}>{origemBaixaLabel(row)}</p>
+                      {row.movimento_banco && <p className="mt-0.5 text-[10px] text-slate-400 truncate">Banco: {row.movimento_banco}</p>}
+                    </td>
                     <td className="px-3 py-3"><span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold', statusClass(row.status))}>{statusLabel(row.status)}</span>{row.boleto_status && <p className="mt-1 text-[9px] text-slate-400">Boleto: {row.boleto_status.replace(/_/g, ' ')}</p>}{row.boleto_enviado_em && <p className="mt-0.5 text-[9px] font-medium text-emerald-600">Enviado por {row.boleto_envio_canal || 'canal registrado'} em {formatDate(row.boleto_enviado_em)}</p>}{row.boleto_envio_status === 'erro' && <p className="mt-0.5 text-[9px] text-red-600" title={row.boleto_envio_erro || ''}>Falha no envio</p>}</td>
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap gap-1.5">
