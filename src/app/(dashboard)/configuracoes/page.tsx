@@ -412,7 +412,7 @@ export default function ConfiguracoesPage() {
       openaiApiKey:       config.openaiApiKey || '',
       geminiApiKey:       config.geminiApiKey || '',
       openaiModel:        config.openaiModel || 'gpt-4.1-mini',
-      geminiModel:        config.geminiModel || 'gemini-flash-latest',
+      geminiModel:        config.geminiModel || 'gemini-2.5-flash',
       whatsappToken:      config.whatsappToken      || '',
       whatsappPhoneId:    config.whatsappPhoneId    || '',
       whatsappBusinessId: config.whatsappBusinessId || '',
@@ -443,7 +443,7 @@ export default function ConfiguracoesPage() {
     openaiApiKey:   config.openaiApiKey || '',
     geminiApiKey:   config.geminiApiKey || '',
     openaiModel:    config.openaiModel || 'gpt-4.1-mini',
-    geminiModel:    config.geminiModel || 'gemini-flash-latest',
+    geminiModel:    config.geminiModel || 'gemini-2.5-flash',
     whatsappToken: config.whatsappToken || '',
     whatsappPhoneId: config.whatsappPhoneId || '',
     whatsappBusinessId: config.whatsappBusinessId || '',
@@ -1014,7 +1014,7 @@ export default function ConfiguracoesPage() {
       const r = await apiClient.post<{
         ok: boolean
         data: { models: AiModelOption[]; recommendedModel: string }
-      }>('/tenant-config/ai-models', { provider, apiKey })
+      }>('/financeiro/contas-receber/ia-modelos', { provider, apiKey })
 
       const models = r.data.data?.models || []
       const recommended = r.data.data?.recommendedModel || ''
@@ -1032,10 +1032,25 @@ export default function ConfiguracoesPage() {
         message: `${models.length} modelo(s) disponível(is). O modelo recomendado foi selecionado quando necessário.`,
       })
     } catch (err: unknown) {
-      const message = (err as { response?: { data?: { message?: string } } }).response?.data?.message
-        || 'Erro ao consultar os modelos disponíveis.'
-      setAiModels([])
-      setAiModelsStatus({ ok: false, message })
+      const responseMessage = (err as { response?: { data?: { message?: string } } }).response?.data?.message
+      if (provider === 'gemini') {
+        const stableModel: AiModelOption = {
+          id: 'gemini-2.5-flash',
+          label: 'Gemini 2.5 Flash (estável)',
+          provider: 'gemini',
+        }
+        setAiModels([stableModel])
+        setCreds(previous => ({ ...previous, geminiModel: stableModel.id }))
+        setAiModelsStatus({
+          ok: true,
+          message: responseMessage
+            ? `Modelo estável selecionado. A listagem da chave não respondeu: ${responseMessage}`
+            : 'Modelo estável Gemini 2.5 Flash selecionado.',
+        })
+      } else {
+        setAiModels([])
+        setAiModelsStatus({ ok: false, message: responseMessage || 'Erro ao consultar os modelos disponíveis.' })
+      }
     } finally {
       setAiModelsLoading(false)
     }

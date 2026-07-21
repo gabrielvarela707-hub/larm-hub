@@ -76,7 +76,7 @@ const DEFAULT: TenantConfig = {
   openaiApiKey: '',
   geminiApiKey: '',
   openaiModel: 'gpt-4.1-mini',
-  geminiModel: 'gemini-flash-latest',
+  geminiModel: 'gemini-2.5-flash',
   whatsappToken: '',
   whatsappPhoneId: '',
   whatsappBusinessId: '',
