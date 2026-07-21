@@ -1,0 +1,22 @@
+PACOTE CUMULATIVO 0.4.2 — ARQUIVOS ALTERADOS/NOVOS
+
+FRONTEND
+- package.json
+- package-lock.json
+- src/app/(dashboard)/financeiro/receber/page.tsx
+- src/app/(dashboard)/recebiveis/page.tsx
+
+BACKEND
+- server/package.json
+- server/package-lock.json
+- server/src/routes/financeiro.js
+- server/src/routes/recebiveis.js
+- server/src/services/bradescoReturnProcessor.js
+- server/src/services/stratoReturnReportAnalyzer.js (novo desde 0.4.1)
+- server/src/data/system_releases_seed.js
+- server/data/system_releases_seed.js
+
+DOCUMENTAÇÃO DO PACOTE
+- README-ATUALIZACAO-0.4.2.txt
+- ARQUIVOS-ALTERADOS-0.4.2.txt
+- SHA256SUMS-0.4.2.txt

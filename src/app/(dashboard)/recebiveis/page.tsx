@@ -23,6 +23,7 @@ type Parcela = {
   contrato_numero: string; comprador_nome: string
   lot_id?: string; lot_number?: string; quadra?: string
   vencimento: string; valor_nominal: number; valor_total_cobrar: number
+  empresa_cobranca?: string | null
   valor_correcao: number; valor_multa: number; valor_juros_mora: number
   status: ParcelaStatus; pago_em?: string; valor_pago: number
   forma_pagamento?: string; dias_atraso: number
@@ -32,6 +33,16 @@ type ParcelaStats = {
   abertas: string; atrasadas: string; pagas: string
   valor_aberto: string; valor_atrasado: string
   valor_recebido: string; vencendo_30d: string
+}
+
+type BankAccountOption = {
+  id: number
+  empresa: string
+  banco_nome: string
+  agencia?: string
+  conta?: string
+  digito?: string
+  ativo?: boolean
 }
 
 type Contrato = {
@@ -76,6 +87,11 @@ function fmtMes(v: string) {
   return `${months[Number(m)-1]}/${y.slice(2)}`
 }
 
+function requestErrorMessage(error: unknown, fallback: string) {
+  const message = (error as { response?: { data?: { message?: unknown } } })?.response?.data?.message
+  return typeof message === 'string' && message.trim() ? message : fallback
+}
+
 const PARC_STATUS_META: Record<ParcelaStatus, { label: string; className: string }> = {
   aberta:      { label: 'Em aberto',   className: 'bg-blue-50 text-blue-700 border-blue-200'         },
   atrasada:    { label: 'Atrasada',    className: 'bg-red-50 text-red-700 border-red-200'             },
@@ -94,15 +110,81 @@ const ACORDO_STATUS: Record<string, { label: string; className: string }> = {
 // ─── BaixaModal ───────────────────────────────────────────────────────────────
 
 function BaixaModal({ parcela, onClose, onSaved }: { parcela: Parcela; onClose: () => void; onSaved: () => void }) {
-  const [form, setForm] = useState({ valor_pago: String(parcela.valor_total_cobrar.toFixed(2)), forma_pagamento: 'PIX', data_pagamento: new Date().toISOString().slice(0,10), observacoes_baixa: '' })
+  const [form, setForm] = useState({
+    valor_recebido: String(parcela.valor_total_cobrar.toFixed(2)),
+    forma_pagamento: 'PIX',
+    data_recebimento: new Date().toISOString().slice(0, 10),
+    observacoes: '',
+    banco_conta_id: '',
+  })
+  const [banks, setBanks] = useState<BankAccountOption[]>([])
+  const [loadingBanks, setLoadingBanks] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+
+    async function loadBanks() {
+      setLoadingBanks(true)
+      setError('')
+      try {
+        const response = await apiClient.get('/financeiro/bancos', {
+          params: parcela.empresa_cobranca ? { empresa: parcela.empresa_cobranca } : {},
+        })
+        const accounts = (Array.isArray(response.data?.data) ? response.data.data : [])
+          .filter((account: BankAccountOption) => account.ativo !== false)
+        if (!active) return
+        setBanks(accounts)
+
+        const automaticAccount = parcela.empresa_cobranca && accounts.length
+          ? accounts[0]
+          : (accounts.length === 1 ? accounts[0] : null)
+        if (automaticAccount) {
+          setForm(current => ({ ...current, banco_conta_id: String(automaticAccount.id) }))
+        }
+      } catch (requestError: unknown) {
+        if (active) setError(requestErrorMessage(requestError, 'Não foi possível carregar as contas bancárias.'))
+      } finally {
+        if (active) setLoadingBanks(false)
+      }
+    }
+
+    void loadBanks()
+    return () => { active = false }
+  }, [parcela.empresa_cobranca])
 
   async function save() {
+    const amount = Number(form.valor_recebido)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError('Informe um valor recebido maior que zero.')
+      return
+    }
+    if (!form.data_recebimento) {
+      setError('Informe a data do recebimento.')
+      return
+    }
+    if (!form.banco_conta_id) {
+      setError('Selecione a conta bancária que recebeu o valor.')
+      return
+    }
+
     setSaving(true)
+    setError('')
     try {
-      await apiClient.patch(`/parcelas/${parcela.id}/baixar`, { ...form, valor_pago: Number(form.valor_pago) })
+      await apiClient.patch(`/financeiro/contas-receber/${parcela.id}/baixar-manual`, {
+        valor_recebido: amount,
+        forma_pagamento: form.forma_pagamento,
+        data_recebimento: form.data_recebimento,
+        observacoes: form.observacoes.trim() || undefined,
+        banco_conta_id: Number(form.banco_conta_id),
+      })
       onSaved()
-    } catch { /* ignore */ } finally { setSaving(false) }
+    } catch (requestError: unknown) {
+      setError(requestErrorMessage(requestError, 'Não foi possível registrar a baixa.'))
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -112,25 +194,49 @@ function BaixaModal({ parcela, onClose, onSaved }: { parcela: Parcela; onClose: 
           <h3 className="text-base font-semibold text-slate-900">Registrar baixa</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
         </div>
-        <p className="mb-4 text-xs text-slate-500">{parcela.comprador_nome} — Parcela {parcela.numero} — Venc. {fmtDate(parcela.vencimento)}</p>
+        <p className="mb-4 text-xs text-slate-500">
+          {parcela.comprador_nome} — Parcela {parcela.numero} — Venc. {fmtDate(parcela.vencimento)}
+          {parcela.empresa_cobranca ? ` — ${parcela.empresa_cobranca}` : ''}
+        </p>
         <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-700">Conta bancária que recebeu</label>
+            <select
+              value={form.banco_conta_id}
+              onChange={e => setForm(current => ({ ...current, banco_conta_id: e.target.value }))}
+              disabled={loadingBanks}
+              className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none disabled:bg-slate-50"
+            >
+              <option value="">{loadingBanks ? 'Carregando contas...' : 'Selecione a conta'}</option>
+              {banks.map(bank => (
+                <option key={bank.id} value={bank.id}>
+                  {bank.empresa} — {bank.banco_nome} — Ag. {bank.agencia || '—'} / Cc. {bank.conta || '—'}{bank.digito ? `-${bank.digito}` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
           <div><label className="mb-1 block text-xs font-medium text-slate-700">Valor recebido (R$)</label>
-            <input type="number" value={form.valor_pago} onChange={e => setForm(f=>({...f,valor_pago:e.target.value}))}
+            <input type="number" value={form.valor_recebido} onChange={e => setForm(current => ({ ...current, valor_recebido: e.target.value }))}
               className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400" /></div>
           <div><label className="mb-1 block text-xs font-medium text-slate-700">Forma de pagamento</label>
-            <select value={form.forma_pagamento} onChange={e => setForm(f=>({...f,forma_pagamento:e.target.value}))}
+            <select value={form.forma_pagamento} onChange={e => setForm(current => ({ ...current, forma_pagamento: e.target.value }))}
               className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none">
-              {['PIX','TED','DOC','Boleto','Dinheiro','Cartão','Cheque'].map(o=><option key={o}>{o}</option>)}
+              {['PIX','TED','DOC','Boleto','Dinheiro','Cartão','Cheque'].map(option => <option key={option}>{option}</option>)}
             </select></div>
-          <div><label className="mb-1 block text-xs font-medium text-slate-700">Data do pagamento</label>
-            <input type="date" value={form.data_pagamento} onChange={e => setForm(f=>({...f,data_pagamento:e.target.value}))}
+          <div><label className="mb-1 block text-xs font-medium text-slate-700">Data do recebimento</label>
+            <input type="date" value={form.data_recebimento} onChange={e => setForm(current => ({ ...current, data_recebimento: e.target.value }))}
               className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none" /></div>
+          <div><label className="mb-1 block text-xs font-medium text-slate-700">Observações</label>
+            <textarea value={form.observacoes} onChange={e => setForm(current => ({ ...current, observacoes: e.target.value }))}
+              rows={2} className="w-full resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none" /></div>
         </div>
+        {error ? <p className="mt-3 text-xs text-red-600">{error}</p> : null}
+        <p className="mt-3 text-[11px] text-slate-500">A baixa cria automaticamente a entrada no Movimento Bancário e no Cashflow realizado.</p>
         <div className="mt-5 flex gap-2">
-          <button onClick={onClose} className="flex-1 rounded-xl border border-slate-200 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancelar</button>
-          <button onClick={() => void save()} disabled={saving}
+          <button onClick={onClose} disabled={saving} className="flex-1 rounded-xl border border-slate-200 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50">Cancelar</button>
+          <button onClick={() => void save()} disabled={saving || loadingBanks || banks.length === 0}
             className="flex-1 rounded-xl bg-emerald-600 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
-            {saving ? '...' : 'Confirmar baixa'}
+            {saving ? 'Salvando...' : 'Confirmar baixa'}
           </button>
         </div>
       </div>

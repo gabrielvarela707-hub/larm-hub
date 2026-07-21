@@ -40,6 +40,13 @@ interface AppUser {
   allowed_hubs?: PortalId[]
 }
 
+type AiModelOption = {
+  id: string
+  label: string
+  provider: 'openai' | 'gemini'
+  description?: string
+}
+
 type EconomicIndexRecord = {
   id: number
   referencia: string
@@ -404,6 +411,8 @@ export default function ConfiguracoesPage() {
       aiProvider:         (config.aiProvider || 'openai') as 'openai' | 'gemini',
       openaiApiKey:       config.openaiApiKey || '',
       geminiApiKey:       config.geminiApiKey || '',
+      openaiModel:        config.openaiModel || 'gpt-4.1-mini',
+      geminiModel:        config.geminiModel || 'gemini-flash-latest',
       whatsappToken:      config.whatsappToken      || '',
       whatsappPhoneId:    config.whatsappPhoneId    || '',
       whatsappBusinessId: config.whatsappBusinessId || '',
@@ -433,6 +442,8 @@ export default function ConfiguracoesPage() {
     aiProvider:     (config.aiProvider  || 'openai') as 'openai' | 'gemini',
     openaiApiKey:   config.openaiApiKey || '',
     geminiApiKey:   config.geminiApiKey || '',
+    openaiModel:    config.openaiModel || 'gpt-4.1-mini',
+    geminiModel:    config.geminiModel || 'gemini-flash-latest',
     whatsappToken: config.whatsappToken || '',
     whatsappPhoneId: config.whatsappPhoneId || '',
     whatsappBusinessId: config.whatsappBusinessId || '',
@@ -440,6 +451,10 @@ export default function ConfiguracoesPage() {
     bankName: config.bankName || '',
     bankApiKey: config.bankApiKey || '',
   })
+
+  const [aiModels, setAiModels] = useState<AiModelOption[]>([])
+  const [aiModelsLoading, setAiModelsLoading] = useState(false)
+  const [aiModelsStatus, setAiModelsStatus] = useState<{ ok: boolean; message: string } | null>(null)
 
   // CRM integration fields
   const [crmFields, setCrmFields] = useState<Record<string, Record<string, string>>>({})
@@ -978,6 +993,54 @@ export default function ConfiguracoesPage() {
   const [invErrors,       setInvErrors]       = useState<Record<string,string>>({})
   const [invCopied,       setInvCopied]       = useState<string>('')
 
+  async function loadAiModels() {
+    const provider = creds.aiProvider
+    const apiKey = provider === 'gemini' ? creds.geminiApiKey.trim() : creds.openaiApiKey.trim()
+
+    if (!apiKey) {
+      setAiModels([])
+      setAiModelsStatus({
+        ok: false,
+        message: provider === 'gemini'
+          ? 'Informe a Gemini API Key antes de carregar os modelos.'
+          : 'Informe a OpenAI API Key antes de carregar os modelos.',
+      })
+      return
+    }
+
+    setAiModelsLoading(true)
+    setAiModelsStatus(null)
+    try {
+      const r = await apiClient.post<{
+        ok: boolean
+        data: { models: AiModelOption[]; recommendedModel: string }
+      }>('/tenant-config/ai-models', { provider, apiKey })
+
+      const models = r.data.data?.models || []
+      const recommended = r.data.data?.recommendedModel || ''
+      setAiModels(models)
+
+      const current = provider === 'gemini' ? creds.geminiModel : creds.openaiModel
+      if (recommended && !models.some(item => item.id === current)) {
+        setCreds(previous => provider === 'gemini'
+          ? { ...previous, geminiModel: recommended }
+          : { ...previous, openaiModel: recommended })
+      }
+
+      setAiModelsStatus({
+        ok: true,
+        message: `${models.length} modelo(s) disponível(is). O modelo recomendado foi selecionado quando necessário.`,
+      })
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } }).response?.data?.message
+        || 'Erro ao consultar os modelos disponíveis.'
+      setAiModels([])
+      setAiModelsStatus({ ok: false, message })
+    } finally {
+      setAiModelsLoading(false)
+    }
+  }
+
   // ── Teste SES ──────────────────────────────────────────────────────────────
   const [sesTestOpen,    setSesTestOpen]    = useState(false)
   const [sesTestEmail,   setSesTestEmail]   = useState('')
@@ -1110,6 +1173,10 @@ export default function ConfiguracoesPage() {
   useEffect(() => { if (tab === 'sobre') loadSystemAbout() }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'indices') loadEconomicIndices() }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'convites_perm') loadInvitePermissions() }, [tab])  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setAiModels([])
+    setAiModelsStatus(null)
+  }, [creds.aiProvider])
 
   function save() {
     const payload = { logoUrl: logoPreview, logoText, primaryColor, sidebarColor, ...creds }
@@ -2899,6 +2966,54 @@ export default function ConfiguracoesPage() {
                       placeholder="AIza..." />
                   </Field>
                 )}
+                <Field label="Modelo padrão" sub="Usado no relatório Strato e nas leituras de documentos pela IA">
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <select
+                        value={creds.aiProvider === 'gemini' ? creds.geminiModel : creds.openaiModel}
+                        onChange={e => {
+                          const value = e.target.value
+                          setCreds(c => c.aiProvider === 'gemini'
+                            ? { ...c, geminiModel: value }
+                            : { ...c, openaiModel: value })
+                        }}
+                        className="min-w-0 flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400">
+                        {(() => {
+                          const current = creds.aiProvider === 'gemini' ? creds.geminiModel : creds.openaiModel
+                          const options = aiModels.length
+                            ? aiModels
+                            : [{ id: current, label: current, provider: creds.aiProvider } as AiModelOption]
+                          return options.map(model => (
+                            <option key={model.id} value={model.id}>{model.label}</option>
+                          ))
+                        })()}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={loadAiModels}
+                        disabled={aiModelsLoading}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60">
+                        {aiModelsLoading
+                          ? <Loader2 className="w-4 h-4 animate-spin" />
+                          : <RefreshCw className="w-4 h-4" />}
+                        {aiModelsLoading ? 'Consultando...' : 'Carregar modelos'}
+                      </button>
+                    </div>
+                    {aiModelsStatus && (
+                      <div className={cn(
+                        'flex items-start gap-2 rounded-lg px-3 py-2 text-xs',
+                        aiModelsStatus.ok
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : 'bg-red-50 text-red-600'
+                      )}>
+                        {aiModelsStatus.ok
+                          ? <CheckCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                          : <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />}
+                        <span>{aiModelsStatus.message}</span>
+                      </div>
+                    )}
+                  </div>
+                </Field>
                 <div className="rounded-xl border border-blue-50 bg-blue-50/50 px-4 py-3 text-xs text-slate-500 leading-relaxed">
                   Usada pelo <strong>Chat IA</strong> do painel. Obtenha sua chave em{' '}
                   {creds.aiProvider === 'openai'

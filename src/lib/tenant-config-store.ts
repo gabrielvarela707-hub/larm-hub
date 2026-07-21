@@ -31,6 +31,8 @@ export interface TenantConfig {
   aiProvider: 'openai' | 'gemini'
   openaiApiKey: string
   geminiApiKey: string
+  openaiModel: string
+  geminiModel: string
   // WhatsApp
   whatsappToken: string
   whatsappPhoneId: string
@@ -73,6 +75,8 @@ const DEFAULT: TenantConfig = {
   aiProvider: 'openai',
   openaiApiKey: '',
   geminiApiKey: '',
+  openaiModel: 'gpt-4.1-mini',
+  geminiModel: 'gemini-flash-latest',
   whatsappToken: '',
   whatsappPhoneId: '',
   whatsappBusinessId: '',

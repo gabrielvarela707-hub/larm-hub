@@ -1,0 +1,16 @@
+e40fb8594476422a11f7c0ab83baf93099640de260f465cb6a26228372cceee5  ./ARQUIVOS-ALTERADOS-0.4.3.txt
+b8048adc9c287abb699c106b5c5902cf2cb8efcde0da19d23f575e965037598b  ./README-ATUALIZACAO-0.4.3.txt
+cbd4d8515beef4fc7212c8e933cb29b6121e72e4b88754d87d8dd757449786ad  ./package-lock.json
+51691672598ee8fb7f38020984d17ad567486e7916adf0781a93b2a55807edde  ./package.json
+40b2c590300bb245999a7570478e6c7233014395d543f2759d477bcfd136f21b  ./server/data/system_releases_seed.js
+99178e9f1ffd3bebdd7a9308e81fc63f6198c2ff0dd85ff5b31a1a9e7153a0a7  ./server/package-lock.json
+e9fb01e54ee5e6cf0043f0045aae72844a7024cac7cd7011e7cf368643f03f14  ./server/package.json
+aa616913f7b6c924c98fa24ffb40009ad4c57444a5e2f08af8199b49b000ee42  ./server/scripts/migrate_system_releases.js
+fdec9e66d73e5aec19aaf4070adb4b0d3296861f68d985c5c4cb6342941e6fa4  ./server/scripts/reparar_datas_movimentos_recebiveis.js
+40b2c590300bb245999a7570478e6c7233014395d543f2759d477bcfd136f21b  ./server/src/data/system_releases_seed.js
+e9792e6a3cbfa9104baf8fcef09fe0c1dd1ad82c5ef6e3c820bd6b1ff7705920  ./server/src/routes/financeiro.js
+6fb03f11b6f5d6dac58e9fd8d727af570a797e7e55e58e43ee8b9f7571c5f5ce  ./server/src/routes/recebiveis.js
+7f02f1d9388ea0e38cc1ca7c40af6393c8c925379d9208e71259ff8348e099b5  ./server/src/services/bradescoReturnProcessor.js
+c1ec4fa9eed08339201e04e40d28e988ab8bfca2672f59d0253641435cab44da  ./server/src/services/stratoReturnReportAnalyzer.js
+978c2b83f30ad9833d44726f219a7237c7376f58e7ad219dcf80496b488054a9  ./src/app/(dashboard)/financeiro/receber/page.tsx
+0be30ff3d01cde1c2c089e09912a674c9008756923f0ad382e3101b32d4f5bc0  ./src/app/(dashboard)/recebiveis/page.tsx

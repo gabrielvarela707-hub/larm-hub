@@ -1,0 +1,20 @@
+ARQUIVOS DA ATUALIZAÇÃO CUMULATIVA 0.4.3
+
+package.json
+package-lock.json
+server/package.json
+server/package-lock.json
+server/src/routes/financeiro.js
+server/src/routes/recebiveis.js
+server/src/services/bradescoReturnProcessor.js
+server/src/services/stratoReturnReportAnalyzer.js
+server/src/data/system_releases_seed.js
+server/data/system_releases_seed.js
+server/scripts/migrate_system_releases.js
+server/scripts/reparar_datas_movimentos_recebiveis.js
+README-ATUALIZACAO-0.4.3.txt
+ARQUIVOS-ALTERADOS-0.4.3.txt
+SHA256SUMS-0.4.3.txt
+
+Observação: recebiveis.js, bradescoReturnProcessor.js e stratoReturnReportAnalyzer.js
+mantêm cumulativamente as correções das versões 0.4.1 e 0.4.2.
