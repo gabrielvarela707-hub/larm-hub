@@ -1,0 +1,6 @@
+366175d10e1a8720752b34207ec3ec8a3eb0a8579c1b95b38d968eff73a8606f  ./ARQUIVOS-ALTERADOS-0.5.5.txt
+ce20572349d7399b01dab8345237e8f0bdb3679066d3cb5ecd70e0dbb8ea5a9e  ./README-ATUALIZACAO-0.5.5-FRONTEND.txt
+f2a7098118719e0a5100a4cde0daf43be97b1a25241f4e8db774676da6d6d64e  ./package-lock.json
+b4b584f521b7de9a00857609d8470522e2499c6bbdfbda2d622cd5e7b9421110  ./package.json
+0d4056fb45a9dca364a85a847104c0ed73a96948c31259ac9b5e9caea0e7ca9e  ./scripts/test_pagamento_fornecedor_cp_frontend.js
+10c0a713e384c44721966c2ca306f773edcf877e231fa8f521a961cb5cc9ecb0  ./src/app/(dashboard)/financeiro/pagar/page.tsx

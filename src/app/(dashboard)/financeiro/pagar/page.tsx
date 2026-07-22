@@ -7,6 +7,7 @@ import { apiClient } from '@/lib/auth-store'
 import { BANCOS_BR } from '@/lib/bancos-br'
 import { cn } from '@/lib/utils'
 import FornecedorFormModal, { type Fornecedor as FornecedorCompleto } from '@/components/financeiro/FornecedorFormModal'
+import BancoSearchSelect from '@/components/financeiro/BancoSearchSelect'
 
 interface FornecedorOption {
   id: number
@@ -329,56 +330,6 @@ const getFornecedorSubtitle = (l: Lancamento) => {
 }
 
 
-// ─── BancoSelect ─────────────────────────────────────────────────────────────
-function BancoSelect({ value, onChange, inp }: { value: string; onChange: (v: string) => void; inp: string }) {
-  const [open, setOpen] = useState(false)
-  const [busca, setBusca] = useState('')
-  const ref = useRef<HTMLDivElement>(null)
-  const filtered = BANCOS_BR.filter(b =>
-    b.codigo.includes(busca) || b.nome.toLowerCase().includes(busca.toLowerCase())
-  ).slice(0, 60)
-  const selected = BANCOS_BR.find(b => b.codigo === value)
-  useEffect(() => {
-    const fn = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    document.addEventListener('mousedown', fn)
-    return () => document.removeEventListener('mousedown', fn)
-  }, [])
-  return (
-    <div ref={ref} className="relative">
-      <button type="button" onClick={() => setOpen(o => !o)}
-        className={cn(inp, 'flex items-center justify-between gap-2 text-left')}>
-        <span className={selected ? 'text-slate-700' : 'text-slate-400'}>
-          {selected ? `${selected.codigo} — ${selected.nome}` : 'Selecione o banco…'}
-        </span>
-        <ChevronsUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-      </button>
-      {open && (
-        <div className="absolute z-[70] w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl">
-          <div className="p-2 border-b border-slate-100">
-            <input autoFocus value={busca} onChange={e => setBusca(e.target.value)}
-              placeholder="Buscar por código ou nome…"
-              className="w-full px-2 py-1.5 text-xs rounded border border-slate-200 bg-white outline-none" />
-          </div>
-          <div className="max-h-48 overflow-y-auto">
-            <button type="button" onClick={() => { onChange(''); setOpen(false); setBusca('') }}
-              className="w-full text-left px-3 py-2 text-xs text-slate-400 hover:bg-slate-50">— Nenhum —</button>
-            {filtered.map(b => (
-              <button key={b.codigo} type="button"
-                onClick={() => { onChange(b.codigo); setOpen(false); setBusca('') }}
-                className={cn('w-full text-left px-3 py-2 text-xs hover:bg-blue-50', value === b.codigo && 'bg-blue-50 font-medium')}>
-                <span className="font-mono text-blue-600 mr-2">{b.codigo}</span>{b.nome}
-              </button>
-            ))}
-            {filtered.length === 0 && <p className="px-3 py-4 text-xs text-slate-400 text-center">Nenhum banco encontrado</p>}
-          </div>
-        </div>
-      )}
-
-    </div>
-  )
-}
-
-
 // ─── PlanoContasSelect ───────────────────────────────────────────────────────
 function PlanoContasSelect({ value, onChange, contas, inp }: { value: string; onChange: (v: string) => void; contas: PlanoConta[]; inp: string }) {
   const [open, setOpen] = useState(false)
@@ -529,8 +480,6 @@ export default function PagarPage() {
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [deletingLoading, setDeletingLoading] = useState(false)
   const [cancelandoBaixa, setCancelandoBaixa] = useState<string | null>(null)
-  // banco brasileiro selecionado (código BACEN)
-  const [fBancoCodigo, setFBancoCodigo] = useState('')
   const [baixaParcela, setBaixaParcela] = useState<Lancamento | null>(null)
   const [baixaForm, setBaixaForm] = useState<BaixaForm>({
     valor_parcela: '',
@@ -912,20 +861,43 @@ export default function PagarPage() {
 
   function preencherPagamentoDoFornecedor(modalidade: ModalidadePagamento, fornecedorId = fForn) {
     const fornecedor = fornecedorSelecionado(fornecedorId)
-    if (!fornecedor) return
 
     if (modalidade === 'PIX') {
-      setFChavePixPagamento(fornecedor.chave_pix || '')
+      setFChavePixPagamento(fornecedor?.chave_pix || '')
     }
 
-    if (modalidade === 'TED' || modalidade === 'DOC') {
-      setFBancoPagamentoNome(fornecedor.banco_nome || '')
-      setFBancoPagamentoCodigo(fornecedor.codigo_banco || '')
-      setFAgenciaPagamento(fornecedor.agencia || '')
-      setFContaPagamento(fornecedor.conta || '')
-      setFDigitoPagamento(fornecedor.digito || '')
-      setFTipoContaPagamento(fornecedor.tipo_conta || '')
+    if (modalidade === 'TED' || modalidade === 'DOC' || modalidade === 'TRANSFERENCIA') {
+      setFBancoPagamentoNome(fornecedor?.banco_nome || '')
+      setFBancoPagamentoCodigo(fornecedor?.codigo_banco || '')
+      setFAgenciaPagamento(fornecedor?.agencia || '')
+      setFContaPagamento(fornecedor?.conta || '')
+      setFDigitoPagamento(fornecedor?.digito || '')
+      setFTipoContaPagamento(fornecedor?.tipo_conta || '')
     }
+  }
+
+  function atualizarFornecedorLocalPagamento() {
+    const fornecedorId = Number(fForn)
+    if (!Number.isInteger(fornecedorId) || fornecedorId <= 0) return
+
+    setFornecedores(prev => prev.map(fornecedor => {
+      if (fornecedor.id !== fornecedorId) return fornecedor
+      if (fModalidadePagamento === 'PIX') {
+        return { ...fornecedor, chave_pix: fChavePixPagamento.trim() || null }
+      }
+      if (fModalidadePagamento === 'TED' || fModalidadePagamento === 'DOC' || fModalidadePagamento === 'TRANSFERENCIA') {
+        return {
+          ...fornecedor,
+          banco_nome: fBancoPagamentoNome.trim() || null,
+          codigo_banco: fBancoPagamentoCodigo.trim() || null,
+          agencia: fAgenciaPagamento.trim() || null,
+          conta: fContaPagamento.trim() || null,
+          digito: fDigitoPagamento.trim() || null,
+          tipo_conta: fTipoContaPagamento.trim() || null,
+        }
+      }
+      return fornecedor
+    }))
   }
 
   function handleFornecedorChange(value: string) {
@@ -1042,7 +1014,7 @@ export default function PagarPage() {
     setFRateioAtivo(false); setRateios([])
     setShowFornecedorModal(false); setEditingFornecedorId(null); setEditingFornecedorData(undefined); setFornecedorErrors({})
     setShowBaixaModal(false); setBaixaParcela(null); setBaixaErrors({})
-    setFBancoCodigo(''); setEditingId(null)
+    setEditingId(null)
   }
 
   function validate() {
@@ -1055,7 +1027,7 @@ export default function PagarPage() {
 
     if (fModalidadePagamento === 'PIX' && !fChavePixPagamento.trim())
       e.modalidade_pagamento = 'Informe ou cadastre a chave PIX do fornecedor.'
-    if ((fModalidadePagamento === 'TED' || fModalidadePagamento === 'DOC')
+    if ((fModalidadePagamento === 'TED' || fModalidadePagamento === 'DOC' || fModalidadePagamento === 'TRANSFERENCIA')
       && (!fBancoPagamentoNome.trim() || !fAgenciaPagamento.trim() || !fContaPagamento.trim()))
       e.modalidade_pagamento = 'Informe banco, agência e conta do fornecedor.'
     if (fModalidadePagamento === 'BOLETO'
@@ -1448,6 +1420,7 @@ export default function PagarPage() {
       } else {
         await apiClient.post('/financeiro/lancamentos-cp', payload)
       }
+      atualizarFornecedorLocalPagamento()
       closeForm()
       load()
     } catch (err: unknown) {
@@ -1977,32 +1950,6 @@ export default function PagarPage() {
                   <F label="Plano de Contas" name="conta_contabil">
                     <PlanoContasSelect value={fConta} onChange={setFConta} contas={plano} inp={inp} />
                   </F>
-                  <F label={fRateioAtivo ? 'Contas para pagamento' : 'Banco para Pagamento'} name="banco_conta_id">
-                    {fRateioAtivo ? (
-                      <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] text-blue-700">
-                        As empresas e contas bancárias serão definidas no rateio abaixo.
-                      </div>
-                    ) : (
-                      <>
-                        <BancoSelect
-                          value={fBancoCodigo}
-                          onChange={v => {
-                            setFBancoCodigo(v)
-                            const match = bancos.find(b => b.banco_nome?.toLowerCase().includes(BANCOS_BR.find(x=>x.codigo===v)?.nome?.split(' ')[0]?.toLowerCase()||'__') || String(b.id) === v)
-                            setFBanco(match ? String(match.id) : '')
-                          }}
-                          inp={inp}
-                        />
-                        {bancos.filter(b => !fEmp || b.empresa === fEmp).length > 0 && (
-                          <select className={cn(inp,'mt-1 text-[10px] text-slate-500')} value={fBanco} onChange={e => setFBanco(e.target.value)}>
-                            <option value="">Conta cadastrada (opcional)</option>
-                            {bancos.filter(b => !fEmp || b.empresa === fEmp)
-                              .map(b => <option key={b.id} value={b.id}>{b.empresa} – {b.banco_nome} {b.agencia ? `ag.${b.agencia}` : ''} {b.conta || ''}</option>)}
-                          </select>
-                        )}
-                      </>
-                    )}
-                  </F>
                   <F label="Data de Emissão" name="dt_emissao">
                     <input className={inp} type="date" value={fEmissao} onChange={e => setFEmissao(e.target.value)} />
                   </F>
@@ -2121,36 +2068,38 @@ export default function PagarPage() {
                         placeholder="Chave PIX cadastrada no fornecedor"
                       />
                       <p className="mt-1 text-[10px] text-slate-400">
-                        Preenchida automaticamente a partir do cadastro do fornecedor. Pode ser ajustada neste lançamento.
+                        A chave é trazida do fornecedor. Ao salvar, o valor informado também atualiza o cadastro do fornecedor.
                       </p>
                     </F>
                   )}
                 </div>
 
-                {(fModalidadePagamento === 'TED' || fModalidadePagamento === 'DOC') && (
+                {(fModalidadePagamento === 'TED' || fModalidadePagamento === 'DOC' || fModalidadePagamento === 'TRANSFERENCIA') && (
                   <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
                     <div className="mb-2 flex items-center gap-2">
                       <Landmark className="h-3.5 w-3.5 text-slate-500" />
                       <p className="text-[11px] font-semibold text-slate-600">Dados bancários do fornecedor</p>
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                      <div className="lg:col-span-2">
+                      <div className="sm:col-span-2 lg:col-span-2">
                         <label className="mb-1 block text-[10px] text-slate-500">Banco</label>
-                        <input className={inp} value={fBancoPagamentoNome} onChange={e => setFBancoPagamentoNome(e.target.value)} placeholder="Banco" />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-[10px] text-slate-500">Código</label>
-                        <input className={inp} value={fBancoPagamentoCodigo} onChange={e => setFBancoPagamentoCodigo(e.target.value)} placeholder="000" />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-[10px] text-slate-500">Tipo de conta</label>
-                        <input className={inp} value={fTipoContaPagamento} onChange={e => setFTipoContaPagamento(e.target.value)} placeholder="Corrente" />
+                        <BancoSearchSelect
+                          value={fBancoPagamentoNome}
+                          codigo={fBancoPagamentoCodigo}
+                          onChange={banco => {
+                            setFBancoPagamentoNome(banco.nome)
+                            setFBancoPagamentoCodigo(banco.codigo)
+                          }}
+                          className={cn(inp, errors.modalidade_pagamento && 'border-red-300')}
+                          placeholder="Selecione o banco"
+                          clearLabel="Nenhum banco"
+                        />
                       </div>
                       <div>
                         <label className="mb-1 block text-[10px] text-slate-500">Agência</label>
                         <input className={cn(inp, errors.modalidade_pagamento && 'border-red-300')} value={fAgenciaPagamento} onChange={e => setFAgenciaPagamento(e.target.value)} />
                       </div>
-                      <div className="lg:col-span-2">
+                      <div>
                         <label className="mb-1 block text-[10px] text-slate-500">Conta</label>
                         <input className={cn(inp, errors.modalidade_pagamento && 'border-red-300')} value={fContaPagamento} onChange={e => setFContaPagamento(e.target.value)} />
                       </div>
@@ -2159,7 +2108,7 @@ export default function PagarPage() {
                         <input className={inp} value={fDigitoPagamento} onChange={e => setFDigitoPagamento(e.target.value)} />
                       </div>
                     </div>
-                    <p className="mt-2 text-[10px] text-slate-400">Os dados são trazidos do fornecedor e podem ser ajustados apenas para este lançamento.</p>
+                    <p className="mt-2 text-[10px] text-slate-400">Os dados são trazidos do fornecedor. Ao salvar, banco, agência, conta e dígito também atualizam o cadastro do fornecedor.</p>
                   </div>
                 )}
 

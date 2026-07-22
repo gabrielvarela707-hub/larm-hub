@@ -1,0 +1,18 @@
+LARMHUB FRONTEND 0.5.5 — ARQUIVOS ALTERADOS
+
+MODIFICADOS
+- package.json
+- package-lock.json
+- src/app/(dashboard)/financeiro/pagar/page.tsx
+
+NOVOS
+- scripts/test_pagamento_fornecedor_cp_frontend.js
+- README-ATUALIZACAO-0.5.5-FRONTEND.txt
+- SHA256SUMS-0.5.5-FRONTEND.txt
+
+NÃO ALTERADOS
+- Rateio e seus cálculos.
+- Listagem do Contas a Pagar.
+- Baixas e cancelamentos.
+- Movimento Bancário.
+- Componentes compartilhados do financeiro.
