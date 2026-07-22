@@ -7,7 +7,7 @@ import { useRouter } from 'next/navigation'
 import { apiClient } from '@/lib/auth-store'
 import { cn } from '@/lib/utils'
 
-type TipoLancamento = 'tarifa_bancaria' | 'rendimento_aplicacao'
+type TipoLancamento = 'tarifa_bancaria' | 'rendimento_aplicacao' | 'distribuicao_lucros' | 'reembolso_despesas'
 
 interface BancoConta {
   id: number
@@ -18,17 +18,28 @@ interface BancoConta {
   digito?: string | null
 }
 
+interface PlanoConta {
+  id: number
+  codigo: string
+  descricao: string
+  tipo: string
+}
+
 interface FormState {
   banco_conta_id: string
   tipo: TipoLancamento
   data: string
   valor: string
   descricao: string
+  contraparte: string
+  plano_conta_id: string
 }
 
 const DEFAULT_DESCRIPTIONS: Record<TipoLancamento, string> = {
   tarifa_bancaria: 'Tarifas bancárias',
   rendimento_aplicacao: 'Rendimento de aplicação',
+  distribuicao_lucros: 'Distribuição de lucros',
+  reembolso_despesas: 'Reembolso de despesas',
 }
 
 const CLASSIFICATIONS: Record<TipoLancamento, { conta: string; natureza: string; movimento: string }> = {
@@ -40,6 +51,16 @@ const CLASSIFICATIONS: Record<TipoLancamento, { conta: string; natureza: string;
   rendimento_aplicacao: {
     conta: 'REND. S/APLICACOES FINANCEIRAS',
     natureza: '5.1.3',
+    movimento: 'Entrada',
+  },
+  distribuicao_lucros: {
+    conta: 'DISTRIBUIÇÃO DE LUCROS',
+    natureza: '',
+    movimento: 'Entrada',
+  },
+  reembolso_despesas: {
+    conta: 'REEMBOLSO DE DESPESAS',
+    natureza: '',
     movimento: 'Entrada',
   },
 }
@@ -68,6 +89,7 @@ function accountLabel(conta: BancoConta) {
 export default function NovoMovimentoPage() {
   const router = useRouter()
   const [contas, setContas] = useState<BancoConta[]>([])
+  const [planoContas, setPlanoContas] = useState<PlanoConta[]>([])
   const [loadingContas, setLoadingContas] = useState(true)
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState('')
@@ -78,19 +100,36 @@ export default function NovoMovimentoPage() {
     data: todayISO(),
     valor: '',
     descricao: DEFAULT_DESCRIPTIONS.tarifa_bancaria,
+    contraparte: '',
+    plano_conta_id: '',
   })
 
   useEffect(() => {
     let active = true
 
-    apiClient.get('/financeiro/bancos/select')
-      .then(response => {
+    Promise.all([
+      apiClient.get('/financeiro/bancos/select'),
+      apiClient.get('/financeiro/plano-contas?ativo=1'),
+    ])
+      .then(([contasResponse, planoResponse]) => {
         if (!active) return
-        setContas(response.data?.data ?? [])
+        setContas(contasResponse.data?.data ?? [])
+        const analyticAccounts = (planoResponse.data?.data ?? []).filter((item: PlanoConta) => item.tipo === 'A')
+        setPlanoContas(analyticAccounts)
+        const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
+        const suggested = analyticAccounts.find((item: PlanoConta) =>
+          normalize(item.descricao).includes('DESPESAS BANCARIAS') ||
+          normalize(item.descricao).includes('COMISSOES BANCARIAS')
+        )
+        if (suggested) {
+          setForm(previous => previous.plano_conta_id
+            ? previous
+            : { ...previous, plano_conta_id: String(suggested.id) })
+        }
       })
       .catch(() => {
         if (!active) return
-        setErrors({ _geral: 'Não foi possível carregar as contas bancárias.' })
+        setErrors({ _geral: 'Não foi possível carregar as contas bancárias e contábeis.' })
       })
       .finally(() => {
         if (active) setLoadingContas(false)
@@ -104,7 +143,16 @@ export default function NovoMovimentoPage() {
     [contas, form.banco_conta_id]
   )
 
-  const classificacao = CLASSIFICATIONS[form.tipo]
+  const classificacaoPadrao = CLASSIFICATIONS[form.tipo]
+  const planoSelecionado = useMemo(
+    () => planoContas.find(conta => String(conta.id) === form.plano_conta_id) ?? null,
+    [planoContas, form.plano_conta_id]
+  )
+  const classificacao = {
+    ...classificacaoPadrao,
+    conta: planoSelecionado?.descricao || classificacaoPadrao.conta,
+    natureza: planoSelecionado?.codigo || classificacaoPadrao.natureza,
+  }
   const inputClass = 'w-full h-11 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-blue-400 disabled:bg-slate-50 disabled:text-slate-400'
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -112,13 +160,26 @@ export default function NovoMovimentoPage() {
     setErrors(previous => ({ ...previous, [key]: '', _geral: '' }))
   }
 
+  function findSuggestedPlan(tipo: TipoLancamento) {
+    const terms: Record<TipoLancamento, string[]> = {
+      tarifa_bancaria: ['DESPESAS BANCARIAS', 'COMISSOES BANCARIAS'],
+      rendimento_aplicacao: ['REND. S/APLICACOES', 'RENDIMENTO DE APLICACAO'],
+      distribuicao_lucros: ['DISTRIBUICAO DE LUCROS', 'LUCROS DISTRIBUIDOS'],
+      reembolso_despesas: ['REEMBOLSO DE DESPESAS', 'REEMBOLSOS'],
+    }
+    const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase()
+    return planoContas.find(item => terms[tipo].some(term => normalize(item.descricao).includes(term)))
+  }
+
   function changeTipo(tipo: TipoLancamento) {
+    const suggested = findSuggestedPlan(tipo)
     setForm(previous => ({
       ...previous,
       tipo,
       descricao: DEFAULT_DESCRIPTIONS[tipo],
+      plano_conta_id: suggested ? String(suggested.id) : '',
     }))
-    setErrors(previous => ({ ...previous, tipo: '', descricao: '', _geral: '' }))
+    setErrors(previous => ({ ...previous, tipo: '', descricao: '', plano_conta_id: '', _geral: '' }))
   }
 
   function validate() {
@@ -127,6 +188,7 @@ export default function NovoMovimentoPage() {
     if (!form.data) next.data = 'Informe a data.'
     if (parseMoney(form.valor) <= 0) next.valor = 'Informe um valor maior que zero.'
     if (!form.descricao.trim()) next.descricao = 'Informe o histórico do lançamento.'
+    if (!form.plano_conta_id) next.plano_conta_id = 'Selecione a conta contábil.'
     setErrors(next)
     return Object.keys(next).length === 0
   }
@@ -143,6 +205,8 @@ export default function NovoMovimentoPage() {
         data: form.data,
         valor: parseMoney(form.valor),
         descricao: form.descricao.trim(),
+        contraparte: form.contraparte.trim() || null,
+        plano_conta_id: Number(form.plano_conta_id),
       })
 
       setSuccess(response.data?.message || 'Lançamento salvo com sucesso.')
@@ -161,7 +225,7 @@ export default function NovoMovimentoPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-800">Novo lançamento bancário</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Cadastre tarifas bancárias e rendimentos de aplicação diretamente no Movimento Bancário.
+            Cadastre entradas e saídas diretamente no Movimento Bancário, com conta bancária e classificação contábil.
           </p>
         </div>
         <Link
@@ -212,6 +276,8 @@ export default function NovoMovimentoPage() {
             >
               <option value="tarifa_bancaria">Tarifa bancária</option>
               <option value="rendimento_aplicacao">Rendimento de aplicação</option>
+              <option value="distribuicao_lucros">Distribuição de lucros</option>
+              <option value="reembolso_despesas">Reembolso de despesas</option>
             </select>
           </label>
 
@@ -244,6 +310,36 @@ export default function NovoMovimentoPage() {
             <input value={classificacao.movimento} readOnly className={cn(inputClass, 'bg-slate-50')} />
           </label>
 
+
+          <label className="space-y-1.5 md:col-span-2">
+            <span className="block text-xs font-semibold text-slate-600">Conta contábil *</span>
+            <select
+              value={form.plano_conta_id}
+              onChange={event => update('plano_conta_id', event.target.value)}
+              className={cn(inputClass, errors.plano_conta_id && 'border-red-300')}
+            >
+              <option value="">Selecione a classificação</option>
+              {planoContas.map(conta => (
+                <option key={conta.id} value={conta.id}>{conta.codigo} — {conta.descricao}</option>
+              ))}
+            </select>
+            {errors.plano_conta_id && <p className="text-xs text-red-500">{errors.plano_conta_id}</p>}
+            {form.tipo === 'reembolso_despesas' && (
+              <p className="text-xs text-slate-400">O reembolso pode ser classificado em outra conta quando necessário.</p>
+            )}
+          </label>
+
+          <label className="space-y-1.5 md:col-span-2">
+            <span className="block text-xs font-semibold text-slate-600">Fornecedor / favorecido / origem</span>
+            <input
+              value={form.contraparte}
+              onChange={event => update('contraparte', event.target.value)}
+              maxLength={255}
+              placeholder="Ex.: Lucky Capital Empreendimentos Ltda"
+              className={inputClass}
+            />
+          </label>
+
           <label className="space-y-1.5 md:col-span-2">
             <span className="block text-xs font-semibold text-slate-600">Histórico *</span>
             <input
@@ -257,7 +353,7 @@ export default function NovoMovimentoPage() {
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-xs font-semibold text-slate-600 mb-3">Classificação automática</p>
+          <p className="text-xs font-semibold text-slate-600 mb-3">Classificação do lançamento</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
             <div>
               <p className="text-[11px] uppercase tracking-wide text-slate-400">Empresa</p>
