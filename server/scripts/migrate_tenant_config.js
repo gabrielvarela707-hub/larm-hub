@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS hub_tenant_configs (
   ai_provider            VARCHAR(20)  DEFAULT 'openai',
   openai_api_key         TEXT,
   gemini_api_key         TEXT,
+  openai_model           VARCHAR(120) DEFAULT 'gpt-4.1-mini',
+  gemini_model           VARCHAR(120) DEFAULT 'gemini-flash-latest',
   clicksign_key          TEXT,
   bank_name              VARCHAR(80),
   bank_api_key           TEXT,
@@ -59,11 +61,23 @@ ALTER TABLE hub_tenant_configs
   ADD COLUMN IF NOT EXISTS ai_provider           VARCHAR(20) DEFAULT 'openai',
   ADD COLUMN IF NOT EXISTS openai_api_key        TEXT,
   ADD COLUMN IF NOT EXISTS gemini_api_key        TEXT,
+  ADD COLUMN IF NOT EXISTS openai_model          VARCHAR(120) DEFAULT 'gpt-4.1-mini',
+  ADD COLUMN IF NOT EXISTS gemini_model          VARCHAR(120) DEFAULT 'gemini-flash-latest',
   ADD COLUMN IF NOT EXISTS google_maps_key       TEXT,
   ADD COLUMN IF NOT EXISTS clicksign_key         TEXT,
   ADD COLUMN IF NOT EXISTS bank_name             VARCHAR(80),
   ADD COLUMN IF NOT EXISTS bank_api_key          TEXT,
   ADD COLUMN IF NOT EXISTS crm_config            JSONB        DEFAULT '{}';
+
+UPDATE hub_tenant_configs
+   SET openai_model = 'gpt-4.1-mini'
+ WHERE openai_model IS NULL OR BTRIM(openai_model) = '';
+
+UPDATE hub_tenant_configs
+   SET gemini_model = 'gemini-flash-latest'
+ WHERE gemini_model IS NULL
+    OR BTRIM(gemini_model) = ''
+    OR REPLACE(gemini_model, 'models/', '') = 'gemini-1.5-flash';
 
 CREATE INDEX IF NOT EXISTS idx_tenant_cfg_tenant ON hub_tenant_configs(tenant_id);
 `

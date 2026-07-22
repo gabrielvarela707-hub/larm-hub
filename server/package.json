@@ -1,6 +1,6 @@
 {
   "name": "larmhub-api",
-  "version": "0.3.98",
+  "version": "0.5.1",
   "description": "API backend LarmHub / Santa Clara HUB",
   "main": "src/server.js",
   "scripts": {
@@ -58,7 +58,10 @@
     "db:migrate:retorno-bradesco-strato": "node scripts/migrate_retorno_bradesco_strato.js",
     "db:preview:retornos-bradesco:ate-2026-07-01": "node scripts/seed_processar_retornos_bradesco_ate_2026_07_01.js",
     "db:preview:movimento:2026-06-26-30": "node scripts/seed_movimento_bancario_2026_06_29_30.js",
-    "db:seed:movimento:2026-06-26-30": "node scripts/seed_movimento_bancario_2026_06_29_30.js --execute"
+    "db:seed:movimento:2026-06-26-30": "node scripts/seed_movimento_bancario_2026_06_29_30.js --execute",
+    "db:preview:movimento-recebiveis-data": "node scripts/reparar_datas_movimentos_recebiveis.js",
+    "db:repair:movimento-recebiveis-data": "node scripts/reparar_datas_movimentos_recebiveis.js",
+    "db:migrate:tenant-config": "node scripts/migrate_tenant_config.js"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.750.0",
@@ -73,6 +76,7 @@
     "joi": "^17.13.1",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
+    "pdf-parse": "^1.1.1",
     "pg": "^8.12.0",
     "uuid": "^10.0.0",
     "winston": "^3.13.0"

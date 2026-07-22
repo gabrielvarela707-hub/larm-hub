@@ -1,0 +1,11 @@
+LarmHub Frontend 0.5.4 — Rateio CP, Etapa 3
+
+Arquivos alterados:
+- package.json
+- package-lock.json
+- src/app/(dashboard)/financeiro/pagar/page.tsx
+
+Arquivo de conferência adicionado:
+- scripts/test_rateio_cp_frontend.js
+
+Não contém backend, migration, alteração de banco ou mudanças em bibliotecas compartilhadas.

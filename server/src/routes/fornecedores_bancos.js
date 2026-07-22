@@ -9,6 +9,12 @@ const { authenticate } = require("../middleware/authenticate");
 const logger = require("../config/logger");
 const { PLANO_CONTAS_SEED } = require("../data/plano_contas_seed");
 const { syncFornecedorPessoa } = require("../services/cadastroPessoaService");
+const {
+  DEFAULT_AI_MODELS,
+  listAiModels,
+  normalizeModelId,
+  isUnavailableModelError,
+} = require("../services/aiModelService");
 
 const router = express.Router();
 router.use(authenticate);
@@ -424,6 +430,7 @@ async function analyzeWithOpenAI({
   documento_nome,
   documento_mime,
   documento_base64,
+  model,
 }) {
   const dataUrl = `data:${documento_mime};base64,${documento_base64}`;
   const filePart =
@@ -442,7 +449,7 @@ async function analyzeWithOpenAI({
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_VISION_MODEL || "gpt-4.1-mini",
+      model: normalizeModelId(model) || process.env.OPENAI_VISION_MODEL || DEFAULT_AI_MODELS.openai,
       input: [
         {
           role: "user",
@@ -463,10 +470,10 @@ async function analyzeWithOpenAI({
   return parseAiJson(extractTextFromOpenAIResponse(json));
 }
 
-async function analyzeWithGemini({ apiKey, documento_mime, documento_base64 }) {
-  const model = process.env.GEMINI_VISION_MODEL || "gemini-1.5-flash";
+async function requestGeminiDocument({ apiKey, model, documento_mime, documento_base64 }) {
+  const selectedModel = normalizeModelId(model) || DEFAULT_AI_MODELS.gemini;
   const resp = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${encodeURIComponent(apiKey)}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -492,13 +499,38 @@ async function analyzeWithGemini({ apiKey, documento_mime, documento_base64 }) {
       }),
     },
   );
-
   const json = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    const msg = json?.error?.message || "Erro ao consultar Gemini";
-    throw new Error(msg);
+  return { resp, json, selectedModel };
+}
+
+async function analyzeWithGemini({ apiKey, model, documento_mime, documento_base64 }) {
+  const configuredModel = normalizeModelId(model)
+    || normalizeModelId(process.env.GEMINI_VISION_MODEL)
+    || DEFAULT_AI_MODELS.gemini;
+
+  let result = await requestGeminiDocument({
+    apiKey,
+    model: configuredModel,
+    documento_mime,
+    documento_base64,
+  });
+
+  if (!result.resp.ok && isUnavailableModelError(result.resp.status, result.json)) {
+    const available = await listAiModels({ provider: "gemini", apiKey, configuredModel });
+    if (available.recommendedModel && available.recommendedModel !== result.selectedModel) {
+      result = await requestGeminiDocument({
+        apiKey,
+        model: available.recommendedModel,
+        documento_mime,
+        documento_base64,
+      });
+    }
   }
-  return parseAiJson(extractTextFromGeminiResponse(json));
+
+  if (!result.resp.ok) {
+    throw new Error(result.json?.error?.message || "Erro ao consultar Gemini");
+  }
+  return parseAiJson(extractTextFromGeminiResponse(result.json));
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2038,7 +2070,7 @@ router.post("/lancamentos-cp/analisar-documento", async (req, res) => {
 
   try {
     const { rows } = await query(
-      `SELECT ai_provider, openai_api_key, gemini_api_key
+      `SELECT ai_provider, openai_api_key, gemini_api_key, openai_model, gemini_model
        FROM hub_tenant_configs
        WHERE tenant_id = $1
        LIMIT 1`,
@@ -2051,6 +2083,7 @@ router.post("/lancamentos-cp/analisar-documento", async (req, res) => {
       : "openai";
     const apiKey =
       provider === "gemini" ? cfg.gemini_api_key : cfg.openai_api_key;
+    const model = provider === "gemini" ? cfg.gemini_model : cfg.openai_model;
 
     if (!apiKey) {
       return res.status(422).json({
@@ -2064,9 +2097,10 @@ router.post("/lancamentos-cp/analisar-documento", async (req, res) => {
 
     const raw =
       provider === "gemini"
-        ? await analyzeWithGemini({ apiKey, documento_mime, documento_base64 })
+        ? await analyzeWithGemini({ apiKey, model, documento_mime, documento_base64 })
         : await analyzeWithOpenAI({
             apiKey,
+            model,
             documento_nome,
             documento_mime,
             documento_base64,

@@ -2,6 +2,8 @@ const express    = require('express')
 const { query }  = require('../config/database')
 
 const router = express.Router()
+const { version: packageVersion } = require('../../package.json')
+const BUILD_ID = 'strato-pdf-local-0.4.9'
 
 // GET /health  — checagem básica (sem auth)
 router.get('/', async (req, res) => {
@@ -20,7 +22,8 @@ router.get('/', async (req, res) => {
   return res.status(status).json({
     ok:      dbOk,
     service: 'larmhub-api',
-    version: process.env.npm_package_version || '1.0.0',
+    version: packageVersion,
+    build:   BUILD_ID,
     env:     process.env.NODE_ENV,
     uptime:  Math.floor(process.uptime()),
     db: {

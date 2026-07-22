@@ -1,0 +1,6 @@
+a734cdd58cca7cb0baa8f490e14f27007a8ebea1f1d107b8279d4610ca03fe0d  ./ARQUIVOS-ALTERADOS-0.5.4.txt
+487ab428d17c14140667ba8ea5ea4db8c00da50849ebe336d676b582bbe0e492  ./README-ATUALIZACAO-0.5.4.txt
+d1caf817a52df3a8fff21d667fae461c7f3b901e26881fcfe2a0f70402685db3  ./package-lock.json
+1fa295f0a8966a8a1344676036d0ac70f5a40fe4e9d1971ccde412218e87202f  ./package.json
+4c1a9d3e8f69a6146b7d3bfdb13577fa34723cebcb51fe960f83db69b6a870d8  ./scripts/test_rateio_cp_frontend.js
+60642d9d131f8c17fd7debed3b2f036d5bf6757b66deddf349970e292e82807b  ./src/app/(dashboard)/financeiro/pagar/page.tsx

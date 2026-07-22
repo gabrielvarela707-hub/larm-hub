@@ -3,6 +3,7 @@ module.exports = {
   apps: [
     {
       name:           'larmhub-api',
+      cwd:            __dirname,
       script:         'src/server.js',
       instances:      2,
       exec_mode:      'cluster',

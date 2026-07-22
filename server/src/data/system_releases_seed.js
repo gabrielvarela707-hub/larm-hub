@@ -6,6 +6,362 @@
 
 const SYSTEM_RELEASES = [
   {
+    "version": "0.5.1",
+    "title": "Movimento Bancário — distribuição de lucros e reembolso de despesas",
+    "description": "Amplia o lançamento manual do Movimento Bancário com novos tipos de recebimento, escolha da conta contábil e identificação opcional da contraparte.",
+    "frontend_version": "0.5.1",
+    "backend_version": "0.5.1",
+    "released_at": "2026-07-22T12:00:00.000Z",
+    "changes": [
+      "Inclui os tipos Distribuição de lucros e Reembolso de despesas como entradas no lançamento manual do Movimento Bancário.",
+      "Permite selecionar uma conta contábil analítica do plano de contas para cada lançamento, mantendo a classificação editável quando o reembolso exigir outra natureza.",
+      "Adiciona o campo opcional Fornecedor / favorecido / origem para identificar a contraparte exibida no extrato e no Cashflow realizado.",
+      "Mantém Tarifa bancária e Rendimento de aplicação disponíveis no mesmo fluxo, sem alterar lançamentos existentes."
+    ]
+  },
+  {
+    "version": "0.5.0",
+    "title": "Contas a Receber — retorno detalhado e data de recebimento controlada",
+    "description": "Melhora o retorno Bradesco já processado, passa a considerar a data de envio do arquivo como data de recebimento e permite pesquisar e corrigir essa data com sincronização segura do Movimento Bancário.",
+    "frontend_version": "0.5.0",
+    "backend_version": "0.5.0",
+    "released_at": "2026-07-21T17:00:00.000Z",
+    "changes": [
+      "Quando um arquivo RET já processado é reenviado, o sistema apresenta o processamento original com operador, data, parcelas, clientes, valores, status e movimentos, sem duplicar baixas.",
+      "A data de recebimento de novas liquidações por retorno passa a ser a data em que o arquivo foi enviado ao LarmHub, no fuso America/Sao_Paulo.",
+      "As datas bancárias de ocorrência e crédito permanecem preservadas nos dados do retorno para auditoria.",
+      "A data de recebimento pode ser editada diretamente na tabela de Contas a Receber; quando existe movimento vinculado, a mesma data é aplicada ao Movimento Bancário e ao Cashflow realizado.",
+      "Quando um movimento consolidado está vinculado a mais de uma parcela, todas as parcelas vinculadas são sincronizadas para impedir divergência de datas.",
+      "Adicionados os filtros Recebimento de e Recebimento até; ao usar esses filtros, o vencimento padrão do mês atual não interfere na pesquisa.",
+      "Nenhuma tabela ou coluna nova foi criada; a atualização utiliza os campos de parcelas, movimentos e retornos já existentes."
+    ],
+    "architecture": {
+      "frontend": ["Contas a Receber", "Detalhe de retorno já processado", "Edição inline da data de recebimento", "Filtros por recebimento"],
+      "backend": ["Rota de retorno Bradesco", "PATCH da data de recebimento", "Reconstrução do resultado persistido"],
+      "database": ["com_parcelas.pago_em", "fin_movimento.data/dia/mes/ano", "fin_retornos_cobranca", "fin_retornos_cobranca_itens", "Sem migration estrutural"],
+      "integrations": ["Bradesco CNAB 400", "Relatório Strato preservado"]
+    }
+  },
+  {
+    "version": "0.4.9",
+    "title": "Retorno Strato — leitura local confiável do PDF",
+    "description": "O relatório Crítica Cobrança passa a ser lido diretamente do PDF textual antes de qualquer chamada de IA, eliminando a dependência de modelos Gemini para os relatórios normais do Strato.",
+    "frontend_version": "0.4.8",
+    "backend_version": "0.4.9",
+    "released_at": "2026-07-21T15:30:00.000Z",
+    "changes": [
+      "PDFs textuais do relatório Strato são interpretados localmente e de forma determinística, sem chamar Gemini ou OpenAI.",
+      "A leitura local extrai arquivo RET, obra, unidade, parcela, boleto, vencimento, valor, cliente, pagamento e ocorrência.",
+      "A IA permanece apenas como fallback para PDF escaneado ou imagem sem texto pesquisável.",
+      "O fallback Gemini reutiliza primeiro o modelo configurado no ambiente que já atende a leitura de documentos do Contas a Pagar e nunca utiliza modelos Gemini 1.5.",
+      "Nenhuma regra de baixa, conciliação, Movimento Bancário, Cashflow ou Contas a Pagar foi alterada."
+    ],
+    "architecture": {
+      "frontend": ["Sem alteração de frontend"],
+      "backend": ["stratoReturnReportAnalyzer.js", "pdf-parse 1.1.1", "fallback de IA preservado"],
+      "database": ["Sem migration estrutural"],
+      "integrations": ["Leitura local de PDF", "OpenAI/Gemini somente como fallback"]
+    }
+  },
+  {
+    "version": "0.4.8",
+    "title": "IA Strato — rota ativa e modelo Gemini estável",
+    "description": "Move a listagem de modelos para o mesmo router do retorno Bradesco e fixa o modelo estável gemini-2.5-flash como padrão, sem alterar regras financeiras.",
+    "frontend_version": "0.4.8",
+    "backend_version": "0.4.8",
+    "released_at": "2026-07-21T02:30:00.000Z",
+    "changes": [
+      "Configurações passa a consultar os modelos pela rota /financeiro/contas-receber/ia-modelos, registrada no mesmo router já utilizado pelo retorno Bradesco.",
+      "O modelo padrão do Gemini passa a ser o identificador estável gemini-2.5-flash.",
+      "O retorno Strato valida a disponibilidade do modelo antes de enviar o relatório e grava automaticamente a seleção compatível no tenant.",
+      "A mensagem de erro passa a informar o modelo realmente utilizado, sem expor a chave da API.",
+      "Nenhuma regra de parcela, baixa, Movimento Bancário ou Cashflow foi alterada."
+    ],
+    "architecture": {
+      "frontend": ["Configurações > Inteligência Artificial", "Rota de modelos do Contas a Receber"],
+      "backend": ["Node.js / Express", "recebiveis.js", "stratoReturnReportAnalyzer.js"],
+      "database": ["Sem migration estrutural"],
+      "integrations": ["Google Gemini models.list", "Google Gemini generateContent"]
+    }
+  },
+  {
+    "version": "0.4.7",
+    "title": "IA — validação obrigatória do modelo no retorno Strato",
+    "description": "Impede o uso de modelos Gemini descontinuados, valida o modelo diretamente na API antes de analisar o relatório Strato e salva automaticamente o modelo compatível no tenant.",
+    "frontend_version": "0.4.6",
+    "backend_version": "0.4.7",
+    "released_at": "2026-07-21T01:30:00.000Z",
+    "changes": [
+      "O relatório Strato consulta models.list antes de chamar generateContent e utiliza somente um modelo realmente disponível para a chave configurada.",
+      "Modelos Gemini 1.0 e 1.5 são tratados como descontinuados e nunca são reutilizados como fallback.",
+      "A variável antiga GEMINI_VISION_MODEL deixa de sobrescrever a escolha salva no painel para o relatório Strato.",
+      "Quando o tenant possui um modelo antigo, o backend escolhe um compatível e atualiza hub_tenant_configs.gemini_model automaticamente.",
+      "A rota de configurações impede que um modelo Gemini descontinuado seja salvo novamente.",
+      "Nenhuma regra financeira, parcela, baixa, movimento bancário ou Cashflow foi alterada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Sem alteração de frontend",
+        "Frontend permanece em 0.4.6"
+      ],
+      "backend": [
+        "Node.js / Express",
+        "aiModelService.resolveAiModel",
+        "Relatório Strato com validação prévia do modelo",
+        "Fallback com atualização automática do tenant"
+      ],
+      "database": [
+        "Sem migration estrutural",
+        "Atualização automática de hub_tenant_configs.gemini_model somente quando necessário"
+      ],
+      "integrations": [
+        "Google Gemini models.list",
+        "Google Gemini generateContent"
+      ]
+    }
+  },
+  {
+    "version": "0.4.6",
+    "title": "IA — modelos configuráveis e fallback automático",
+    "description": "Adiciona listagem dos modelos disponíveis por chave, seleção do modelo padrão por provedor e troca automática quando um modelo do Gemini for removido ou não suportar generateContent.",
+    "frontend_version": "0.4.6",
+    "backend_version": "0.4.6",
+    "released_at": "2026-07-20T22:30:00.000Z",
+    "changes": [
+      "Configurações passa a listar os modelos realmente disponíveis para a chave OpenAI ou Gemini informada.",
+      "O administrador pode definir e salvar um modelo padrão separado para OpenAI e Google Gemini.",
+      "O modelo padrão do Gemini passa a ser gemini-flash-latest, removendo a dependência direta do descontinuado gemini-1.5-flash.",
+      "A leitura do relatório Strato utiliza o modelo salvo no tenant e, se ele estiver indisponível, consulta a lista da conta e tenta novamente com um modelo compatível.",
+      "A leitura de documentos de Contas a Pagar passa a usar a mesma seleção e o mesmo fallback seguro.",
+      "A migration de configurações adiciona openai_model e gemini_model e corrige configurações antigas que ainda apontavam para gemini-1.5-flash.",
+      "Nenhuma regra financeira, baixa, parcela ou movimento bancário foi alterado nesta versão."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js / React",
+        "Configurações > Credenciais",
+        "Seleção dinâmica de modelos por provedor"
+      ],
+      "backend": [
+        "Node.js / Express",
+        "POST /tenant-config/ai-models",
+        "aiModelService",
+        "Fallback de modelo no relatório Strato e leitura de documentos"
+      ],
+      "database": [
+        "hub_tenant_configs.openai_model",
+        "hub_tenant_configs.gemini_model",
+        "Migration idempotente"
+      ],
+      "integrations": [
+        "OpenAI Models API",
+        "Google Gemini models.list",
+        "Google Gemini generateContent"
+      ]
+    }
+  },
+  {
+    "version": "0.4.5",
+    "title": "Movimento Bancário — ativação verificável dos recebimentos do Contas a Receber",
+    "description": "Garante a exibição dos recebimentos Bradesco no Movimento Bancário e adiciona identificação de build para confirmar que o PM2 está executando o backend atualizado.",
+    "frontend_version": "0.4.3",
+    "backend_version": "0.4.5",
+    "released_at": "2026-07-20T21:15:00.000Z",
+    "changes": [
+      "Mantida a liberação de movimentos vinculados por com_parcelas.movimento_id.",
+      "Adicionado fallback seguro para entradas cujo histórico começa com Liquidação via retorno Bradesco, cobrindo recebimentos já criados mesmo se o vínculo legado estiver incompleto.",
+      "A resposta de GET /financeiro/movimento passa a informar backend_build 0.4.5 e o cabeçalho X-LarmHub-Movimento-Fix.",
+      "O endpoint /health passa a ler a versão real do package.json e retorna o build movimento-recebiveis-0.4.5.",
+      "O PM2 passa a usar cwd: __dirname, evitando executar uma cópia antiga do backend em outro diretório.",
+      "Nenhuma migration ou alteração de dados financeiros foi criada."
+    ],
+    "architecture": {
+      "frontend": [
+        "Sem alteração de frontend",
+        "Frontend permanece em 0.4.3"
+      ],
+      "backend": [
+        "Node.js / Express",
+        "GET /financeiro/movimento",
+        "GET /health",
+        "PM2 com diretório de execução explícito"
+      ],
+      "database": [
+        "Sem migration de estrutura",
+        "fin_movimento",
+        "com_parcelas.movimento_id"
+      ],
+      "regras": [
+        "Recebimento criado pelo retorno deve aparecer no Movimento Bancário e no Cashflow realizado",
+        "Nenhum movimento é criado ou duplicado",
+        "A atualização precisa ser confirmada pelo build 0.4.5"
+      ]
+    }
+  },
+  {
+    "version": "0.4.4",
+    "title": "Movimento Bancário — liberação definitiva dos recebimentos do Contas a Receber",
+    "description": "Corrige de forma direta o filtro do Movimento Bancário para considerar todo lançamento vinculado a com_parcelas.movimento_id, sem depender de detecção dinâmica da tabela.",
+    "frontend_version": "0.4.3",
+    "backend_version": "0.4.4",
+    "released_at": "2026-07-20T17:10:00.000Z",
+    "changes": [
+      "O filtro de realizado passa a incluir obrigatoriamente os movimentos vinculados a com_parcelas.movimento_id.",
+      "Os 24 movimentos de recebimentos de julho existentes no banco deixam de ser ocultados no Movimento Bancário e no Cashflow realizado.",
+      "A data financeira permanece sendo fin_movimento.data, que já coincide com com_parcelas.pago_em nos registros conferidos.",
+      "O script de reparo de datas não foi alterado porque a prévia confirmou zero divergências de data.",
+      "A atualização é somente de backend e não cria migration nem altera registros financeiros."
+    ],
+    "architecture": {
+      "frontend": [
+        "Sem alteração de frontend",
+        "Frontend permanece em 0.4.3"
+      ],
+      "backend": [
+        "Node.js / Express",
+        "GET /financeiro/movimento",
+        "Filtro de realizado sem dependência dinâmica para com_parcelas"
+      ],
+      "database": [
+        "Sem migration de estrutura",
+        "fin_movimento",
+        "com_parcelas.movimento_id"
+      ],
+      "regras": [
+        "Movimento vinculado a parcela recebida deve aparecer no Movimento Bancário",
+        "Cashflow realizado continua sendo calculado a partir de fin_movimento",
+        "Nenhum movimento é criado ou duplicado por esta atualização"
+      ]
+    }
+  },
+  {
+    "version": "0.4.3",
+    "title": "Movimento Bancário — recebimentos de julho e data efetiva da baixa",
+    "description": "Corrige a visibilidade dos recebimentos vinculados ao Contas a Receber e passa a usar a data efetiva do movimento como fonte principal para filtros, competência e Cashflow realizado.",
+    "frontend_version": "0.4.3",
+    "backend_version": "0.4.3",
+    "released_at": "2026-07-20T17:30:00.000Z",
+    "changes": [
+      "A data gravada em fin_movimento continua sendo a data da ocorrência/baixa informada pelo retorno Bradesco, e não a data de crédito bancário.",
+      "Filtros de ano e mês do Movimento Bancário passam a priorizar fin_movimento.data; as colunas auxiliares ano e mes são usadas somente quando a data estiver vazia.",
+      "O filtro de realizado reconhece movimentos ligados a com_parcelas.movimento_id após 30/06/2026, liberando os recebimentos de julho sem liberar projeções futuras.",
+      "Movimentos vinculados ao Contas a Receber são identificados na listagem como Contas a Receber.",
+      "O mesmo critério de data é aplicado ao Cashflow realizado, resumos e exportação do Movimento Bancário.",
+      "Incluído reparo opcional e seguro para alinhar movimentos antigos à data pago_em da parcela; o script roda em prévia e não cria movimentos.",
+      "Não foi criada migration de estrutura no PostgreSQL."
+    ],
+    "architecture": {
+      "frontend": [
+        "Sem alteração funcional de tela",
+        "Versão de distribuição 0.4.3"
+      ],
+      "backend": [
+        "Node.js / Express",
+        "GET /financeiro/movimento",
+        "Cashflow realizado",
+        "Reparo protegido por prévia e confirmação"
+      ],
+      "database": [
+        "Sem migration de estrutura",
+        "fin_movimento.data como data financeira principal",
+        "com_parcelas.movimento_id como vínculo de recebimento",
+        "com_parcelas.pago_em como referência do reparo opcional"
+      ],
+      "regras": [
+        "Baixa pelo retorno usa a data da ocorrência",
+        "Data de crédito permanece apenas na auditoria da conciliação",
+        "Recebimento vinculado deve aparecer no Movimento Bancário e no Cashflow realizado",
+        "Reparo não duplica nem cria lançamentos"
+      ]
+    }
+  },
+  {
+    "version": "0.4.2",
+    "title": "Contas a Receber — baixas refletidas no Movimento Bancário e Cashflow realizado",
+    "description": "Garante que recebimentos vinculados às parcelas operacionais apareçam no Movimento Bancário e componham o Cashflow realizado, além de bloquear a antiga baixa direta que não criava movimento financeiro.",
+    "frontend_version": "0.4.2",
+    "backend_version": "0.4.2",
+    "released_at": "2026-07-20T14:30:00.000Z",
+    "changes": [
+      "O filtro de realizado passou a reconhecer movimentos vinculados à tabela operacional com_parcelas, usada pelo Contas a Receber atual.",
+      "Baixas manuais e liquidações do retorno Bradesco posteriores ao corte de 30/06/2026 deixam de ficar ocultas no Movimento Bancário e no Cashflow realizado.",
+      "A tela legada de Recebíveis agora exige a conta bancária e utiliza o mesmo fluxo financeiro seguro da tela Contas a Receber.",
+      "A rota antiga deixou de atualizar a parcela diretamente e agora reutiliza o mesmo fluxo transacional que cria o Movimento Bancário.",
+      "A baixa continua sendo transacional: primeiro cria a entrada em fin_movimento e depois vincula o movimento à parcela.",
+      "Não foi criada migration de estrutura e nenhum movimento financeiro existente é duplicado."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "Recebíveis — seleção obrigatória da conta bancária",
+        "Frontend 0.4.2"
+      ],
+      "backend": [
+        "Node.js / Express",
+        "Movimento Bancário como fonte única do realizado",
+        "API 0.4.2"
+      ],
+      "database": [
+        "Sem migration de estrutura",
+        "com_parcelas.movimento_id — vínculo operacional",
+        "fin_movimento — origem do Cashflow realizado",
+        "hub_system_releases — atualização do changelog"
+      ],
+      "regras": [
+        "Parcela paga deve possuir Movimento Bancário vinculado",
+        "Cashflow realizado não recebe lançamento direto",
+        "Movimentos vinculados a com_parcelas são considerados após 30/06/2026",
+        "A conta bancária não é inferida automaticamente quando a empresa não está identificada"
+      ]
+    }
+  },
+  {
+    "version": "0.4.1",
+    "title": "Contas a Receber — conferência do retorno com relatório Strato e IA segura",
+    "description": "Permite anexar o relatório CRÍTICA COBRANÇA do Strato junto ao retorno Bradesco. A IA extrai os dados do relatório e o backend realiza a conciliação por regras determinísticas, sem baixar títulos ambíguos.",
+    "frontend_version": "0.4.1",
+    "backend_version": "0.4.1",
+    "released_at": "2026-07-20T12:00:00.000Z",
+    "changes": [
+      "Incluído campo opcional para anexar um ou mais relatórios Strato em PDF ou imagem antes de importar o retorno Bradesco.",
+      "A integração de IA já configurada no tenant transforma o relatório CRÍTICA COBRANÇA em dados estruturados, incluindo arquivo de retorno, boleto, obra, unidade, parcela, cliente, vencimento e valor.",
+      "A IA não executa baixas: o backend exige correspondência única, identidade do cliente e pelo menos duas evidências financeiras antes de conciliar automaticamente.",
+      "Quando a confiança não é suficiente, o sistema mostra os dados encontrados no relatório e mantém o título bloqueado para conferência manual.",
+      "Após uma conciliação segura, nosso número, dígito e controle participante são gravados na parcela para que retornos futuros sejam localizados sem depender novamente do relatório.",
+      "O caso de boleto cujo dígito verificador vem separado no CNAB 400 passa a ser cruzado com o número completo exibido pelo relatório Strato.",
+      "A tela e o PDF de resultado mostram quantidade conciliada via relatório/IA, cliente identificado, método de conciliação e confiança.",
+      "Nenhuma estrutura de banco foi alterada; dados legados existentes não são sobrescritos e baixas já registradas não são duplicadas."
+    ],
+    "architecture": {
+      "frontend": [
+        "Next.js App Router",
+        "React",
+        "TypeScript",
+        "Financeiro > Contas a Receber > Retorno Bradesco",
+        "Frontend 0.4.1"
+      ],
+      "backend": [
+        "Node.js / Express",
+        "PostgreSQL",
+        "OpenAI ou Gemini conforme credencial do tenant",
+        "Extração de relatório isolada da transação financeira",
+        "API 0.4.1"
+      ],
+      "database": [
+        "Sem migration de estrutura",
+        "com_parcelas — preenchimento somente de identificadores vazios e metadados de conciliação",
+        "fin_retornos_cobranca e fin_retornos_cobranca_itens — auditoria do relatório utilizado",
+        "hub_system_releases — atualização do changelog"
+      ],
+      "regras": [
+        "IA apenas extrai dados; não decide nem executa pagamento",
+        "Conciliação automática somente com candidato único e confiança elevada",
+        "Dados de vencimento, valor e cliente existentes não são sobrescritos",
+        "Prévia continua disponível sem gravar baixa ou identificadores"
+      ]
+    }
+  },
+  {
     "version": "0.4.0",
     "title": "Contas a Receber — exportação em PDF do resultado do retorno Bradesco",
     "description": "Adiciona botão para exportar/imprimir em PDF a planilha de resultado do retorno Bradesco, mantendo todos os títulos lidos no arquivo e seus detalhes de conciliação.",

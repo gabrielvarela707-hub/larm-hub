@@ -7,6 +7,12 @@ const express = require('express')
 const { query } = require('../config/database')
 const { authenticate } = require('../middleware/authenticate')
 const logger = require('../config/logger')
+const {
+  DEFAULT_AI_MODELS,
+  listAiModels,
+  normalizeProvider,
+  sanitizeConfiguredModel,
+} = require('../services/aiModelService')
 
 const router = express.Router()
 router.use(authenticate)
@@ -54,6 +60,8 @@ router.get('/tenant-config', async (req, res) => {
         aiProvider:         c.ai_provider          || 'openai',
         openaiApiKey:       c.openai_api_key       || '',
         geminiApiKey:       c.gemini_api_key       || '',
+        openaiModel:        c.openai_model         || DEFAULT_AI_MODELS.openai,
+        geminiModel:        sanitizeConfiguredModel('gemini', c.gemini_model) || DEFAULT_AI_MODELS.gemini,
         // Outros
         clicksignKey:       c.clicksign_key        || '',
         bankName:           c.bank_name            || '',
@@ -104,6 +112,10 @@ router.put('/tenant-config', async (req, res) => {
     ai_provider:           ['openai', 'gemini'].includes(b.aiProvider) ? b.aiProvider : undefined,
     openai_api_key:        b.openaiApiKey,
     gemini_api_key:        b.geminiApiKey,
+    openai_model:          b.openaiModel ? String(b.openaiModel).trim().slice(0, 120) : undefined,
+    gemini_model:          b.geminiModel !== undefined
+      ? (sanitizeConfiguredModel('gemini', b.geminiModel) || DEFAULT_AI_MODELS.gemini)
+      : undefined,
     // Outros
     clicksign_key:         b.clicksignKey,
     bank_name:             b.bankName,
@@ -133,6 +145,48 @@ router.put('/tenant-config', async (req, res) => {
   } catch (err) {
     logger.error('Erro ao salvar tenant-config:', err.message)
     return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+// ── POST /tenant-config/ai-models ───────────────────────────────────────────
+// Lista somente os modelos realmente disponíveis para a chave do tenant.
+router.post(['/tenant-config/ai-models', '/configuracoes/ia-modelos'], async (req, res) => {
+  const { tenant_id, role } = req.user
+
+  if (!['admin', 'super_admin'].includes(role)) {
+    return res.status(403).json({ ok: false, message: 'Apenas administradores podem consultar modelos de IA' })
+  }
+
+  const provider = normalizeProvider(req.body?.provider)
+
+  try {
+    const { rows } = await query(
+      `SELECT openai_api_key, gemini_api_key, openai_model, gemini_model
+         FROM hub_tenant_configs
+        WHERE tenant_id = $1
+        LIMIT 1`,
+      [tenant_id]
+    )
+
+    const cfg = rows[0] || {}
+    const submittedKey = String(req.body?.apiKey || '').trim()
+    const apiKey = submittedKey || (provider === 'gemini' ? cfg.gemini_api_key : cfg.openai_api_key)
+    const configuredModel = provider === 'gemini' ? cfg.gemini_model : cfg.openai_model
+
+    if (!apiKey) {
+      return res.status(422).json({
+        ok: false,
+        message: provider === 'gemini'
+          ? 'Informe a Gemini API Key antes de carregar os modelos.'
+          : 'Informe a OpenAI API Key antes de carregar os modelos.',
+      })
+    }
+
+    const result = await listAiModels({ provider, apiKey, configuredModel })
+    return res.json({ ok: true, data: result })
+  } catch (err) {
+    logger.warn(`Erro ao listar modelos de IA: tenant=${tenant_id} provider=${provider} erro=${err.message}`)
+    return res.status(502).json({ ok: false, message: err.message || 'Erro ao consultar os modelos disponíveis' })
   }
 })
 

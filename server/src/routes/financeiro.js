@@ -3477,7 +3477,7 @@ router.get('/cashflow/resumo', async (req, res) => {
 
 
 // ─── POST /financeiro/movimento/manual ───────────────────────────────────────
-// Cadastro direto de tarifas bancárias e rendimentos de aplicação.
+// Cadastro direto de movimentos bancários manuais com classificação contábil editável.
 // A conta bancária define empresa e banco; o lançamento não altera o saldo inicial.
 router.post('/movimento/manual', async (req, res) => {
   const contaId = Number.parseInt(String(req.body?.banco_conta_id || ''), 10)
@@ -3485,6 +3485,8 @@ router.post('/movimento/manual', async (req, res) => {
   const data = String(req.body?.data || '').trim()
   const valor = parseManualMovementMoney(req.body?.valor)
   const descricaoInformada = String(req.body?.descricao || '').trim()
+  const contraparte = String(req.body?.contraparte || '').trim()
+  const planoContaId = Number.parseInt(String(req.body?.plano_conta_id || ''), 10)
 
   const TIPOS = {
     tarifa_bancaria: {
@@ -3497,6 +3499,18 @@ router.post('/movimento/manual', async (req, res) => {
       historico: 'Rendimento de aplicação',
       conta_contabil: 'REND. S/APLICACOES FINANCEIRAS',
       natureza_financeira: '5.1.3',
+      entrada: true,
+    },
+    distribuicao_lucros: {
+      historico: 'Distribuição de lucros',
+      conta_contabil: 'DISTRIBUIÇÃO DE LUCROS',
+      natureza_financeira: null,
+      entrada: true,
+    },
+    reembolso_despesas: {
+      historico: 'Reembolso de despesas',
+      conta_contabil: 'REEMBOLSO DE DESPESAS',
+      natureza_financeira: null,
       entrada: true,
     },
   }
@@ -3512,6 +3526,12 @@ router.post('/movimento/manual', async (req, res) => {
   }
   if (!Number.isFinite(valor) || valor <= 0) {
     return res.status(400).json({ ok: false, message: 'Informe um valor maior que zero.' })
+  }
+  if (!Number.isInteger(planoContaId) || planoContaId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Selecione uma conta contábil.' })
+  }
+  if (contraparte.length > 255) {
+    return res.status(400).json({ ok: false, message: 'O fornecedor/favorecido deve ter no máximo 255 caracteres.' })
   }
   if (descricaoInformada.length > 500) {
     return res.status(400).json({ ok: false, message: 'A descrição deve ter no máximo 500 caracteres.' })
@@ -3542,6 +3562,25 @@ router.post('/movimento/manual', async (req, res) => {
         throw error
       }
 
+      const { rows: contasContabeis } = await client.query(
+        `SELECT id, codigo, descricao, tipo, ativo
+           FROM fin_plano_contas
+          WHERE id = $1
+          FOR SHARE`,
+        [planoContaId]
+      )
+      if (!contasContabeis.length || !contasContabeis[0].ativo) {
+        const error = new Error('Conta contábil não encontrada ou inativa.')
+        error.statusCode = 404
+        throw error
+      }
+      const contaContabil = contasContabeis[0]
+      if (String(contaContabil.tipo || '').toUpperCase() !== 'A') {
+        const error = new Error('Selecione uma conta contábil analítica.')
+        error.statusCode = 400
+        throw error
+      }
+
       const [ano, mes, dia] = data.split('-').map(Number)
       const historico = descricaoInformada || configuracao.historico
       const entradas = configuracao.entrada ? valor : 0
@@ -3555,10 +3594,10 @@ router.post('/movimento/manual', async (req, res) => {
            tipo_lancamento, vencimento, fornecedor_id, banco_conta_id
          )
          VALUES (
-           $1, $2, $3, $4, $5, NULL, $6,
-           NULL, NULL, $7, NULL, NULL,
-           $8, NULL, $9, $10, $11, NULL,
-           'manual', NULL, NULL, $12
+           $1, $2, $3, $4, $5, $6, $7,
+           NULL, NULL, $8, NULL, NULL,
+           $9, NULL, $10, $11, $12, NULL,
+           'manual', NULL, NULL, $13
          )
          RETURNING
            id,
@@ -3578,9 +3617,10 @@ router.post('/movimento/manual', async (req, res) => {
           conta.banco_nome || null,
           entradas,
           saidas,
+          contraparte || null,
           historico,
-          configuracao.conta_contabil,
-          configuracao.natureza_financeira,
+          String(contaContabil.descricao || configuracao.conta_contabil || '').trim(),
+          String(contaContabil.codigo || configuracao.natureza_financeira || '').trim() || null,
           dia,
           mes,
           ano,
@@ -3590,6 +3630,7 @@ router.post('/movimento/manual', async (req, res) => {
 
       return {
         movimento: rows[0],
+        classificacao: contaContabil,
         conta: {
           id: conta.id,
           empresa: conta.empresa,
@@ -3614,14 +3655,18 @@ router.post('/movimento/manual', async (req, res) => {
         tipo,
         conta_bancaria: created.conta,
         movimento: created.movimento,
+        classificacao: created.classificacao,
       },
     })
 
     return res.status(201).json({
       ok: true,
-      message: tipo === 'tarifa_bancaria'
-        ? 'Tarifa bancária lançada com sucesso.'
-        : 'Rendimento de aplicação lançado com sucesso.',
+      message: ({
+        tarifa_bancaria: 'Tarifa bancária lançada com sucesso.',
+        rendimento_aplicacao: 'Rendimento de aplicação lançado com sucesso.',
+        distribuicao_lucros: 'Distribuição de lucros lançada com sucesso.',
+        reembolso_despesas: 'Reembolso de despesas lançado com sucesso.',
+      })[tipo] || 'Lançamento bancário salvo com sucesso.',
       data: created.movimento,
     })
   } catch (err) {

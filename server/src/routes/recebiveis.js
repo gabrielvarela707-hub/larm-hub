@@ -1,6 +1,6 @@
 /**
  * server/src/routes/recebiveis.js
- * v0.3.81 — Contratos, parcelas, baixa manual e retorno Bradesco integrado aos recebíveis Strato.
+ * v0.5.0 — Retorno detalhado, data de recebimento editável e filtros por recebimento.
  */
 
 const express = require('express')
@@ -16,6 +16,12 @@ const {
   onlyDigits,
 } = require('../services/bradescoCnab400')
 const { processBradescoReturn } = require('../services/bradescoReturnProcessor')
+const {
+  analyzeStratoReturnReport,
+  analyzePdfLocally,
+  normalizeFilename: normalizeReturnFilename,
+} = require('../services/stratoReturnReportAnalyzer')
+const { listAiModels, resolveAiModel, normalizeModelId } = require('../services/aiModelService')
 
 const router = express.Router()
 router.use(authenticate)
@@ -32,6 +38,47 @@ function canWriteFinance(user) {
     .filter(Boolean)
   return candidates.some(role => FINANCE_WRITE_ROLES.has(role))
 }
+
+// ─── Modelos de IA usados pelo relatório Strato ───────────────────────────────
+// Esta rota fica no mesmo router do retorno Bradesco, evitando depender de uma
+// rota separada de configurações que possa não estar publicada no backend ativo.
+router.post('/financeiro/contas-receber/ia-modelos', async (req, res) => {
+  const role = String(req.user?.role || '').trim().toLowerCase()
+  if (!ADMIN_ROLES.has(role)) {
+    return res.status(403).json({ ok: false, message: 'Apenas administradores podem consultar modelos de IA.' })
+  }
+
+  const provider = req.body?.provider === 'gemini' ? 'gemini' : 'openai'
+
+  try {
+    const { rows: [cfg] } = await query(
+      `SELECT openai_api_key, gemini_api_key, openai_model, gemini_model
+         FROM hub_tenant_configs
+        WHERE tenant_id = $1
+        LIMIT 1`,
+      [req.user.tenant_id],
+    )
+
+    const submittedKey = String(req.body?.apiKey || '').trim()
+    const apiKey = submittedKey || (provider === 'gemini' ? cfg?.gemini_api_key : cfg?.openai_api_key)
+    const configuredModel = provider === 'gemini' ? cfg?.gemini_model : cfg?.openai_model
+
+    if (!apiKey) {
+      return res.status(422).json({
+        ok: false,
+        message: provider === 'gemini'
+          ? 'Informe e salve a Gemini API Key antes de carregar os modelos.'
+          : 'Informe e salve a OpenAI API Key antes de carregar os modelos.',
+      })
+    }
+
+    const result = await listAiModels({ provider, apiKey, configuredModel })
+    return res.json({ ok: true, data: result, source: 'recebiveis-0.4.8' })
+  } catch (err) {
+    logger.warn(`Erro ao listar modelos para o retorno Strato: tenant=${req.user.tenant_id} erro=${err.message}`)
+    return res.status(502).json({ ok: false, message: err.message || 'Erro ao consultar os modelos disponíveis.' })
+  }
+})
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -105,6 +152,7 @@ function mapParcela(r) {
     id: r.id, contrato_id: r.contrato_id, numero: r.numero, tipo: r.tipo,
     contrato_numero: r.contrato_numero, comprador_nome: r.comprador_nome,
     lot_id: r.lot_id, lot_number: r.lot_number, quadra: r.quadra,
+    empresa_cobranca: r.empresa_cobranca || null,
     vencimento: r.vencimento, valor_nominal: Number(r.valor_nominal),
     valor_correcao: Number(r.valor_correcao || 0),
     valor_multa: Number(r.valor_multa || 0),
@@ -292,6 +340,8 @@ function buildContasReceberFilters(req, { defaultCurrentMonth = true } = {}) {
     status,
     venc_inicio,
     venc_fim,
+    receb_inicio,
+    receb_fim,
   } = req.query
 
   const where = ['p.tenant_id = $1']
@@ -348,7 +398,8 @@ function buildContasReceberFilters(req, { defaultCurrentMonth = true } = {}) {
     }
   }
 
-  const startDate = venc_inicio || (defaultCurrentMonth ? firstDayOfCurrentMonth() : null)
+  const hasReceiptFilter = Boolean(receb_inicio || receb_fim)
+  const startDate = venc_inicio || (defaultCurrentMonth && !hasReceiptFilter ? firstDayOfCurrentMonth() : null)
   if (startDate) {
     params.push(startDate)
     where.push(`p.vencimento >= $${params.length}`)
@@ -356,6 +407,15 @@ function buildContasReceberFilters(req, { defaultCurrentMonth = true } = {}) {
   if (venc_fim) {
     params.push(venc_fim)
     where.push(`p.vencimento <= $${params.length}`)
+  }
+
+  if (receb_inicio) {
+    params.push(receb_inicio)
+    where.push(`p.pago_em::date >= $${params.length}::date`)
+  }
+  if (receb_fim) {
+    params.push(receb_fim)
+    where.push(`p.pago_em::date <= $${params.length}::date`)
   }
 
   return { where, params, appliedStartDate: startDate || null }
@@ -1000,7 +1060,7 @@ async function persistRecalculation(client, calculation, tenantId, userId) {
 
 // PATCH /financeiro/contas-receber/:id/baixar-manual
 // Registra a baixa definitiva da parcela e cria a entrada correspondente no Movimento Bancário.
-router.patch('/financeiro/contas-receber/:id/baixar-manual', async (req, res) => {
+async function handleManualReceivablePayment(req, res) {
   if (!canWriteFinance(req.user)) {
     return res.status(403).json({
       ok: false,
@@ -1252,6 +1312,145 @@ router.patch('/financeiro/contas-receber/:id/baixar-manual', async (req, res) =>
     return res.status(error.statusCode || 500).json({
       ok: false,
       message: error.statusCode ? error.message : 'Não foi possível registrar a baixa manual.',
+    })
+  }
+}
+
+router.patch('/financeiro/contas-receber/:id/baixar-manual', handleManualReceivablePayment)
+
+router.patch('/financeiro/contas-receber/:id/data-recebimento', async (req, res) => {
+  if (!canWriteFinance(req.user)) {
+    return res.status(403).json({ ok: false, message: 'Você não possui permissão para alterar a data de recebimento.' })
+  }
+
+  let receiptDate
+  try {
+    receiptDate = normalizeDateOnly(req.body?.data_recebimento, 'Data do recebimento')
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message })
+  }
+
+  try {
+    const result = await transaction(async client => {
+      const { rows: [parcel] } = await client.query(
+        `SELECT id, status, pago_em::date::text AS pago_em_data, movimento_id, origem_baixa
+           FROM com_parcelas
+          WHERE id=$1::uuid AND tenant_id=$2
+          FOR UPDATE`,
+        [req.params.id, req.user.tenant_id],
+      )
+
+      if (!parcel) {
+        const error = new Error('Parcela não encontrada.')
+        error.statusCode = 404
+        throw error
+      }
+      if (String(parcel.status || '').toLowerCase() !== 'paga') {
+        const error = new Error('Somente parcelas recebidas permitem alterar a data de recebimento.')
+        error.statusCode = 409
+        throw error
+      }
+
+      const previousDate = parcel.pago_em_data || null
+      const [year, month, day] = receiptDate.split('-').map(Number)
+      let movement = null
+      let affectedParcelIds = [parcel.id]
+
+      if (parcel.movimento_id) {
+        const { rows: [updatedMovement] } = await client.query(
+          `UPDATE fin_movimento
+              SET data=$1::date,
+                  dia=$2,
+                  mes=$3,
+                  ano=$4
+            WHERE id=$5
+            RETURNING id, data, dia, mes, ano, entradas, saidas`,
+          [receiptDate, day, month, year, parcel.movimento_id],
+        )
+        movement = updatedMovement || null
+        if (!movement) {
+          const error = new Error('O Movimento Bancário vinculado não foi encontrado. A data não foi alterada.')
+          error.statusCode = 409
+          throw error
+        }
+
+        const { rows: linkedParcels } = await client.query(
+          `SELECT id
+             FROM com_parcelas
+            WHERE tenant_id=$1 AND movimento_id=$2 AND status='paga'
+            FOR UPDATE`,
+          [req.user.tenant_id, parcel.movimento_id],
+        )
+        affectedParcelIds = linkedParcels.map(item => item.id)
+        if (!affectedParcelIds.length) affectedParcelIds = [parcel.id]
+      }
+
+      const auditData = {
+        data_recebimento_anterior: previousDate,
+        data_recebimento_atual: receiptDate,
+        alterado_em: new Date().toISOString(),
+        alterado_por: req.user.id,
+        movimento_id: parcel.movimento_id || null,
+        parcelas_afetadas: affectedParcelIds.length,
+      }
+
+      const { rows: updatedParcels } = await client.query(
+        `UPDATE com_parcelas
+            SET pago_em=$1::date,
+                conciliacao_dados=COALESCE(conciliacao_dados,'{}'::jsonb)
+                  || jsonb_build_object('edicao_data_recebimento',$2::jsonb),
+                updated_at=NOW()
+          WHERE tenant_id=$3 AND id=ANY($4::uuid[])
+          RETURNING id, pago_em, movimento_id, status, origem_baixa`,
+        [receiptDate, JSON.stringify(auditData), req.user.tenant_id, affectedParcelIds],
+      )
+
+      const updatedParcel = updatedParcels.find(item => String(item.id) === String(parcel.id)) || updatedParcels[0]
+      if (!updatedParcel) throw new Error('Nenhuma parcela foi atualizada.')
+
+      await client.query(
+        `UPDATE fin_retornos_cobranca_itens
+            SET dados=COALESCE(dados,'{}'::jsonb)
+              || jsonb_build_object('data_recebimento_sistema',$1::text)
+          WHERE tenant_id=$2 AND parcela_id=ANY($3::uuid[])`,
+        [receiptDate, req.user.tenant_id, affectedParcelIds],
+      )
+
+      return {
+        parcela: updatedParcel,
+        movimento,
+        data_anterior: previousDate,
+        parcelas_afetadas: affectedParcelIds.length,
+      }
+    })
+
+    await logAudit({
+      userId: req.user.id,
+      tenantId: req.user.tenant_id,
+      action: 'conta_receber_alterar_data_recebimento',
+      module: 'financeiro',
+      entityType: 'com_parcelas',
+      entityId: req.params.id,
+      meta: {
+        data_anterior: result.data_anterior,
+        data_recebimento: receiptDate,
+        movimento_id: result.parcela.movimento_id || null,
+        parcelas_afetadas: result.parcelas_afetadas,
+      },
+    }).catch(() => {})
+
+    return res.json({
+      ok: true,
+      message: result.parcela.movimento_id
+        ? `Data de recebimento atualizada na parcela e no Movimento Bancário${result.parcelas_afetadas > 1 ? `; ${result.parcelas_afetadas} parcelas vinculadas ao mesmo movimento foram sincronizadas` : ''}.`
+        : 'Data de recebimento atualizada na parcela.',
+      data: result,
+    })
+  } catch (error) {
+    logger.error(`Erro ao alterar data de recebimento da parcela ${req.params.id}: ${error.message}`)
+    return res.status(error.statusCode || 500).json({
+      ok: false,
+      message: error.statusCode ? error.message : 'Não foi possível alterar a data de recebimento.',
     })
   }
 })
@@ -1985,8 +2184,6 @@ router.post('/financeiro/contas-receber/bradesco/remessa', async (req, res) => {
   }
 })
 
-// POST /financeiro/contas-receber/bradesco/retorno
-// Aceita um arquivo no formato legado ou vários arquivos no campo `files`.
 router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
   if (!canWriteFinance(req.user)) {
     return res.status(403).json({
@@ -1996,16 +2193,21 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
   }
 
   const applyPayment = req.body?.baixar_liquidacoes !== false
+  const receiptDate = isoToday()
   const defaultCompany = normalizeBillingCompany(req.body?.empresa)
   const submittedFiles = Array.isArray(req.body?.files)
     ? req.body.files
     : [{ filename: req.body?.filename, content: req.body?.content, empresa: req.body?.empresa }]
+  const submittedReports = Array.isArray(req.body?.relatorios_strato) ? req.body.relatorios_strato : []
 
   if (!submittedFiles.length) {
     return res.status(400).json({ ok: false, message: 'Nenhum arquivo de retorno foi informado.' })
   }
   if (submittedFiles.length > 20) {
     return res.status(400).json({ ok: false, message: 'Envie no máximo 20 arquivos de retorno por processamento.' })
+  }
+  if (submittedReports.length > 4) {
+    return res.status(400).json({ ok: false, message: 'Envie no máximo 4 relatórios Strato por processamento.' })
   }
 
   const files = submittedFiles.map((file, index) => ({
@@ -2018,12 +2220,153 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
     return res.status(400).json({ ok: false, message: `O arquivo ${emptyFile.filename} está vazio.` })
   }
 
+  const reports = submittedReports.map((report, index) => {
+    const mimeType = String(report?.mime_type || report?.mimeType || '').trim().toLowerCase()
+    const rawBase64 = String(report?.base64 || report?.documento_base64 || '')
+      .replace(/^data:[^;]+;base64,/i, '')
+      .replace(/\s+/g, '')
+    return {
+      filename: String(report?.filename || report?.nome || `relatorio-strato-${index + 1}.pdf`).slice(0, 160),
+      mimeType,
+      base64: rawBase64,
+    }
+  })
+
+  for (const report of reports) {
+    if (!report.base64) {
+      return res.status(400).json({ ok: false, message: `O relatório ${report.filename} está vazio.` })
+    }
+    if (!(report.mimeType === 'application/pdf' || report.mimeType.startsWith('image/'))) {
+      return res.status(400).json({ ok: false, message: `O relatório ${report.filename} deve ser PDF ou imagem.` })
+    }
+    if (report.base64.length > 7 * 1024 * 1024) {
+      return res.status(413).json({ ok: false, message: `O relatório ${report.filename} é muito grande. Limite sugerido: 5 MB.` })
+    }
+  }
+
   const requestLabel = files.map(file => file.filename).join(', ')
 
   try {
+    let analyzedReports = []
+    if (reports.length) {
+      // Primeiro tenta ler PDFs textuais localmente. Esta etapa não consulta
+      // Gemini/OpenAI e não depende de modelo configurado. Os relatórios
+      // "CRÍTICA COBRANÇA" do Strato enviados pelo cliente possuem texto.
+      const resultsByIndex = new Array(reports.length).fill(null)
+      const reportsNeedingAi = []
+
+      for (let reportIndex = 0; reportIndex < reports.length; reportIndex += 1) {
+        const report = reports[reportIndex]
+        const isPdf = report.mimeType === 'application/pdf' || /\.pdf$/i.test(report.filename)
+
+        if (isPdf) {
+          try {
+            const localResult = await analyzePdfLocally({
+              filename: report.filename,
+              base64: report.base64,
+            })
+            if (localResult?.titulos?.length) {
+              resultsByIndex[reportIndex] = localResult
+              logger.info(
+                `Relatório Strato lido localmente: arquivo=${report.filename} titulos=${localResult.titulos.length}`,
+              )
+              continue
+            }
+          } catch (localError) {
+            logger.warn(`Falha na leitura local do relatório Strato ${report.filename}: ${localError.message}`)
+          }
+        }
+
+        reportsNeedingAi.push({ reportIndex, report })
+      }
+
+      // IA é usada somente para imagem ou PDF realmente sem texto pesquisável.
+      // Portanto, um modelo indisponível não interfere em PDFs textuais do Strato.
+      if (reportsNeedingAi.length) {
+        const { rows: [cfg] } = await query(
+          `SELECT ai_provider, openai_api_key, gemini_api_key, openai_model, gemini_model
+             FROM hub_tenant_configs
+            WHERE tenant_id=$1
+            LIMIT 1`,
+          [req.user.tenant_id],
+        )
+        const provider = ['openai', 'gemini'].includes(cfg?.ai_provider) ? cfg.ai_provider : 'openai'
+        const apiKey = provider === 'gemini' ? cfg?.gemini_api_key : cfg?.openai_api_key
+        let model = provider === 'gemini' ? cfg?.gemini_model : cfg?.openai_model
+
+        if (!apiKey) {
+          return res.status(422).json({
+            ok: false,
+            message: 'O relatório não possui texto pesquisável. Configure uma chave de IA para ler PDF escaneado ou imagem.',
+          })
+        }
+
+        if (provider === 'gemini') {
+          const resolvedModel = await resolveAiModel({
+            provider,
+            apiKey,
+            configuredModel: model,
+          })
+
+          model = resolvedModel.model
+          if (model && normalizeModelId(cfg?.gemini_model) !== model) {
+            await query(
+              `UPDATE hub_tenant_configs
+                  SET gemini_model = $2,
+                      updated_at = NOW()
+                WHERE tenant_id = $1`,
+              [req.user.tenant_id, model],
+            )
+            logger.info(`Modelo Gemini atualizado automaticamente: tenant=${req.user.tenant_id} model=${model}`)
+          }
+        }
+
+        for (const pending of reportsNeedingAi) {
+          resultsByIndex[pending.reportIndex] = await analyzeStratoReturnReport({
+            provider,
+            apiKey,
+            model,
+            filename: pending.report.filename,
+            mimeType: pending.report.mimeType,
+            base64: pending.report.base64,
+          })
+        }
+      }
+
+      analyzedReports = resultsByIndex.filter(Boolean)
+    }
+
+    const reportAssignments = files.map(() => [])
+    const unmatchedReports = []
+    for (let reportIndex = 0; reportIndex < analyzedReports.length; reportIndex += 1) {
+      const report = analyzedReports[reportIndex]
+      const exactIndexes = files
+        .map((file, fileIndex) => ({ fileIndex, normalized: normalizeReturnFilename(file.filename) }))
+        .filter(entry => report.arquivo_retorno && entry.normalized === report.arquivo_retorno)
+        .map(entry => entry.fileIndex)
+
+      if (exactIndexes.length === 1) {
+        reportAssignments[exactIndexes[0]].push(report)
+      } else if (files.length === 1 && analyzedReports.length === 1) {
+        reportAssignments[0].push(report)
+      } else if (!report.arquivo_retorno && files.length === analyzedReports.length) {
+        reportAssignments[reportIndex].push(report)
+      } else {
+        unmatchedReports.push(report)
+      }
+    }
+
+    if (unmatchedReports.length) {
+      const details = unmatchedReports.map(report =>
+        `${report.nome_arquivo_relatorio || 'relatório'}${report.arquivo_retorno ? ` → ${report.arquivo_retorno}` : ' → retorno não identificado'}`,
+      ).join('; ')
+      throw new Error(`Não foi possível associar o relatório Strato ao arquivo de retorno enviado: ${details}. Envie o relatório e o RET correspondentes na mesma operação.`)
+    }
+
     const results = await transaction(async client => {
       const processed = []
-      for (const file of files) {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index]
         processed.push(await processBradescoReturn({
           client,
           tenantId: req.user.tenant_id,
@@ -2033,6 +2376,8 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
           applyPayment,
           persist: applyPayment,
           explicitCompany: file.explicitCompany,
+          stratoReports: reportAssignments[index],
+          receiptDate,
         }))
       }
       return processed
@@ -2058,6 +2403,9 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
             ja_baixadas: result.ja_baixadas,
             movimentos_criados: result.movimentos_criados,
             valor_baixado: result.valor_baixado,
+            relatorios_strato_processados: result.relatorios_strato_processados,
+            conciliados_por_relatorio: result.conciliados_por_relatorio,
+            ia_providers: result.ia_providers,
           },
         }).catch(() => {})
       }
@@ -2070,7 +2418,7 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
         return res.json({
           ok: true,
           duplicated: true,
-          message: 'Este retorno já foi processado. Nenhuma baixa foi duplicada.',
+          message: `Este retorno já havia sido processado${result.processado_em ? ` em ${String(result.processado_em).slice(0, 10)}` : ''}. Nenhuma baixa foi duplicada; os títulos e parcelas do processamento original estão detalhados abaixo.`,
           data: result,
         })
       }
@@ -2095,6 +2443,9 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
       total.movimentos_criados += Number(result.movimentos_criados || 0)
       total.valor_liquidado += Number(result.valor_liquidado || 0)
       total.valor_baixado += Number(result.valor_baixado || 0)
+      total.relatorios_strato_processados += Number(result.relatorios_strato_processados || 0)
+      total.conciliados_por_relatorio += Number(result.conciliados_por_relatorio || 0)
+      for (const provider of result.ia_providers || []) total.ia_providers.add(provider)
       return total
     }, {
       arquivos: 0,
@@ -2107,7 +2458,11 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
       movimentos_criados: 0,
       valor_liquidado: 0,
       valor_baixado: 0,
+      relatorios_strato_processados: 0,
+      conciliados_por_relatorio: 0,
+      ia_providers: new Set(),
     })
+    summary.ia_providers = [...summary.ia_providers]
 
     return res.json({
       ok: true,
@@ -2124,13 +2479,23 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
   }
 })
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // PARCELAS
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PARCELA_SELECT = `
-  SELECT p.*, c.numero AS contrato_numero, c.comprador_nome, c.lot_id, c.lot_number, c.quadra
+  SELECT
+    p.*,
+    c.numero AS contrato_numero,
+    c.comprador_nome,
+    c.lot_id,
+    c.lot_number,
+    c.quadra,
+    CASE
+      WHEN COALESCE(c.obra_codigo_legado, p.obra_codigo_legado) = 7698 THEN 'LUCKY'
+      WHEN COALESCE(c.obra_codigo_legado, p.obra_codigo_legado) IN (7700, 7701) THEN 'LARM'
+      ELSE NULL
+    END AS empresa_cobranca
     FROM com_parcelas p
     JOIN com_contratos c ON c.id = p.contrato_id
 `
@@ -2165,20 +2530,16 @@ router.get('/parcelas/stats', async (req, res) => {
 })
 
 // PATCH /parcelas/:id/baixar
+// Compatibilidade com a tela antiga: converte os nomes dos campos e reutiliza
+// exatamente o fluxo seguro que cria o Movimento Bancário antes de quitar a parcela.
 router.patch('/parcelas/:id/baixar', async (req, res) => {
-  const { valor_pago, forma_pagamento, observacoes_baixa, data_pagamento } = req.body
-  if (!valor_pago) return res.status(400).json({ ok: false, message: 'valor_pago obrigatório' })
-  const pago_em = data_pagamento ? new Date(data_pagamento) : new Date()
-  const { rows: [p] } = await query(
-    `UPDATE com_parcelas
-        SET status='paga', pago_em=$1, valor_pago=$2, forma_pagamento=$3, observacoes_baixa=$4, updated_at=NOW()
-      WHERE id=$5 AND tenant_id=$6 AND status IN ('aberta','atrasada')
-      RETURNING *`,
-    [pago_em, valor_pago, forma_pagamento||null, observacoes_baixa||null, req.params.id, req.user.tenant_id]
-  )
-  if (!p) return res.status(404).json({ ok: false, message: 'Parcela não encontrada ou já paga' })
-  await logAudit({ userId: req.user.id, tenantId: req.user.tenant_id, action: 'parcela_baixada', module: 'recebiveis', entityType: 'com_parcelas', entityId: p.id, meta: { valor_pago } }).catch(() => {})
-  return res.json({ ok: true, data: mapParcela(p) })
+  req.body = {
+    ...req.body,
+    valor_recebido: req.body?.valor_recebido ?? req.body?.valor_pago,
+    data_recebimento: req.body?.data_recebimento || req.body?.data_pagamento,
+    observacoes: req.body?.observacoes ?? req.body?.observacoes_baixa,
+  }
+  return handleManualReceivablePayment(req, res)
 })
 
 // PATCH /parcelas/:id/reemitir  — reseta para aberta
