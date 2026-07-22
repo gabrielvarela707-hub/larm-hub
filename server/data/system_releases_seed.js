@@ -5,6 +5,74 @@
  */
 
 const SYSTEM_RELEASES = [
+{
+  "version": "0.5.3",
+  "title": "Contas a Pagar — backend seguro para rateio (etapa 2)",
+  "description": "Ativa a API para cadastrar um único documento dividido entre duas ou mais contas bancárias, mantendo cada parte como lançamento individual e vinculada ao mesmo grupo de rateio.",
+  "frontend_version": "0.5.1",
+  "backend_version": "0.5.3",
+  "released_at": "2026-07-22T13:20:00.000Z",
+  "changes": [
+    "A rota POST /financeiro/lancamentos-cp continua com o fluxo antigo quando o campo rateios não é enviado.",
+    "Quando rateios é enviado, o backend valida no mínimo duas contas, contas ativas e distintas, percentuais totalizando exatamente 100%, valores totalizando exatamente o documento e correspondência entre percentual e valor de cada parte.",
+    "O cadastro completo é transacional: grupo, lançamentos, parcelas e vínculos são gravados integralmente ou tudo é desfeito.",
+    "Cada parte gera um lançamento individual em fin_lancamentos_cp e permanece ligada ao documento original por fin_cp_rateios e fin_cp_rateio_itens.",
+    "As parcelas são divididas em centavos preservando simultaneamente o total de cada parcela e o total destinado a cada conta.",
+    "A regra de documento duplicado passa a permitir repetição somente entre partes do mesmo rateio; documentos normais e grupos diferentes continuam bloqueados.",
+    "Adicionada a rota GET /financeiro/lancamentos-cp/:id/rateio e metadados de rastreamento nas consultas de listagem e detalhe.",
+    "A edição isolada de uma parte do rateio é bloqueada nesta etapa para impedir desalinhamento entre as partes.",
+    "A exclusão de uma parte remove o grupo completo somente quando nenhuma parcela possui baixa ou movimento bancário.",
+    "Nenhum arquivo de frontend foi alterado e nenhum lançamento antigo é convertido automaticamente em rateio."
+  ],
+  "architecture": {
+    "frontend": [
+      "Sem alteração; permanece em 0.5.1",
+      "Tela de rateio ainda não publicada"
+    ],
+    "backend": [
+      "POST /financeiro/lancamentos-cp compatível com payload antigo",
+      "GET /financeiro/lancamentos-cp/:id/rateio",
+      "Serviço isolado de validação e arredondamento",
+      "Transação única por documento"
+    ],
+    "database": [
+      "fin_cp_rateios",
+      "fin_cp_rateio_itens",
+      "fin_lancamentos_cp.rateio_id",
+      "Trigger de duplicidade compatível com o grupo"
+    ],
+    "regras": [
+      "Mínimo de duas contas",
+      "100% obrigatório",
+      "Soma em moeda igual ao documento",
+      "Sem edição isolada",
+      "Sem exclusão após baixa"
+    ]
+  }
+},
+  {
+    "version": "0.5.2",
+    "title": "Contas a Pagar — estrutura segura para rateio (etapa 1)",
+    "description": "Prepara o banco para relacionar um único documento a vários lançamentos e contas bancárias, sem ativar ainda a tela, a API ou qualquer regra operacional de rateio.",
+    "frontend_version": "0.5.1",
+    "backend_version": "0.5.2",
+    "released_at": "2026-07-22T13:30:00.000Z",
+    "changes": [
+      "Criadas as tabelas vazias fin_cp_rateios e fin_cp_rateio_itens para o documento original e seus lançamentos individuais.",
+      "Adicionada a coluna opcional rateio_id em fin_lancamentos_cp; todos os registros existentes permanecem com valor nulo.",
+      "Incluídas chaves estrangeiras, validações e índices voltados à rastreabilidade e à proteção contra vínculos inconsistentes.",
+      "A migration não cria, altera, divide, paga ou exclui nenhum lançamento financeiro existente.",
+      "A regra atual de bloqueio de documentos duplicados permanece intacta nesta etapa.",
+      "Incluídos scripts separados de conferência e rollback seguro; o rollback é recusado quando existir qualquer dado de rateio.",
+      "Nenhuma rota de backend e nenhum arquivo de frontend foram modificados."
+    ],
+    "architecture": {
+      "frontend": ["Sem alteração; permanece em 0.5.1"],
+      "backend": ["Somente scripts de migration, conferência e rollback", "Nenhuma rota alterada"],
+      "database": ["fin_cp_rateios", "fin_cp_rateio_itens", "fin_lancamentos_cp.rateio_id", "Migration idempotente e transacional"],
+      "regras": ["Rateio ainda desativado", "Nenhum registro antigo modificado", "Duplicidade atual preservada"]
+    }
+  },
   {
     "version": "0.5.1",
     "title": "Movimento Bancário — distribuição de lucros e reembolso de despesas",
@@ -40,6 +108,27 @@ const SYSTEM_RELEASES = [
       "backend": ["Rota de retorno Bradesco", "PATCH da data de recebimento", "Reconstrução do resultado persistido"],
       "database": ["com_parcelas.pago_em", "fin_movimento.data/dia/mes/ano", "fin_retornos_cobranca", "fin_retornos_cobranca_itens", "Sem migration estrutural"],
       "integrations": ["Bradesco CNAB 400", "Relatório Strato preservado"]
+    }
+  },
+  {
+    "version": "0.4.9",
+    "title": "Retorno Strato — leitura local confiável do PDF",
+    "description": "O relatório Crítica Cobrança passa a ser lido diretamente do PDF textual antes de qualquer chamada de IA, eliminando a dependência de modelos Gemini para os relatórios normais do Strato.",
+    "frontend_version": "0.4.8",
+    "backend_version": "0.4.9",
+    "released_at": "2026-07-21T15:30:00.000Z",
+    "changes": [
+      "PDFs textuais do relatório Strato são interpretados localmente e de forma determinística, sem chamar Gemini ou OpenAI.",
+      "A leitura local extrai arquivo RET, obra, unidade, parcela, boleto, vencimento, valor, cliente, pagamento e ocorrência.",
+      "A IA permanece apenas como fallback para PDF escaneado ou imagem sem texto pesquisável.",
+      "O fallback Gemini reutiliza primeiro o modelo configurado no ambiente que já atende a leitura de documentos do Contas a Pagar e nunca utiliza modelos Gemini 1.5.",
+      "Nenhuma regra de baixa, conciliação, Movimento Bancário, Cashflow ou Contas a Pagar foi alterada."
+    ],
+    "architecture": {
+      "frontend": ["Sem alteração de frontend"],
+      "backend": ["stratoReturnReportAnalyzer.js", "pdf-parse 1.1.1", "fallback de IA preservado"],
+      "database": ["Sem migration estrutural"],
+      "integrations": ["Leitura local de PDF", "OpenAI/Gemini somente como fallback"]
     }
   },
   {

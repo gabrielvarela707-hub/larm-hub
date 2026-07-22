@@ -1,0 +1,43 @@
+LARMHUB 0.5.3 — RATEIO CP — ETAPA 2
+
+ARQUIVOS ALTERADOS
+- package.json
+  Versão 0.5.3 e comandos da etapa 2.
+
+- package-lock.json
+  Sincronização da versão do pacote.
+
+- src/routes/fornecedores_bancos.js
+  Criação transacional do rateio, rastreamento, leitura compartilhada de
+  documento/boletos, bloqueio de edição isolada e exclusão segura do grupo.
+
+- src/data/system_releases_seed.js
+- data/system_releases_seed.js
+  Registro da versão 0.5.3.
+
+ARQUIVOS NOVOS
+- src/services/contasPagarRateioService.js
+  Validação do rateio e distribuição exata em centavos.
+
+- scripts/migrate_rateio_contas_pagar_backend.js
+  Ativa a exceção controlada do trigger de documento duplicado.
+
+- scripts/check_rateio_contas_pagar_backend.js
+  Confere estrutura, trigger e integridade sem alterar dados.
+
+- scripts/rollback_rateio_contas_pagar_backend.js
+  Restaura o trigger anterior somente quando não existem rateios.
+
+- scripts/test_rateio_contas_pagar_backend.js
+  Testes locais sem banco para validação e cálculos.
+
+- README-ATUALIZACAO-0.5.3.txt
+  Procedimento de instalação, conferência e rollback.
+
+NÃO ALTERADO
+- Frontend.
+- Regras de baixa existentes.
+- Movimento Bancário.
+- Cashflow.
+- Lançamentos antigos.
+- Estrutura criada na etapa 0.5.2.

@@ -10,6 +10,14 @@ const logger = require("../config/logger");
 const { PLANO_CONTAS_SEED } = require("../data/plano_contas_seed");
 const { syncFornecedorPessoa } = require("../services/cadastroPessoaService");
 const {
+  normalizeRateioItems,
+  hydrateRateioAccounts,
+  splitParcelasByRateio,
+  allocateCents,
+  moneyToCents,
+  centsToMoney,
+} = require("../services/contasPagarRateioService");
+const {
   DEFAULT_AI_MODELS,
   listAiModels,
   normalizeModelId,
@@ -1675,6 +1683,12 @@ router.get("/lancamentos-cp", async (req, res) => {
     const { rows } = await query(
       `SELECT
          l.*,
+         ri.ordem AS rateio_ordem,
+         ri.percentual::float AS rateio_percentual,
+         ri.valor::float AS rateio_valor,
+         r.valor_total::float AS rateio_valor_total,
+         r.status AS rateio_status,
+         (SELECT COUNT(*)::int FROM fin_cp_rateio_itens rix WHERE rix.rateio_id = l.rateio_id) AS rateio_total_itens,
          TO_CHAR(l.dt_emissao, 'YYYY-MM-DD') AS dt_emissao,
          f.razao_social AS fornecedor_nome,
          f.cnpj_cpf     AS fornecedor_cnpj,
@@ -1716,6 +1730,8 @@ router.get("/lancamentos-cp", async (req, res) => {
        LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
        LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
        LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
+       LEFT JOIN fin_cp_rateio_itens ri ON ri.lancamento_id = l.id
+       LEFT JOIN fin_cp_rateios r ON r.id = l.rateio_id
        LEFT JOIN fin_parcelas_cp p ON p.lancamento_id = l.id
        LEFT JOIN fin_tipos_documento ptd ON ptd.id = p.tipo_documento_id
        ${where}
@@ -1979,18 +1995,291 @@ async function insertBoletos(client, lancamentoId, files) {
   }
 }
 
+
+function buildCpParcelasForCreate({
+  parcelas,
+  qtdParcelas,
+  valorTotal,
+  dtEmissao,
+  tipoDocumentoId,
+  numeroDocumento,
+}) {
+  const n = Math.max(1, parseInt(qtdParcelas) || 1);
+  const vlr = parseMoney(valorTotal);
+  const generatedValues = allocateCents(
+    moneyToCents(vlr),
+    Array.from({ length: n }, () => 1),
+  ).map(centsToMoney);
+  const rawParcs =
+    Array.isArray(parcelas) && parcelas.length === n
+      ? parcelas
+      : Array.from({ length: n }, (_, index) => ({
+          numero: index + 1,
+          valor: generatedValues[index],
+          vencimento: addMonthsDateOnly(dtEmissao || todayDateOnly(), index + 1),
+          tipo_documento_id: tipoDocumentoId || null,
+          numero_documento: numeroDocumento || null,
+        }));
+
+  return rawParcs.map((parcela, index) =>
+    normalizeCpParcela(
+      parcela,
+      index,
+      addMonthsDateOnly(dtEmissao || todayDateOnly(), index + 1),
+      generatedValues[index],
+      tipoDocumentoId || null,
+      numeroDocumento || null,
+    ),
+  );
+}
+
+async function insertCpParcelasRows(client, lancamentoId, parcelas) {
+  for (const parcela of parcelas) {
+    await client.query(
+      `INSERT INTO fin_parcelas_cp
+        (lancamento_id, numero, valor, vencimento, status, tipo_documento_id, numero_documento, acrescimo, desconto,
+         retencao_ipi, retencao_iss, retencao_icms, retencao_pis,
+         retencao_cofins, retencao_csll, retencao_irrf, retencao_inss,
+         juros, multa, valor_final)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+      [
+        lancamentoId,
+        parcela.numero,
+        parcela.valor,
+        parcela.vencimento,
+        parcela.status || "pendente",
+        parcela.tipo_documento_id,
+        parcela.numero_documento,
+        parcela.acrescimo,
+        parcela.desconto,
+        parcela.retencao_ipi,
+        parcela.retencao_iss,
+        parcela.retencao_icms,
+        parcela.retencao_pis,
+        parcela.retencao_cofins,
+        parcela.retencao_csll,
+        parcela.retencao_irrf,
+        parcela.retencao_inss,
+        parcela.juros,
+        parcela.multa,
+        parcela.valor_final,
+      ],
+    );
+  }
+}
+
+async function createCpRateio(client, body, payment, rateioItems) {
+  const parcelasBase = buildCpParcelasForCreate({
+    parcelas: body.parcelas,
+    qtdParcelas: body.qtd_parcelas,
+    valorTotal: body.valor_total,
+    dtEmissao: body.dt_emissao,
+    tipoDocumentoId: body.tipo_documento_id,
+    numeroDocumento: body.nf_doc,
+  });
+  const parcelasPorItem = splitParcelasByRateio(
+    parcelasBase,
+    rateioItems,
+    body.valor_total,
+  );
+
+  const {
+    rows: [rateio],
+  } = await client.query(
+    `INSERT INTO fin_cp_rateios
+       (fornecedor_id, tipo_documento_id, nf_doc, valor_total, status,
+        documento_nome, documento_mime, documento_base64)
+     VALUES ($1,$2,$3,$4,'ativo',$5,$6,$7)
+     RETURNING *`,
+    [
+      body.fornecedor_id || null,
+      body.tipo_documento_id || null,
+      body.nf_doc || null,
+      parseMoney(body.valor_total),
+      body.documento_nome || null,
+      body.documento_mime || null,
+      body.documento_base64 || null,
+    ],
+  );
+
+  const lancamentos = [];
+  for (let index = 0; index < rateioItems.length; index += 1) {
+    const item = rateioItems[index];
+    const {
+      rows: [lancamento],
+    } = await client.query(
+      `INSERT INTO fin_lancamentos_cp
+         (empresa, fornecedor_id, banco_conta_id, conta_contabil, descricao_conta,
+          historico, tipo_documento_id, produto_servico, nf_doc,
+          documento_nome, documento_mime, documento_base64,
+          dt_emissao, valor_total, qtd_parcelas,
+          centro_custo, obra, n_cheque, obs,
+          modalidade_pagamento, chave_pix_pagamento,
+          banco_pagamento_nome, banco_pagamento_codigo, agencia_pagamento,
+          conta_pagamento, digito_pagamento, tipo_conta_pagamento,
+          linha_digitavel_boleto, rateio_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+               $20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+       RETURNING *`,
+      [
+        item.empresa,
+        body.fornecedor_id || null,
+        item.banco_conta_id,
+        body.conta_contabil || null,
+        body.descricao_conta || null,
+        body.historico,
+        body.tipo_documento_id || null,
+        body.produto_servico || null,
+        body.nf_doc || null,
+        null,
+        null,
+        null,
+        dateOnly(body.dt_emissao, null),
+        item.valor,
+        parseInt(body.qtd_parcelas) || 1,
+        body.centro_custo || null,
+        body.obra || null,
+        body.n_cheque || null,
+        body.obs || null,
+        payment.modalidade_pagamento,
+        payment.chave_pix_pagamento,
+        payment.banco_pagamento_nome,
+        payment.banco_pagamento_codigo,
+        payment.agencia_pagamento,
+        payment.conta_pagamento,
+        payment.digito_pagamento,
+        payment.tipo_conta_pagamento,
+        payment.linha_digitavel_boleto,
+        rateio.id,
+      ],
+    );
+
+    await client.query(
+      `INSERT INTO fin_cp_rateio_itens
+         (rateio_id, lancamento_id, ordem, percentual, valor)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [rateio.id, lancamento.id, item.ordem, item.percentual, item.valor],
+    );
+    await insertCpParcelasRows(
+      client,
+      lancamento.id,
+      parcelasPorItem[index],
+    );
+
+    lancamentos.push({
+      ...lancamento,
+      rateio_ordem: item.ordem,
+      rateio_percentual: item.percentual,
+      rateio_valor: item.valor,
+      parcelas: parcelasPorItem[index],
+    });
+  }
+
+  if (payment.modalidade_pagamento === "BOLETO" && lancamentos.length > 0) {
+    await insertBoletos(client, lancamentos[0].id, body.boletos_novos);
+  }
+
+  return {
+    rateio: {
+      ...rateio,
+      total_itens: lancamentos.length,
+    },
+    lancamentos,
+  };
+}
+
+async function loadCpRateioDetails(db, lancamentoId) {
+  const { rows: groups } = await db.query(
+    `SELECT r.*,
+            f.razao_social AS fornecedor_nome,
+            td.nome AS tipo_documento_nome,
+            (SELECT COUNT(*)::int FROM fin_cp_rateio_itens ri WHERE ri.rateio_id = r.id) AS total_itens,
+            EXISTS (
+              SELECT 1
+                FROM fin_cp_rateio_itens ri
+                JOIN fin_parcelas_cp p ON p.lancamento_id = ri.lancamento_id
+               WHERE ri.rateio_id = r.id
+                 AND (LOWER(COALESCE(p.status, '')) = 'pago' OR p.movimento_id IS NOT NULL)
+            ) AS tem_baixa
+       FROM fin_lancamentos_cp selecionado
+       JOIN fin_cp_rateios r ON r.id = selecionado.rateio_id
+       LEFT JOIN fin_fornecedores f ON f.id = r.fornecedor_id
+       LEFT JOIN fin_tipos_documento td ON td.id = r.tipo_documento_id
+      WHERE selecionado.id = $1`,
+    [lancamentoId],
+  );
+  if (!groups.length) return null;
+
+  const group = groups[0];
+  const { rows: items } = await db.query(
+    `SELECT ri.id,
+            ri.ordem,
+            ri.percentual::float AS percentual,
+            ri.valor::float AS valor,
+            l.id AS lancamento_id,
+            l.empresa,
+            l.banco_conta_id,
+            l.status,
+            l.valor_total::float AS lancamento_valor,
+            b.banco_nome,
+            b.codigo_banco,
+            b.agencia,
+            b.conta,
+            b.digito,
+            b.tipo_conta,
+            (SELECT COUNT(*)::int FROM fin_parcelas_cp p WHERE p.lancamento_id = l.id) AS qtd_parcelas,
+            (SELECT COUNT(*)::int FROM fin_parcelas_cp p WHERE p.lancamento_id = l.id AND LOWER(COALESCE(p.status, '')) = 'pago') AS parcelas_pagas
+       FROM fin_cp_rateio_itens ri
+       JOIN fin_lancamentos_cp l ON l.id = ri.lancamento_id
+       LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
+      WHERE ri.rateio_id = $1
+      ORDER BY ri.ordem`,
+    [group.id],
+  );
+
+  return { ...group, itens: items };
+}
+
 // GET /lancamentos-cp/:id/boletos/:boletoId — abre um boleto anexado
 router.get("/lancamentos-cp/:id/boletos/:boletoId", async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT id, nome, mime, tamanho_bytes, arquivo_base64
-         FROM fin_lancamentos_cp_boletos
-        WHERE id = $1 AND lancamento_id = $2`,
+      `SELECT boleto.id, boleto.nome, boleto.mime, boleto.tamanho_bytes, boleto.arquivo_base64
+         FROM fin_lancamentos_cp solicitado
+         JOIN fin_lancamentos_cp_boletos boleto
+           ON boleto.id = $1
+         JOIN fin_lancamentos_cp proprietario
+           ON proprietario.id = boleto.lancamento_id
+        WHERE solicitado.id = $2
+          AND (
+            proprietario.id = solicitado.id
+            OR (
+              solicitado.rateio_id IS NOT NULL
+              AND proprietario.rateio_id = solicitado.rateio_id
+            )
+          )`,
       [req.params.boletoId, req.params.id],
     );
     if (!rows.length)
       return res.status(404).json({ ok: false, message: "Boleto não encontrado" });
     return res.json({ ok: true, data: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
+// GET /lancamentos-cp/:id/rateio — rastreia todas as partes do documento
+router.get("/lancamentos-cp/:id/rateio", async (req, res) => {
+  try {
+    const rateio = await loadCpRateioDetails({ query }, req.params.id);
+    if (!rateio) {
+      return res.status(404).json({
+        ok: false,
+        code: "LANCAMENTO_SEM_RATEIO",
+        message: "Este lançamento não pertence a um rateio.",
+      });
+    }
+    return res.json({ ok: true, data: rateio });
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message });
   }
@@ -2002,12 +2291,27 @@ router.get("/lancamentos-cp/:id", async (req, res) => {
     const {
       rows: [lanc],
     } = await query(
-      `SELECT l.*, TO_CHAR(l.dt_emissao, 'YYYY-MM-DD') AS dt_emissao, f.razao_social AS fornecedor_nome, td.nome AS tipo_documento_nome, b.banco_nome, b.agencia, b.conta
-       FROM fin_lancamentos_cp l
-       LEFT JOIN fin_fornecedores  f ON f.id = l.fornecedor_id
-       LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
-       LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
-       WHERE l.id = $1`,
+      `SELECT l.*,
+              TO_CHAR(l.dt_emissao, 'YYYY-MM-DD') AS dt_emissao,
+              f.razao_social AS fornecedor_nome,
+              td.nome AS tipo_documento_nome,
+              b.banco_nome,
+              b.agencia,
+              b.conta,
+              ri.ordem AS rateio_ordem,
+              ri.percentual::float AS rateio_percentual,
+              ri.valor::float AS rateio_valor,
+              r.valor_total::float AS rateio_valor_total,
+              COALESCE(l.documento_nome, r.documento_nome) AS documento_nome,
+              COALESCE(l.documento_mime, r.documento_mime) AS documento_mime,
+              COALESCE(l.documento_base64, r.documento_base64) AS documento_base64
+         FROM fin_lancamentos_cp l
+         LEFT JOIN fin_fornecedores f ON f.id = l.fornecedor_id
+         LEFT JOIN fin_tipos_documento td ON td.id = l.tipo_documento_id
+         LEFT JOIN fin_bancos_contas b ON b.id = l.banco_conta_id
+         LEFT JOIN fin_cp_rateio_itens ri ON ri.lancamento_id = l.id
+         LEFT JOIN fin_cp_rateios r ON r.id = l.rateio_id
+        WHERE l.id = $1`,
       [req.params.id],
     );
     if (!lanc)
@@ -2023,14 +2327,32 @@ router.get("/lancamentos-cp/:id", async (req, res) => {
         ORDER BY p.numero`,
       [req.params.id],
     );
+
     const { rows: boletos } = await query(
-      `SELECT id, nome, mime, tamanho_bytes, created_at
-         FROM fin_lancamentos_cp_boletos
-        WHERE lancamento_id = $1
-        ORDER BY id`,
+      `SELECT boleto.id, boleto.nome, boleto.mime, boleto.tamanho_bytes, boleto.created_at,
+              boleto.lancamento_id
+         FROM fin_lancamentos_cp solicitado
+         JOIN fin_lancamentos_cp proprietario
+           ON proprietario.id = solicitado.id
+           OR (
+             solicitado.rateio_id IS NOT NULL
+             AND proprietario.rateio_id = solicitado.rateio_id
+           )
+         JOIN fin_lancamentos_cp_boletos boleto
+           ON boleto.lancamento_id = proprietario.id
+        WHERE solicitado.id = $1
+        ORDER BY boleto.id`,
       [req.params.id],
     );
-    return res.json({ ok: true, data: { ...lanc, parcelas, boletos } });
+
+    const rateio = lanc.rateio_id
+      ? await loadCpRateioDetails({ query }, req.params.id)
+      : null;
+
+    return res.json({
+      ok: true,
+      data: { ...lanc, parcelas, boletos, rateio },
+    });
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message });
   }
@@ -2150,9 +2472,21 @@ router.post("/lancamentos-cp", async (req, res) => {
     linha_digitavel_boleto,
     boletos_novos = [],
     parcelas, // array [{ vencimento, valor }] — opcional, gera automaticamente se omitido
+    rateios = [], // array [{ banco_conta_id, empresa?, percentual, valor }]
   } = req.body;
 
-  if (!empresa)
+  const rateioPayloadProvided =
+    req.body.rateios !== undefined && req.body.rateios !== null;
+  if (rateioPayloadProvided && !Array.isArray(rateios)) {
+    return res.status(400).json({
+      ok: false,
+      code: "RATEIO_INVALIDO",
+      message: "O campo rateios deve ser uma lista de contas.",
+    });
+  }
+
+  const hasRateio = Array.isArray(rateios) && rateios.length > 0;
+  if (!empresa && !hasRateio)
     return res.status(400).json({ ok: false, message: "empresa obrigatória" });
   if (!historico)
     return res
@@ -2194,6 +2528,24 @@ router.post("/lancamentos-cp", async (req, res) => {
       tipo_conta_pagamento,
       linha_digitavel_boleto,
     });
+
+    const normalizedRateios = normalizeRateioItems(rateios, valor_total);
+    if (normalizedRateios.length > 0) {
+      const hydratedRateios = await hydrateRateioAccounts(client, normalizedRateios);
+      const result = await createCpRateio(
+        client,
+        { ...req.body, boletos_novos, parcelas, rateios: hydratedRateios },
+        payment,
+        hydratedRateios,
+      );
+
+      await client.query("COMMIT");
+      return res.status(201).json({
+        ok: true,
+        rateio: true,
+        data: result,
+      });
+    }
 
     // Insere lançamento
     const {
@@ -2319,7 +2671,11 @@ router.post("/lancamentos-cp", async (req, res) => {
         message: duplicateCpMessage(),
       });
     }
-    return res.status(err.statusCode || 500).json({ ok: false, message: err.message });
+    return res.status(err.statusCode || 500).json({
+      ok: false,
+      code: err.code || undefined,
+      message: err.message,
+    });
   } finally {
     client.release();
   }
@@ -2378,7 +2734,7 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
     await client.query("BEGIN");
 
     const { rows: exists } = await client.query(
-      "SELECT id FROM fin_lancamentos_cp WHERE id=$1 FOR UPDATE",
+      "SELECT id, rateio_id FROM fin_lancamentos_cp WHERE id=$1 FOR UPDATE",
       [req.params.id],
     );
     if (!exists.length) {
@@ -2386,6 +2742,15 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
       return res
         .status(404)
         .json({ ok: false, message: "Lançamento não encontrado" });
+    }
+    if (exists[0].rateio_id) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        code: "RATEIO_EDICAO_BLOQUEADA",
+        message:
+          "Este lançamento pertence a um rateio. Nesta etapa, edite o documento pelo fluxo de rateio para não desalinhar as partes.",
+      });
     }
 
     const duplicate = await findDuplicateCpDocument(client, {
@@ -2721,14 +3086,14 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
   }
 });
 
-// DELETE /lancamentos-cp/:id — exclui lançamento, parcelas e movimentos gerados por baixa
+// DELETE /lancamentos-cp/:id — exclui lançamento comum ou grupo de rateio sem baixa
 router.delete("/lancamentos-cp/:id", async (req, res) => {
   const client = await require("../config/database").pool.connect();
   try {
     await client.query("BEGIN");
 
     const { rows: exists } = await client.query(
-      "SELECT id FROM fin_lancamentos_cp WHERE id=$1 FOR UPDATE",
+      "SELECT id, rateio_id FROM fin_lancamentos_cp WHERE id=$1 FOR UPDATE",
       [req.params.id],
     );
     if (!exists.length) {
@@ -2738,13 +3103,74 @@ router.delete("/lancamentos-cp/:id", async (req, res) => {
         .json({ ok: false, message: "Lançamento não encontrado" });
     }
 
+    const rateioId = exists[0].rateio_id;
+    if (rateioId) {
+      await client.query(
+        "SELECT id FROM fin_cp_rateios WHERE id=$1 FOR UPDATE",
+        [rateioId],
+      );
+
+      const { rows: rateioLancamentos } = await client.query(
+        `SELECT l.id
+           FROM fin_lancamentos_cp l
+          WHERE l.rateio_id = $1
+          ORDER BY l.id
+          FOR UPDATE`,
+        [rateioId],
+      );
+      const lancamentoIds = rateioLancamentos.map((row) => row.id);
+
+      const { rows: parcelasDoRateio } = await client.query(
+        `SELECT id, status, movimento_id
+           FROM fin_parcelas_cp
+          WHERE lancamento_id = ANY($1::int[])
+          ORDER BY id
+          FOR UPDATE`,
+        [lancamentoIds],
+      );
+      const hasPaidPart = parcelasDoRateio.some(
+        (parcela) =>
+          String(parcela.status || "").toLowerCase() === "pago"
+          || parcela.movimento_id !== null,
+      );
+      if (hasPaidPart) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          ok: false,
+          code: "RATEIO_COM_BAIXA",
+          message:
+            "Não é possível excluir o rateio porque uma ou mais partes já possuem baixa ou movimento bancário.",
+        });
+      }
+
+      await client.query(
+        "DELETE FROM fin_cp_rateio_itens WHERE rateio_id=$1",
+        [rateioId],
+      );
+      await client.query(
+        "DELETE FROM fin_lancamentos_cp WHERE id = ANY($1::int[])",
+        [lancamentoIds],
+      );
+      await client.query("DELETE FROM fin_cp_rateios WHERE id=$1", [rateioId]);
+
+      await client.query("COMMIT");
+      return res.json({
+        ok: true,
+        deleted: true,
+        rateio: true,
+        rateio_id: rateioId,
+        lancamentos_removidos: lancamentoIds.length,
+        movimentos_removidos: 0,
+      });
+    }
+
     const { rows: movs } = await client.query(
       `SELECT DISTINCT movimento_id
          FROM fin_parcelas_cp
         WHERE lancamento_id=$1 AND movimento_id IS NOT NULL`,
       [req.params.id],
     );
-    const movimentoIds = movs.map((r) => r.movimento_id).filter(Boolean);
+    const movimentoIds = movs.map((row) => row.movimento_id).filter(Boolean);
 
     if (movimentoIds.length) {
       await client.query(
@@ -2765,6 +3191,7 @@ router.delete("/lancamentos-cp/:id", async (req, res) => {
     return res.json({
       ok: true,
       deleted: true,
+      rateio: false,
       movimentos_removidos: movimentoIds.length,
     });
   } catch (err) {

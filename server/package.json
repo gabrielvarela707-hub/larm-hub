@@ -1,6 +1,6 @@
 {
   "name": "larmhub-api",
-  "version": "0.5.1",
+  "version": "0.5.3",
   "description": "API backend LarmHub / Santa Clara HUB",
   "main": "src/server.js",
   "scripts": {
@@ -61,7 +61,14 @@
     "db:seed:movimento:2026-06-26-30": "node scripts/seed_movimento_bancario_2026_06_29_30.js --execute",
     "db:preview:movimento-recebiveis-data": "node scripts/reparar_datas_movimentos_recebiveis.js",
     "db:repair:movimento-recebiveis-data": "node scripts/reparar_datas_movimentos_recebiveis.js",
-    "db:migrate:tenant-config": "node scripts/migrate_tenant_config.js"
+    "db:migrate:tenant-config": "node scripts/migrate_tenant_config.js",
+    "db:migrate:rateio-cp-estrutura": "node scripts/migrate_rateio_contas_pagar_estrutura.js",
+    "db:check:rateio-cp-estrutura": "node scripts/check_rateio_contas_pagar_estrutura.js",
+    "db:rollback:rateio-cp-estrutura": "node scripts/rollback_rateio_contas_pagar_estrutura.js",
+    "db:migrate:rateio-cp-backend": "node scripts/migrate_rateio_contas_pagar_backend.js",
+    "db:check:rateio-cp-backend": "node scripts/check_rateio_contas_pagar_backend.js",
+    "db:rollback:rateio-cp-backend": "node scripts/rollback_rateio_contas_pagar_backend.js",
+    "test:rateio-cp-backend": "node scripts/test_rateio_contas_pagar_backend.js"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.750.0",

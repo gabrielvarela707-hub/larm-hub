@@ -1,0 +1,21 @@
+ARQUIVOS — BACKEND 0.5.2 / RATEIO ETAPA 1
+
+ALTERADOS
+- package.json
+- package-lock.json
+- src/data/system_releases_seed.js
+- data/system_releases_seed.js
+
+NOVOS
+- scripts/migrate_rateio_contas_pagar_estrutura.js
+- scripts/check_rateio_contas_pagar_estrutura.js
+- scripts/rollback_rateio_contas_pagar_estrutura.js
+
+DOCUMENTAÇÃO
+- README-ATUALIZACAO-0.5.2.txt
+- ARQUIVOS-ALTERADOS-0.5.2.txt
+- SHA256SUMS-0.5.2.txt
+
+CONFIRMAÇÃO
+- Nenhum arquivo de rota foi alterado.
+- Nenhum arquivo de frontend foi incluído.
