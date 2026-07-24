@@ -295,8 +295,29 @@ function groupKey(file: StratoAnalysisFile, item: StratoAnalysisItem, index: num
   return `${file.arquivo}-${item.linha ?? index}-${item.boleto || item.documento || index}`
 }
 
-function parcelSelectionKey(fileIndex: number, itemIndex: number, parcelIndex: number) {
-  return `${fileIndex}:${itemIndex}:${parcelIndex}`
+function selectionPart(value: unknown) {
+  return encodeURIComponent(String(value ?? '').trim().toLowerCase())
+}
+
+function parcelSelectionKey(
+  file: StratoAnalysisFile,
+  item: StratoAnalysisItem,
+  parcel: StratoAnalysisParcel,
+) {
+  const row = parcel.relatorio || {}
+  const parcelIdentity = parcel.parcela?.id || [
+    row.obra || '',
+    row.unidade || '',
+    row.parcela || '',
+    row.boleto || item.boleto || '',
+  ].join('|')
+
+  return [
+    'v2',
+    selectionPart(file.arquivo),
+    selectionPart(item.linha ?? ''),
+    selectionPart(parcelIdentity),
+  ].join('|')
 }
 
 function isParcelEligible(item: StratoAnalysisItem, parcel: StratoAnalysisParcel) {
@@ -376,7 +397,7 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
       (item.parcelas || []).flatMap((parcel, parcelIndex) => (
         isParcelEligible(item, parcel)
           ? [{
-              key: parcelSelectionKey(fileIndex, itemIndex, parcelIndex),
+              key: parcelSelectionKey(file, item, parcel),
               arquivo: file.arquivo,
               item: itemIndex,
               parcela: parcelIndex,
@@ -590,7 +611,7 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
                                 {(item.parcelas || []).length ? item.parcelas!.map((parcel, parcelIndex) => {
                                   const row = parcel.relatorio || {}
                                   const matched = parcel.parcela
-                                  const selectionKey = parcelSelectionKey(fileIndex, itemIndex, parcelIndex)
+                                  const selectionKey = parcelSelectionKey(file, item, parcel)
                                   const eligible = isParcelEligible(item, parcel)
                                   return (
                                     <tr key={`${key}-${row.parcela || parcelIndex}`} className={parcel.bloqueado ? 'bg-amber-50/40' : ''}>

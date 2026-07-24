@@ -9,6 +9,11 @@ const component = fs.readFileSync(path.join(__dirname, '../src/components/financ
 const page = fs.readFileSync(path.join(__dirname, '../src/app/(dashboard)/financeiro/receber/page.tsx'), 'utf8')
 
 assert(component.includes('parcelSelectionKey'), 'Chave de seleção por parcela ausente.')
+assert(component.includes("'v2'"), 'A chave estável v2 não foi implementada.')
+assert(component.includes('selectionPart(file.arquivo)'), 'A chave precisa incluir o nome do retorno.')
+assert(component.includes('item.linha'), 'A chave precisa incluir a linha física do retorno.')
+assert(component.includes('parcel.parcela?.id'), 'A chave precisa usar o ID da parcela quando disponível.')
+assert(!component.includes('return `${fileIndex}:${itemIndex}:${parcelIndex}`'), 'A chave não pode depender da posição visual.')
 assert(component.includes('Aplicar ${selectedSelections.length} ajuste(s) e baixa(s)'), 'Botão de aplicação não foi habilitado.')
 assert(component.includes('CRIAR_PARCELA_E_BAIXAR'), 'Parcela ausente em contrato existente não está elegível.')
 assert(component.includes('CLIENTE_AUSENTE'), 'Bloqueio de cliente ausente não foi preservado.')
@@ -20,4 +25,4 @@ assert(page.includes('itemIndex + 1'), 'Numeração visual dos itens deve inicia
 assert(page.includes('<th style="width: 4%">Item</th>'), 'O PDF do retorno também deve usar Item em vez da linha física CNAB.')
 assert(page.includes('pendingStratoApplyPayload'), 'Arquivos da conferência não foram preservados para a aplicação.')
 
-console.log('Frontend Strato 0.6.5: seleção por parcela, aplicação, bloqueios e numeração iniciando em 1 conferidos.')
+console.log('Frontend Strato 0.6.6: seleção estável por parcela, aplicação e numeração iniciando em 1 conferidos.')
