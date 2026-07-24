@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react'
 import TableFloatingNav from '@/components/table-floating-nav'
-import StratoIntelligentReview, { type StratoAnalysisFile, type StratoApplySelection, type StratoIntelligentAnalysis } from '@/components/financeiro/StratoIntelligentReview'
+import StratoIntelligentReview, { type StratoAnalysisFile, type StratoApplySelection, type StratoIntelligentAnalysis, type StratoManualReceiptRequest } from '@/components/financeiro/StratoIntelligentReview'
 import { apiClient, useAuthStore } from '@/lib/auth-store'
 import { hasModuleAccess } from '@/lib/module-access'
 import { cn } from '@/lib/utils'
@@ -1694,6 +1694,77 @@ export default function ContasReceberPage() {
     }
   }
 
+  const createStratoManualReceipt = async (request: StratoManualReceiptRequest) => {
+    setError('')
+    setSuccess('')
+    try {
+      const response = await apiClient.post('/financeiro/contas-receber/recebimento-avulso-strato', {
+        titulo: request.titulo,
+        empresa: request.empresa,
+        cliente_id: request.cliente_id,
+        contrato_id: request.contrato_id,
+        arquivo_retorno: request.arquivo_retorno,
+        linha_retorno: request.linha_retorno,
+        boleto: request.boleto,
+        documento: request.documento,
+        parcela: request.parcela_referencia,
+        obra: request.obra,
+        unidade: request.unidade,
+        vencimento: request.vencimento,
+        data_recebimento: request.data_recebimento,
+        data_credito: request.data_credito,
+        valor_nominal: request.valor_nominal,
+        valor_recebido: request.valor_recebido,
+      })
+
+      const created = response.data?.data || {}
+      setStratoIntelligentReview(current => current.map(file => {
+        if (file.arquivo !== request.arquivo) return file
+        const items = [...(file.analise_inteligente.itens || [])]
+        const item = items[request.item]
+        if (!item) return file
+        const parcels = [...(item.parcelas || [])]
+        const previous = parcels[request.parcela]
+        if (!previous) return file
+
+        parcels[request.parcela] = {
+          ...previous,
+          parcela: {
+            ...(previous.parcela || {}),
+            ...(created.parcela || {}),
+            contrato_numero: previous.contrato?.numero || previous.parcela?.contrato_numero || null,
+          },
+          classificacao: 'JA_BAIXADA',
+          acao_proposta: 'NENHUMA',
+          bloqueado: true,
+          confianca: 1,
+          divergencias: [],
+          valor_atual_larmhub: Number(created.parcela?.valor_nominal || request.valor_nominal),
+          confirmacao_recomendada: false,
+          evidencias_correspondencia: Array.from(new Set([
+            ...(previous.evidencias_correspondencia || []),
+            'RECEBIMENTO_AVULSO_CRIADO',
+          ])),
+        }
+        items[request.item] = { ...item, parcelas: parcels }
+        return {
+          ...file,
+          analise_inteligente: {
+            ...file.analise_inteligente,
+            itens: items,
+          },
+        }
+      }))
+
+      setSuccess(response.data?.message || `Recebimento “${request.titulo}” criado e baixado com sucesso.`)
+      await load()
+    } catch (requestError: unknown) {
+      const message = requestErrorMessage(requestError, 'Não foi possível criar e baixar o recebimento.')
+      setError(message)
+      throw new Error(message)
+    }
+  }
+
   const exportReturnResultPdf = useCallback(() => {
     if (!returnResult) return
     const printWindow = window.open('', '_blank', 'width=1200,height=800')
@@ -1960,6 +2031,7 @@ export default function ContasReceberPage() {
           files={stratoIntelligentReview}
           applying={stratoApplyLoading}
           onApply={pendingStratoApplyPayload ? applyStratoIntelligentReview : undefined}
+          onCreateReceipt={createStratoManualReceipt}
           onClose={() => {
             setStratoIntelligentReview([])
             setPendingStratoApplyPayload(null)

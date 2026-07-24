@@ -10,6 +10,7 @@ import {
   FileSearch,
   LockKeyhole,
   Loader2,
+  ReceiptText,
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -110,6 +111,9 @@ export type StratoAnalysisParcel = {
 export type StratoAnalysisItem = {
   linha?: number | null
   boleto?: string | null
+  nosso_numero?: string | null
+  nosso_numero_dv?: string | null
+  controle_participante?: string | null
   documento?: string | null
   ocorrencia?: string | null
   ocorrencia_descricao?: string | null
@@ -190,21 +194,44 @@ export type StratoApplySelection = {
   arquivo: string
   item: number
   parcela: number
+}
+
+export type StratoManualReceiptRequest = {
+  arquivo: string
+  item: number
+  parcela: number
+  titulo: string
+  empresa: string
+  cliente_id: number | string
+  contrato_id: string
+  arquivo_retorno: string
   linha_retorno?: number | null
-  parcela_id?: string | null
-  nosso_numero?: string | null
-  cliente_nome?: string | null
-  parcela_nome?: string | null
+  boleto?: string | null
+  documento?: string | null
+  parcela_referencia?: string | null
   obra?: string | null
   unidade?: string | null
-  juros_ajustados?: number
-  desconto_ajustado?: number
+  vencimento?: string | null
+  data_recebimento?: string | null
+  data_credito?: string | null
+  valor_nominal: number
+  valor_recebido: number
+}
+
+type ManualReceiptDraft = {
+  file: StratoAnalysisFile
+  fileIndex: number
+  item: StratoAnalysisItem
+  itemIndex: number
+  parcel: StratoAnalysisParcel
+  parcelIndex: number
 }
 
 type Props = {
   files: StratoAnalysisFile[]
   onClose: () => void
   onApply?: (selections: StratoApplySelection[]) => Promise<void>
+  onCreateReceipt?: (request: StratoManualReceiptRequest) => Promise<void>
   applying?: boolean
 }
 
@@ -296,6 +323,7 @@ function evidenceLabel(value: string) {
     FRACAO_EQUIVALENTE: 'fração equivalente',
     VENCIMENTO_EXATO: 'vencimento exato',
     BOLETO_COMPLETO_NO_RELATORIO_E_RETORNO: 'boleto completo confirmado no RET e Strato',
+    RECEBIMENTO_AVULSO_CRIADO: 'recebimento criado e baixado no LarmHub',
   }
   return labels[value] || text(value)
 }
@@ -339,6 +367,13 @@ function isParcelEligible(item: StratoAnalysisItem, parcel: StratoAnalysisParcel
     'PARCELA_AMBIGUA',
   ].includes(classification)
   return allowedAction && !hardBlocked && item.soma_confere_com_retorno !== false
+}
+
+function canCreateManualReceipt(parcel: StratoAnalysisParcel) {
+  const classification = String(parcel.classificacao || '')
+  return classification === 'PARCELA_AUSENTE'
+    && Boolean(parcel.cliente?.id)
+    && Boolean(parcel.contrato?.id)
 }
 
 function escapeHtml(value: unknown) {
@@ -395,38 +430,34 @@ function buildPrintHtml(files: StratoAnalysisFile[]) {
   </body></html>`
 }
 
-export default function StratoIntelligentReview({ files, onClose, onApply, applying = false }: Props) {
+export default function StratoIntelligentReview({ files, onClose, onApply, onCreateReceipt, applying = false }: Props) {
   const initialKeys = useMemo(() => files.flatMap(file => (file.analise_inteligente.itens || [])
     .map((item, index) => ({ item, key: groupKey(file, item, index) }))
     .filter(({ item }) => item.multiparcelas || item.execucao_automatica_bloqueada)
     .map(({ key }) => key)), [files])
   const [expanded, setExpanded] = useState<Set<string>>(new Set(initialKeys))
-  const eligibleSelections = useMemo<StratoApplySelection[]>(() => files.flatMap(file =>
+  const eligibleSelections = useMemo<StratoApplySelection[]>(() => files.flatMap((file, fileIndex) =>
     (file.analise_inteligente.itens || []).flatMap((item, itemIndex) =>
-      (item.parcelas || []).flatMap((parcel, parcelIndex) => {
-        if (!isParcelEligible(item, parcel)) return []
-        const row = parcel.relatorio || {}
-        return [{
-          key: parcelSelectionKey(file, item, parcel),
-          arquivo: file.arquivo,
-          item: itemIndex,
-          parcela: parcelIndex,
-          linha_retorno: item.linha ?? null,
-          parcela_id: parcel.parcela?.id || null,
-          nosso_numero: item.boleto || row.boleto || null,
-          cliente_nome: row.cliente_nome || parcel.cliente?.nome || null,
-          parcela_nome: row.parcela || null,
-          obra: row.obra || null,
-          unidade: row.unidade || null,
-          juros_ajustados: Number(parcel.valor_juros_financeiro || 0) + Number(parcel.valor_moras || 0),
-          desconto_ajustado: Number(parcel.valor_desconto || 0),
-        }]
-      }),
+      (item.parcelas || []).flatMap((parcel, parcelIndex) => (
+        isParcelEligible(item, parcel)
+          ? [{
+              key: parcelSelectionKey(file, item, parcel),
+              arquivo: file.arquivo,
+              item: itemIndex,
+              parcela: parcelIndex,
+            }]
+          : []
+      )),
     ),
   ), [files])
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(eligibleSelections.map(entry => entry.key)),
   )
+
+  const [manualReceipt, setManualReceipt] = useState<ManualReceiptDraft | null>(null)
+  const [manualTitle, setManualTitle] = useState('')
+  const [manualSaving, setManualSaving] = useState(false)
+  const [manualError, setManualError] = useState('')
 
   useEffect(() => setExpanded(new Set(initialKeys)), [initialKeys])
   useEffect(() => setSelected(new Set(eligibleSelections.map(entry => entry.key))), [eligibleSelections])
@@ -484,13 +515,82 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
 
   function applySelected() {
     if (!onApply || applying || selectedSelections.length === 0) return
-    const totalInterest = selectedSelections.reduce((sum, selection) => sum + Number(selection.juros_ajustados || 0), 0)
-    const totalDiscount = selectedSelections.reduce((sum, selection) => sum + Number(selection.desconto_ajustado || 0), 0)
     const confirmed = window.confirm(
-      `Confirma ${selectedSelections.length} parcela(s)? Juros a ajustar: ${money(totalInterest)}. Desconto a ajustar: ${money(totalDiscount)}.`,
+      `Confirma a aplicação de ${selectedSelections.length} ajuste(s) e baixa(s)? Cada parcela terá um Movimento Bancário individual.`,
     )
     if (!confirmed) return
     void onApply(selectedSelections)
+  }
+
+  function openManualReceipt(
+    file: StratoAnalysisFile,
+    fileIndex: number,
+    item: StratoAnalysisItem,
+    itemIndex: number,
+    parcel: StratoAnalysisParcel,
+    parcelIndex: number,
+  ) {
+    setManualReceipt({ file, fileIndex, item, itemIndex, parcel, parcelIndex })
+    setManualTitle('')
+    setManualError('')
+  }
+
+  function closeManualReceipt() {
+    if (manualSaving) return
+    setManualReceipt(null)
+    setManualTitle('')
+    setManualError('')
+  }
+
+  async function submitManualReceipt() {
+    if (!manualReceipt || !onCreateReceipt || manualSaving) return
+    const title = manualTitle.trim().replace(/\s+/g, ' ')
+    if (title.length < 3) {
+      setManualError('Informe o título/nome da despesa ou receita.')
+      return
+    }
+
+    const { file, fileIndex, item, itemIndex, parcel, parcelIndex } = manualReceipt
+    const row = parcel.relatorio || {}
+    const valorRecebido = Number(item.valor_retorno || parcel.valor_pago || row.valor_pago || 0)
+    const valorNominal = Number(item.valor_titulo_retorno || valorRecebido)
+    if (valorRecebido <= 0) {
+      setManualError('O retorno bancário não possui valor recebido válido.')
+      return
+    }
+
+    setManualSaving(true)
+    setManualError('')
+    try {
+      await onCreateReceipt({
+        arquivo: file.arquivo,
+        item: itemIndex,
+        parcela: parcelIndex,
+        titulo: title,
+        empresa: String(file.analise_inteligente.empresa || ''),
+        cliente_id: parcel.cliente?.id || '',
+        contrato_id: String(parcel.contrato?.id || ''),
+        arquivo_retorno: file.arquivo,
+        linha_retorno: item.linha,
+        boleto: item.boleto || row.boleto || null,
+        documento: item.documento || null,
+        parcela_referencia: row.parcela || null,
+        obra: row.obra || null,
+        unidade: row.unidade || null,
+        vencimento: row.vencimento || item.data_ocorrencia || item.data_recebimento || null,
+        data_recebimento: item.data_recebimento || row.data_pagamento || item.data_ocorrencia || null,
+        data_credito: item.data_credito || null,
+        valor_nominal: valorNominal,
+        valor_recebido: valorRecebido,
+      })
+      setManualReceipt(null)
+      setManualTitle('')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Não foi possível criar o recebimento.'
+      setManualError(message)
+    } finally {
+      setManualSaving(false)
+    }
   }
 
   function printReview() {
@@ -560,8 +660,8 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
         <div className="mt-3 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
           <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
-            <p className="font-semibold">A confirmação do operador é a validação final.</p>
-            <p className="mt-0.5">O vínculo usa parcela, nosso número, nome do cliente e fração. Na gravação, o sistema ajusta juros/desconto, baixa a parcela e cria o Movimento Bancário.</p>
+            <p className="font-semibold">O backend recalcula e valida todos os valores antes de gravar.</p>
+            <p className="mt-0.5">Parcelas localizadas e parcelas ausentes em contratos existentes podem ser aplicadas. Cliente ou contrato ausente/ambíguo permanece bloqueado para evitar cadastro incompleto.</p>
           </div>
         </div>
 
@@ -677,11 +777,6 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
                                           </p>
                                         )}
                                         {financialNatureLabel(parcel) ? <p className="mt-1 max-w-[220px] text-[9px] font-medium leading-4 text-violet-700">{financialNatureLabel(parcel)}</p> : null}
-                                        {eligible && (
-                                          <p className="mt-1 max-w-[220px] rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-[9px] font-semibold leading-4 text-emerald-800">
-                                            Ao aplicar: juros {money(Number(parcel.valor_juros_financeiro || 0) + Number(parcel.valor_moras || 0))} · desconto {money(parcel.valor_desconto)}
-                                          </p>
-                                        )}
                                         {parcel.divergencias?.length ? <p className="mt-1 max-w-[220px] text-[9px] leading-4 text-slate-500">{parcel.divergencias.map(divergenceLabel).join(' · ')}</p> : null}
                                         {parcel.evidencias_correspondencia?.length ? <p className="mt-1 max-w-[220px] text-[9px] leading-4 text-slate-400">Evidências: {parcel.evidencias_correspondencia.map(evidenceLabel).join(', ')}</p> : null}
                                         {parcel.confianca != null ? <p className="mt-1 text-[9px] text-slate-400">Confiança {percent(parcel.confianca)}</p> : null}
@@ -689,7 +784,18 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
                                       <td className="px-2 py-2">
                                         <p className="max-w-[190px] font-medium text-slate-700">{actionLabel(parcel.acao_proposta)}</p>
                                         {eligible && parcel.confirmacao_recomendada && <p className="mt-1 text-[9px] font-medium text-blue-700">Marque a parcela para confirmar a correspondência e os valores.</p>}
-                                        {!eligible && parcel.acao_proposta !== 'NENHUMA' && <p className="mt-1 text-[9px] text-amber-700">Requer cadastro/revisão manual</p>}
+                                        {canCreateManualReceipt(parcel) && onCreateReceipt ? (
+                                          <button
+                                            type="button"
+                                            disabled={applying || manualSaving}
+                                            onClick={() => openManualReceipt(file, fileIndex, item, itemIndex, parcel, parcelIndex)}
+                                            className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[9px] font-semibold text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                          >
+                                            <ReceiptText className="h-3.5 w-3.5" />
+                                            Criar recebimento
+                                          </button>
+                                        ) : null}
+                                        {!eligible && !canCreateManualReceipt(parcel) && parcel.acao_proposta !== 'NENHUMA' && <p className="mt-1 text-[9px] text-amber-700">Requer cadastro/revisão manual</p>}
                                       </td>
                                     </tr>
                                   )
@@ -737,6 +843,89 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
           </button>
         </div>
       </div>
+
+      {manualReceipt ? (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-xl rounded-xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <ReceiptText className="h-5 w-5 text-emerald-700" />
+                  <h3 className="text-sm font-semibold text-slate-900">Criar e baixar recebimento</h3>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Cria o título no Contas a Receber e registra o valor recebido no Movimento Bancário.
+                </p>
+              </div>
+              <button type="button" onClick={closeManualReceipt} disabled={manualSaving} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50" aria-label="Fechar">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 p-4">
+              <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs sm:grid-cols-2">
+                <div>
+                  <p className="text-[9px] uppercase tracking-wide text-slate-400">Cliente</p>
+                  <p className="mt-0.5 font-semibold text-slate-800">{manualReceipt.parcel.cliente?.nome || manualReceipt.parcel.relatorio?.cliente_nome || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] uppercase tracking-wide text-slate-400">Contrato</p>
+                  <p className="mt-0.5 font-semibold text-slate-800">{manualReceipt.parcel.contrato?.numero || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] uppercase tracking-wide text-slate-400">Boleto</p>
+                  <p className="mt-0.5 font-semibold text-slate-800">{manualReceipt.item.boleto || manualReceipt.parcel.relatorio?.boleto || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] uppercase tracking-wide text-slate-400">Recebimento</p>
+                  <p className="mt-0.5 font-semibold text-emerald-700">{money(manualReceipt.item.valor_retorno || manualReceipt.parcel.valor_pago)}</p>
+                </div>
+              </div>
+
+              <label className="block">
+                <span className="text-xs font-semibold text-slate-700">Título / nome da despesa ou receita *</span>
+                <input
+                  autoFocus
+                  value={manualTitle}
+                  onChange={event => {
+                    setManualTitle(event.target.value)
+                    if (manualError) setManualError('')
+                  }}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      void submitManualReceipt()
+                    }
+                  }}
+                  placeholder="Ex.: Reembolso de água, energia e IPTU — julho/2026"
+                  maxLength={180}
+                  className="mt-1 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-800 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                />
+                <span className="mt-1 block text-[10px] text-slate-500">Esse título será exibido no Contas a Receber e no histórico do Movimento Bancário.</span>
+              </label>
+
+              {manualError ? (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{manualError}</div>
+              ) : null}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-slate-100 p-4">
+              <button type="button" onClick={closeManualReceipt} disabled={manualSaving} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitManualReceipt()}
+                disabled={manualSaving || manualTitle.trim().length < 3}
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-emerald-700 px-4 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {manualSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <ReceiptText className="h-4 w-4" />}
+                {manualSaving ? 'Criando...' : 'Criar e dar baixa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }
