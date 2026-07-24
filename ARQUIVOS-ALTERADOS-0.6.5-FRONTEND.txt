@@ -1,0 +1,7 @@
+package.json
+package-lock.json
+src/app/(dashboard)/financeiro/receber/page.tsx
+src/components/financeiro/StratoIntelligentReview.tsx
+scripts/test_strato_matching_frontend.js
+scripts/test_strato_review_frontend.js
+scripts/test_strato_apply_frontend.js

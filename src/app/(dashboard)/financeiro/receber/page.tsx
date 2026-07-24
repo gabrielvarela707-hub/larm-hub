@@ -230,6 +230,18 @@ type ReturnStratoReportInfo = {
   valor_pago?: number | null
 }
 
+type ReturnReconciliationCandidate = {
+  parcela_id?: string | null
+  contrato?: string | null
+  cliente?: string | null
+  score?: number | null
+  confianca?: number | null
+  evidencias?: string[]
+  parcela?: string | null
+  vencimento?: string | null
+  valor_atual?: number | null
+}
+
 type ReturnProcessingItem = {
   linha: number
   arquivo_origem?: string | null
@@ -237,6 +249,7 @@ type ReturnProcessingItem = {
   ocorrencia: string
   ocorrencia_descricao: string
   nosso_numero?: string | null
+  nosso_numero_dv?: string | null
   controle_participante?: string | null
   documento?: string | null
   vencimento?: string | null
@@ -252,6 +265,7 @@ type ReturnProcessingItem = {
   cliente?: string | null
   metodo_conciliacao?: string | null
   confianca_conciliacao?: number | null
+  candidatos_conciliacao?: ReturnReconciliationCandidate[]
   relatorio_strato?: ReturnStratoReportInfo | null
   movimento_id?: number | string | null
   divergencia_valor?: number | null
@@ -419,6 +433,37 @@ function origemBaixaLabel(row: ParcelaReceber) {
   return 'Aguardando conciliação'
 }
 
+function fullNossoNumero(item: Pick<ReturnProcessingItem, 'nosso_numero' | 'nosso_numero_dv'>) {
+  const base = String(item.nosso_numero || '').replace(/\D/g, '')
+  const dv = String(item.nosso_numero_dv || '').replace(/\D/g, '')
+  if (!base) return '—'
+  if (!dv || base.endsWith(dv)) return base
+  return `${base}${dv}`
+}
+
+function reconciliationEvidenceLabel(value: string) {
+  const labels: Record<string, string> = {
+    CLIENTE_CODIGO_EXATO: 'cliente',
+    CLIENTE_NOME_EXATO: 'nome',
+    CLIENTE_NOME_COMPATIVEL: 'nome compatível',
+    CONTRATO_EXATO: 'contrato',
+    CONTRATO_POR_CLIENTE: 'contrato do cliente',
+    UNIDADE_EXATA: 'unidade',
+    OBRA_EXATA: 'obra',
+    FRACAO_EXATA: 'parcela',
+    FRACAO_EQUIVALENTE: 'parcela equivalente',
+    VENCIMENTO_EXATO: 'vencimento',
+    VALOR_NOMINAL_EXATO: 'valor nominal',
+    VALOR_NOMINAL_APROXIMADO: 'valor aproximado',
+    VALOR_RECEBIDO_EXATO: 'valor recebido',
+    DIFERENCA_EXPLICADA_PELO_RELATORIO: 'juros/desconto explicado pelo Strato',
+    BOLETO_COMPLETO_EXATO: 'boleto completo',
+    NOSSO_NUMERO_BASE_EXATO: 'nosso número',
+    CONTROLE_PARTICIPANTE_EXATO: 'controle',
+  }
+  return labels[value] || value.replace(/_/g, ' ').toLowerCase()
+}
+
 function returnItemStatusLabel(item: ReturnProcessingItem, historical = false) {
   if (item.status_processamento === 'ja_baixado') return 'Já baixado'
   if (item.status_processamento === 'liquidado' || item.status_processamento === 'baixado') return historical ? 'Baixa registrada' : 'Baixado agora'
@@ -456,6 +501,14 @@ function returnItemReason(item: ReturnProcessingItem, historical = false) {
     return `Conciliado com o relatório Strato${report?.arquivo ? ` (${report.arquivo})` : ''}; os identificadores do boleto foram gravados para os próximos retornos.${confidence}`
   }
   if (['relatorio_strato_sem_correspondencia_segura', 'relatorio_strato_sem_match_seguro'].includes(String(item.metodo_conciliacao || ''))) {
+    const candidate = item.candidatos_conciliacao?.[0]
+    if (candidate) {
+      const confidence = candidate.confianca != null ? ` Confiança estimada ${Math.min(100, Number(candidate.confianca))}%.` : ''
+      const evidence = candidate.evidencias?.length
+        ? ` Evidências: ${candidate.evidencias.map(reconciliationEvidenceLabel).join(', ')}.`
+        : ''
+      return `Correspondência provável: ${candidate.cliente || report?.cliente_nome || 'cliente identificado'}${candidate.contrato ? ` — ${candidate.contrato}` : ''}${candidate.parcela ? ` — parcela ${candidate.parcela}` : ''}. O valor diverge, mas pode estar explicado por juros, moras ou desconto do relatório Strato. Revise e confirme na conferência inteligente.${confidence}${evidence}`
+    }
     return `O relatório Strato identificou ${report?.cliente_nome || 'o título'}, mas o backend não encontrou uma parcela única com evidências suficientes. Nenhuma baixa automática foi feita.`
   }
   if (item.status_processamento === 'ja_baixado') {
@@ -516,7 +569,7 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
         <td>${escapePdfHtml(status)}</td>
         <td>${escapePdfHtml(`${item.ocorrencia || '—'} · ${item.ocorrencia_descricao || '—'}`)}</td>
         <td><strong>${escapePdfHtml(item.cliente || item.relatorio_strato?.cliente_nome || 'Não localizado')}</strong><br><span>${escapePdfHtml(item.contrato || (item.relatorio_strato ? `${item.relatorio_strato.cliente_codigo || 'sem código'} · ${item.relatorio_strato.unidade || 'sem unidade'} · parcela ${item.relatorio_strato.parcela || '—'}` : (item.status_processamento === 'nao_localizado' ? 'sem parcela/contrato conciliado' : 'sem contrato localizado')))}</span></td>
-        <td>${escapePdfHtml(item.nosso_numero || '—')}</td>
+        <td>${escapePdfHtml(fullNossoNumero(item))}</td>
         <td>${escapePdfHtml(item.controle_participante || '—')}</td>
         <td>${escapePdfHtml(item.documento || '—')}</td>
         <td>${escapePdfHtml(formatDate(item.vencimento))}</td>
@@ -1999,7 +2052,7 @@ export default function ContasReceberPage() {
                         <p className="font-medium text-slate-700">{item.cliente || item.relatorio_strato?.cliente_nome || 'Não localizado'}</p>
                         <p className="text-[10px] text-slate-400">{item.contrato ? `${item.contrato}${item.parcela_numero ? ` · parcela ${item.parcela_numero}${item.parcela_total ? `/${item.parcela_total}` : ''}` : ''}` : (item.relatorio_strato ? `${item.relatorio_strato.cliente_codigo || 'sem código'} · ${item.relatorio_strato.unidade || 'sem unidade'} · parcela ${item.relatorio_strato.parcela || '—'}` : (item.status_processamento === 'nao_localizado' ? 'sem parcela/contrato conciliado' : 'sem contrato localizado'))}</p>
                       </td>
-                      <td className="px-3 py-2">{item.nosso_numero || '—'}</td>
+                      <td className="px-3 py-2">{fullNossoNumero(item)}</td>
                       <td className="px-3 py-2">{item.controle_participante || '—'}</td>
                       <td className="px-3 py-2">{item.documento || '—'}</td>
                       <td className="px-3 py-2">{formatDate(item.vencimento)}</td>

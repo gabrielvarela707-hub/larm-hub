@@ -88,6 +88,14 @@ export type StratoAnalysisParcel = {
   confianca?: number | null
   divergencias?: string[]
   valor_atual_larmhub?: number | null
+  natureza_financeira?: {
+    codigo?: string | null
+    origem?: string | null
+    valor_acrescimos?: number | null
+    valor_desconto?: number | null
+  } | null
+  confirmacao_recomendada?: boolean
+  evidencias_correspondencia?: string[]
   valor_nominal?: number | null
   valor_juros_financeiro?: number | null
   valor_seguro?: number | null
@@ -261,6 +269,28 @@ function divergenceLabel(value: string) {
   return labels[value] || text(value)
 }
 
+function financialNatureLabel(parcel: StratoAnalysisParcel) {
+  const nature = parcel.natureza_financeira
+  const code = String(nature?.codigo || '')
+  if (code === 'JUROS_MORAS_OU_ACRESCIMOS') return `Acréscimo por juros/moras ${money(nature?.valor_acrescimos)}`
+  if (code === 'DESCONTO') return `Desconto ${money(nature?.valor_desconto)}`
+  if (code === 'ACRESCIMO_E_DESCONTO') return `Acréscimos ${money(nature?.valor_acrescimos)} e desconto ${money(nature?.valor_desconto)}`
+  if (code === 'ACRESCIMO_PROVAVEL') return `Acréscimo provável ${money(nature?.valor_acrescimos)} — confirmar`
+  if (code === 'DESCONTO_PROVAVEL') return `Desconto provável ${money(nature?.valor_desconto)} — confirmar`
+  return ''
+}
+
+function evidenceLabel(value: string) {
+  const labels: Record<string, string> = {
+    CLIENTE_LOCALIZADO: 'cliente localizado',
+    CONTRATO_LOCALIZADO: 'contrato localizado',
+    FRACAO_EQUIVALENTE: 'fração equivalente',
+    VENCIMENTO_EXATO: 'vencimento exato',
+    BOLETO_COMPLETO_NO_RELATORIO_E_RETORNO: 'boleto completo confirmado no RET e Strato',
+  }
+  return labels[value] || text(value)
+}
+
 function groupKey(file: StratoAnalysisFile, item: StratoAnalysisItem, index: number) {
   return `${file.arquivo}-${item.linha ?? index}-${item.boleto || item.documento || index}`
 }
@@ -319,7 +349,7 @@ function buildPrintHtml(files: StratoAnalysisFile[]) {
     })).join('')
     return `<section>
       <h2>${escapeHtml(file.arquivo)} · ${escapeHtml(analysis.empresa || 'Empresa não identificada')}</h2>
-      <p>Versão da análise ${escapeHtml(analysis.versao || '0.6.4')} · conferência da versão 0.6.4.</p>
+      <p>Versão da análise ${escapeHtml(analysis.versao || '0.6.5')} · conferência da versão 0.6.5.</p>
       <table>
         <thead><tr><th>Obra</th><th>Unid.</th><th>Parcela</th><th>Boleto</th><th>Vencimento</th><th>A pagar</th><th>J.FCT</th><th>Seguro</th><th>Moras</th><th>Desconto</th><th>Resíduo</th><th>Total</th><th>Recebimento</th><th>Pago</th><th>Diferença</th><th>LarmHub</th><th>Situação</th><th>Ação</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="18">Nenhuma parcela relacionada.</td></tr>'}</tbody>
@@ -500,7 +530,7 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
                 <div>
                   <p className="text-xs font-semibold text-slate-800">{file.arquivo}</p>
-                  <p className="text-[10px] text-slate-500">{file.analise_inteligente.empresa || 'Empresa não identificada'} · análise {file.analise_inteligente.versao || '0.6.4'}</p>
+                  <p className="text-[10px] text-slate-500">{file.analise_inteligente.empresa || 'Empresa não identificada'} · análise {file.analise_inteligente.versao || '0.6.5'}</p>
                 </div>
                 <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold', file.analise_inteligente.requer_fluxo_inteligente ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>
                   {file.analise_inteligente.requer_fluxo_inteligente ? 'Revisão necessária' : 'Sem bloqueios complexos'}
@@ -600,11 +630,19 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
                                       </td>
                                       <td className="px-2 py-2">
                                         <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[9px] font-semibold', String(parcel.classificacao || '').startsWith('JA_BAIXADA') ? 'border-blue-200 bg-blue-50 text-blue-700' : parcel.bloqueado ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{classificationLabel(parcel.classificacao)}</span>
+                                        {parcel.confirmacao_recomendada && (
+                                          <p className="mt-1 max-w-[220px] rounded border border-blue-200 bg-blue-50 px-2 py-1 text-[9px] font-semibold leading-4 text-blue-800">
+                                            Correspondência provável — confirme os valores antes de aplicar.
+                                          </p>
+                                        )}
+                                        {financialNatureLabel(parcel) ? <p className="mt-1 max-w-[220px] text-[9px] font-medium leading-4 text-violet-700">{financialNatureLabel(parcel)}</p> : null}
                                         {parcel.divergencias?.length ? <p className="mt-1 max-w-[220px] text-[9px] leading-4 text-slate-500">{parcel.divergencias.map(divergenceLabel).join(' · ')}</p> : null}
+                                        {parcel.evidencias_correspondencia?.length ? <p className="mt-1 max-w-[220px] text-[9px] leading-4 text-slate-400">Evidências: {parcel.evidencias_correspondencia.map(evidenceLabel).join(', ')}</p> : null}
                                         {parcel.confianca != null ? <p className="mt-1 text-[9px] text-slate-400">Confiança {percent(parcel.confianca)}</p> : null}
                                       </td>
                                       <td className="px-2 py-2">
                                         <p className="max-w-[190px] font-medium text-slate-700">{actionLabel(parcel.acao_proposta)}</p>
+                                        {eligible && parcel.confirmacao_recomendada && <p className="mt-1 text-[9px] font-medium text-blue-700">Marque a parcela para confirmar a correspondência e os valores.</p>}
                                         {!eligible && parcel.acao_proposta !== 'NENHUMA' && <p className="mt-1 text-[9px] text-amber-700">Requer cadastro/revisão manual</p>}
                                       </td>
                                     </tr>

@@ -15,7 +15,7 @@ for (const label of ['Obra','Unid.','Parcela','Boleto','Vencimento','A pagar','J
   assert(component.includes(`'${label}'`) || component.includes(`>${label}<`), `Coluna Strato ausente: ${label}`)
 }
 
-assert(component.includes('Aplicar ${selectedSelections.length} ajuste(s) e baixa(s)'), 'A aplicação selecionada da etapa 0.6.4 deve estar disponível.')
+assert(component.includes('Aplicar ${selectedSelections.length} ajuste(s) e baixa(s)'), 'A aplicação selecionada da etapa 0.6.5 deve estar disponível.')
 assert(component.includes('valor_desconto'), 'O desconto precisa permanecer separado.')
 assert(component.includes('valor_juros_financeiro'), 'Juros financeiros precisam permanecer separados.')
 assert(component.includes('valor_moras'), 'Moras precisam permanecer separadas.')
@@ -26,4 +26,4 @@ assert(page.includes('responseData?.requires_review'), 'A tela precisa tratar a 
 assert(page.includes('setStratoIntelligentReview(reviewFiles)'), 'A análise retornada pelo backend precisa ser apresentada no frontend.')
 assert(page.includes('<StratoIntelligentReview'), 'O componente de conferência precisa estar renderizado.')
 
-console.log('Frontend Strato 0.6.4: relatório visual, multiparcelas, descontos, divergências, PDF e aplicação selecionada conferidos.')
+console.log('Frontend Strato 0.6.5: relatório visual, multiparcelas, descontos, divergências, PDF e aplicação selecionada conferidos.')

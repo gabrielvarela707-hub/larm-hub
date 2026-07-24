@@ -20,4 +20,4 @@ assert(page.includes('itemIndex + 1'), 'Numeração visual dos itens deve inicia
 assert(page.includes('<th style="width: 4%">Item</th>'), 'O PDF do retorno também deve usar Item em vez da linha física CNAB.')
 assert(page.includes('pendingStratoApplyPayload'), 'Arquivos da conferência não foram preservados para a aplicação.')
 
-console.log('Frontend Strato 0.6.4: seleção por parcela, aplicação, bloqueios e numeração iniciando em 1 conferidos.')
+console.log('Frontend Strato 0.6.5: seleção por parcela, aplicação, bloqueios e numeração iniciando em 1 conferidos.')
