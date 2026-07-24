@@ -1,0 +1,7 @@
+package.json
+package-lock.json
+src/app/(dashboard)/financeiro/receber/page.tsx
+scripts/test_cr_discount_display.js
+README-ATUALIZACAO-0.6.0-FRONTEND.txt
+ARQUIVOS-ALTERADOS-0.6.0.txt
+SHA256SUMS-0.6.0-FRONTEND.txt

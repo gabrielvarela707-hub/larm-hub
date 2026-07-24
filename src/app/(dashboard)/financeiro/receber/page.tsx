@@ -1974,7 +1974,18 @@ export default function ContasReceberPage() {
                     <td className="px-3 py-3"><div className="mb-1 flex items-center gap-1.5"><span className={cn('rounded-full border px-1.5 py-0.5 text-[9px] font-semibold', row.empresa_cobranca === 'LUCKY' ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-blue-200 bg-blue-50 text-blue-700')}>{row.empresa_cobranca || 'SEM EMPRESA'}</span></div><p className="text-slate-700 truncate" title={row.obra_nome || ''}>{row.obra_nome || '—'}</p><p className="mt-1 text-[10px] text-slate-400 truncate" title={row.unidade_nome || ''}>Unidade: {row.unidade_nome || '—'}</p></td>
                     <td className="px-3 py-3 text-slate-600 truncate" title={row.receita_documento || row.documento_legado || ''}>{row.receita_documento || row.documento_legado || '—'}</td>
                     <td className="px-3 py-3 text-center text-slate-600 whitespace-nowrap">{row.parcela_numero_legado || row.numero || '—'}{row.parcela_total_legado ? `/${row.parcela_total_legado}` : ''}</td>
-                    <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-800 whitespace-nowrap"><p>{formatCurrency(row.valor_total)}</p>{row.valor_recalculado != null && <p className="mt-1 text-[9px] font-normal text-blue-600" title={`Recalculado para ${formatDate(row.data_recalculo)}`}>recalculado</p>}</td>
+                    <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-800 whitespace-nowrap">
+                      <p title="Valor líquido após descontos e juros">{formatCurrency(row.valor_total)}</p>
+                      {(Number(row.valor_desconto || 0) > 0 || Number(row.valor_juros_mora || 0) > 0) && (
+                        <div className="mt-1 space-y-0.5 text-[9px] font-normal">
+                          <p className="text-slate-500">Nominal {formatCurrency(row.valor_nominal)}</p>
+                          {Number(row.valor_desconto || 0) > 0 && <p className="text-rose-600">Desconto -{formatCurrency(row.valor_desconto || 0)}</p>}
+                          {Number(row.valor_juros_mora || 0) > 0 && <p className="text-amber-700">Juros +{formatCurrency(row.valor_juros_mora || 0)}</p>}
+                          {row.status === 'paga' && Number(row.valor_pago || 0) > 0 && <p className="text-emerald-700">Recebido {formatCurrency(row.valor_pago || 0)}</p>}
+                        </div>
+                      )}
+                      {row.valor_recalculado != null && <p className="mt-1 text-[9px] font-normal text-blue-600" title={`Recalculado para ${formatDate(row.data_recalculo)}`}>recalculado</p>}
+                    </td>
                     <td className="px-3 py-3">
                       {editingReceiptDateId === row.id ? (
                         <div className="flex items-center gap-1">
