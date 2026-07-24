@@ -1,0 +1,7 @@
+674a780456735d1b7a43b9980403988df9e1d3113e3ca016370ebd10bcb6b69f  ./ARQUIVOS-ALTERADOS-0.6.3.txt
+7317b2958b186784a125b8077b005f71739cdc4ee754fefed3d20cc9dd632e52  ./README-ATUALIZACAO-0.6.3-FRONTEND.txt
+a9de854abf5ef594ba97a7477df9db1aaa8f21da9c2cdfb1c0dc8090c293d648  ./package-lock.json
+0870baf5db8060fc3733b745634dfad569cfccbe5682ed925f76d8f727f4649a  ./package.json
+2ec21da734d7d4b5fe8d8ca625a45a4181ff7e41e5af0ff4e33cc114be59baaa  ./scripts/test_strato_review_frontend.js
+234538c86bf09a2b86fa253c681b64078ace40d076bb49ad36c554478cc49707  ./src/app/(dashboard)/financeiro/receber/page.tsx
+22162ee69da29f95de80d2c6fbe0d7e424447380fcdfc1bd9452d17261e25be8  ./src/components/financeiro/StratoIntelligentReview.tsx

@@ -1,0 +1,14 @@
+NOVO
+- src/components/financeiro/StratoIntelligentReview.tsx
+- scripts/test_strato_review_frontend.js
+
+ALTERADO
+- src/app/(dashboard)/financeiro/receber/page.tsx
+- package.json
+- package-lock.json
+
+SEM ALTERAÇÃO
+- Regras de baixa
+- Movimento Bancário
+- Banco de dados
+- Backend financeiro 0.6.2

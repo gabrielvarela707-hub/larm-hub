@@ -21,6 +21,7 @@ import {
   X,
 } from 'lucide-react'
 import TableFloatingNav from '@/components/table-floating-nav'
+import StratoIntelligentReview, { type StratoAnalysisFile, type StratoIntelligentAnalysis } from '@/components/financeiro/StratoIntelligentReview'
 import { apiClient, useAuthStore } from '@/lib/auth-store'
 import { hasModuleAccess } from '@/lib/module-access'
 import { cn } from '@/lib/utils'
@@ -283,6 +284,7 @@ type ReturnProcessingResult = {
   conta_bancaria_ambigua: boolean
   itens: ReturnProcessingItem[]
   duplicated?: boolean
+  analise_inteligente?: StratoIntelligentAnalysis | null
 }
 
 const EMPTY_SUMMARY: Summary = {
@@ -810,6 +812,7 @@ export default function ContasReceberPage() {
   const [returnApplyPayment, setReturnApplyPayment] = useState(true)
   const [returnLoading, setReturnLoading] = useState(false)
   const [returnResult, setReturnResult] = useState<ReturnProcessingResult | null>(null)
+  const [stratoIntelligentReview, setStratoIntelligentReview] = useState<StratoAnalysisFile[]>([])
   const [stratoReportFiles, setStratoReportFiles] = useState<File[]>([])
   const [boletoLoadingId, setBoletoLoadingId] = useState<string | null>(null)
   const [boletoError, setBoletoError] = useState('')
@@ -1464,6 +1467,7 @@ export default function ContasReceberPage() {
     setError('')
     setSuccess('')
     setReturnResult(null)
+    setStratoIntelligentReview([])
     try {
       const payloadFiles = await Promise.all(files.map(async file => ({
         filename: file.name,
@@ -1487,6 +1491,14 @@ export default function ContasReceberPage() {
           : []
 
       if (!responseResults.length) throw new Error('O backend não retornou o resultado dos arquivos.')
+
+      const intelligentFiles = responseResults
+        .filter(result => Boolean(result.analise_inteligente))
+        .map(result => ({
+          arquivo: result.arquivo,
+          analise_inteligente: result.analise_inteligente as StratoIntelligentAnalysis,
+        }))
+      setStratoIntelligentReview(intelligentFiles)
 
       const companies = Array.from(new Set(responseResults.map(result => result.empresa).filter(Boolean)))
       const receiptDates = Array.from(new Set(responseResults.map(result => result.data_recebimento).filter(Boolean)))
@@ -1544,7 +1556,25 @@ export default function ContasReceberPage() {
       setSuccess(buildReturnSuccessMessage(files.length, aggregated, Boolean(response.data?.preview || !returnApplyPayment)))
       await load()
     } catch (requestError: unknown) {
-      setError(requestErrorMessage(requestError, 'Não foi possível processar o(s) retorno(s) bancário(s).'))
+      const responseData = (requestError as { response?: { data?: { message?: string; requires_review?: boolean; data?: { arquivos?: Array<{ arquivo?: string; analise_inteligente?: StratoIntelligentAnalysis | null }> } } } })?.response?.data
+      const reviewFiles = responseData?.requires_review && Array.isArray(responseData?.data?.arquivos)
+        ? responseData.data.arquivos
+          .filter(entry => Boolean(entry?.analise_inteligente))
+          .map((entry, index) => ({
+            arquivo: entry.arquivo || files[index]?.name || `retorno-${index + 1}`,
+            analise_inteligente: entry.analise_inteligente as StratoIntelligentAnalysis,
+          }))
+        : []
+
+      if (reviewFiles.length) {
+        setStratoIntelligentReview(reviewFiles)
+        setError('')
+        setSuccess(responseData?.message || 'Análise inteligente concluída. Revise as parcelas relacionadas antes da aplicação.')
+        setStratoReportFiles([])
+        if (stratoReportInputRef.current) stratoReportInputRef.current.value = ''
+      } else {
+        setError(requestErrorMessage(requestError, 'Não foi possível processar o(s) retorno(s) bancário(s).'))
+      }
     } finally {
       setReturnLoading(false)
       if (returnInputRef.current) returnInputRef.current.value = ''
@@ -1799,6 +1829,10 @@ export default function ContasReceberPage() {
 
       {error && <Notice type="error" onClose={() => setError('')}>{error}</Notice>}
       {success && <Notice type="success" onClose={() => setSuccess('')}>{success}</Notice>}
+
+      {stratoIntelligentReview.length > 0 && (
+        <StratoIntelligentReview files={stratoIntelligentReview} onClose={() => setStratoIntelligentReview([])} />
+      )}
 
       {returnResult && (
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
