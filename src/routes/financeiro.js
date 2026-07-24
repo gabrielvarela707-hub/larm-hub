@@ -7,6 +7,7 @@ const express          = require('express')
 const { query, transaction } = require('../config/database')
 const { authenticate } = require('../middleware/authenticate')
 const { PLANO_CONTAS_SEED } = require('../data/plano_contas_seed')
+const { logAudit } = require('../services/auditService')
 
 const router = express.Router()
 router.use(authenticate)
@@ -18,7 +19,50 @@ const STATUS_ABERTO_CP = ['pendente', 'vencido', 'aberto', 'aberta']
 const STATUS_PAGO_CR   = ['pago', 'paga', 'quitado', 'quitada', 'recebido', 'recebida', 'q']
 const STATUS_CANCELADO = ['cancelado', 'cancelada', 'c']
 const DEFAULT_MOVIMENTO_YEAR = 2026
-const MOVIMENTO_REALIZADO_CUTOFF_2026 = '2026-06-28'
+const MOVIMENTO_REALIZADO_CUTOFF_2026 = '2026-06-30'
+const MOVIMENTO_ORCADO_WRITE_ROLES = new Set([
+  'super_admin', 'admin', 'manager', 'controller', 'financial',
+  // Compatibilidade com bases/perfis legados que ainda gravam o nome em português.
+  'superadministrador', 'administrador', 'gerente', 'controladoria', 'financeiro',
+])
+
+function canInactivateMovimentoOrcado(user) {
+  const candidates = [user?.role, user?.role_code, user?.perfil, user?.profile]
+    .map(value => String(value || '').trim().toLowerCase())
+    .filter(Boolean)
+  return candidates.some(role => MOVIMENTO_ORCADO_WRITE_ROLES.has(role))
+}
+
+function parseManualMovementMoney(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN
+
+  let raw = String(value ?? '').trim()
+  if (!raw) return NaN
+
+  raw = raw.replace(/R\$/gi, '').replace(/\s/g, '')
+  if (raw.includes(',')) {
+    raw = raw.replace(/\./g, '').replace(',', '.')
+  }
+  raw = raw.replace(/[^0-9.-]/g, '')
+
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) ? parsed : NaN
+}
+
+function isValidIsoDate(value) {
+  const raw = String(value || '').trim()
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return false
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(Date.UTC(year, month - 1, day))
+
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day
+}
 
 function xmlEscape(value) {
   return String(value ?? '')
@@ -96,6 +140,12 @@ function normalizeEmpresaFilter(empresa) {
   return String(empresa || 'CONSOLIDADO').toUpperCase()
 }
 
+function normalizeCashflowMode(value) {
+  return String(value || 'sintetico').trim().toLowerCase() === 'analitico'
+    ? 'analitico'
+    : 'sintetico'
+}
+
 async function getSaldoInicialBancosMovimento({ empresa, banco, contaId, ano, detalhado = false }) {
   const result = { saldo_inicial: 0, contas_consideradas: 0, origem: 'fin_bancos_contas' }
   if (!(await tableExists('fin_bancos_contas'))) return detalhado ? result : 0
@@ -163,6 +213,7 @@ async function getMovimentoRealizadoGuardCondition(alias = 'fm') {
     COALESCE(${alias}.ano, EXTRACT(YEAR FROM ${alias}.data)::int) <> 2026
     OR ${alias}.data IS NULL
     OR ${alias}.data <= DATE '${MOVIMENTO_REALIZADO_CUTOFF_2026}'
+    OR LOWER(TRIM(COALESCE(${alias}.tipo_lancamento, ''))) = 'manual'
     ${linkedSql}
   )`
 }
@@ -226,6 +277,201 @@ async function getOrcamentoRealizadoFromMovimento(linhasBase, empresa, ano, mes 
   return realizadosPorRowIdx
 }
 
+function orcamentoNaturezaMatches(natureza, prefixo) {
+  const naturezaNormalizada = normalizeCashflowCodigo(natureza)
+  const prefixoNormalizado = normalizeCashflowCodigo(prefixo)
+  if (!naturezaNormalizada || !prefixoNormalizado) return false
+  return naturezaNormalizada === prefixoNormalizado
+    || naturezaNormalizada.startsWith(`${prefixoNormalizado}.`)
+}
+
+function somarOrcamentoPorPrefixos(movimentos, prefixos) {
+  return (movimentos || []).reduce((total, movimento) => {
+    const corresponde = prefixos.some(prefixo =>
+      orcamentoNaturezaMatches(movimento.natureza_financeira, prefixo)
+    )
+    if (!corresponde) return total
+    return total + Number(movimento.valor || 0)
+  }, 0)
+}
+
+function getOrcamentoValorCodigo(movimentos, linha) {
+  const codigoOriginal = String(linha?.codigo || '').trim().replace(',', '.')
+  const codigo = normalizeCashflowCodigo(codigoOriginal)
+  const descricao = normalizeText(linha?.descricao)
+
+  if (descricao === normalizeText('Receitas Brutas') || codigoOriginal === '1.') {
+    return somarOrcamentoPorPrefixos(movimentos, ['1.1', '1.2', '1.3', '1.4'])
+  }
+
+  if (descricao === normalizeText('Despesas Gerais e Administrativas') || codigoOriginal === '4.') {
+    return somarOrcamentoPorPrefixos(movimentos, [
+      '4.1', '4.2', '4.3', '4.4', '4.5', '4.6',
+      '4.7', '4.8', '4.9', '4.10', '4.11', '4.12', '6.1',
+    ])
+  }
+
+  if (descricao === normalizeText('Investimentos') || codigoOriginal === '7.') {
+    return somarOrcamentoPorPrefixos(movimentos, [
+      '7.2', '7.3',
+      '8.1', '8.2', '8.3', '8.4', '8.5', '8.6', '8.7',
+      '8.10', '8.11', '8.12', '8.13',
+    ])
+  }
+
+  // CDB, FI, LCA e outras posições sem código numérico não são fluxos do
+  // Movimento Orçado. Seus saldos continuam sendo tratados no bloco de saldo.
+  if (!codigo || !/\d/.test(codigo)) return 0
+  return somarOrcamentoPorPrefixos(movimentos, [codigo])
+}
+
+/**
+ * Recalcula o PREVISTO diretamente dos lançamentos ativos do Movimento Orçado.
+ * fin_orcamento_valores permanece apenas como fallback legado, pois o agregado
+ * persistido não é atualizado quando um lançamento é inativado.
+ */
+async function getOrcamentoPrevistoFromMovimento(linhasBase, empresa, ano, mes = null) {
+  const previstosPorLinha = {}
+  if (!(await tableExists('fin_orcamento_movimento'))) {
+    return { disponivel: false, valores: previstosPorLinha }
+  }
+
+  const columns = await getTableColumns('fin_orcamento_movimento')
+  const empresaFiltro = normalizeEmpresaFilter(empresa)
+  const params = [ano]
+  const conditions = [
+    `COALESCE(m.ano, EXTRACT(YEAR FROM m.data)::int) = $1`,
+  ]
+
+  if (columns.has('ativo')) {
+    conditions.push(`COALESCE(m.ativo, TRUE) = TRUE`)
+  }
+
+  if (mes) {
+    params.push(mes)
+    conditions.push(`COALESCE(m.mes, EXTRACT(MONTH FROM m.data)::int) = $${params.length}`)
+  }
+
+  if (empresaFiltro !== 'CONSOLIDADO') {
+    params.push(empresaFiltro)
+    conditions.push(`UPPER(TRIM(COALESCE(m.empresa::text, ''))) = $${params.length}`)
+  }
+
+  const { rows } = await query(
+    `SELECT TRIM(COALESCE(m.natureza_financeira::text, '')) AS natureza_financeira,
+            COALESCE(m.mes, EXTRACT(MONTH FROM m.data)::int)::int AS mes,
+            COALESCE(SUM(COALESCE(m.entradas, 0) - COALESCE(m.saidas, 0)), 0)::float AS valor
+       FROM fin_orcamento_movimento m
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY 1, 2`,
+    params,
+  )
+
+  const movimentosPorMes = new Map()
+  for (const row of rows) {
+    const numeroMes = Number(row.mes)
+    if (!movimentosPorMes.has(numeroMes)) movimentosPorMes.set(numeroMes, [])
+    movimentosPorMes.get(numeroMes).push({
+      natureza_financeira: row.natureza_financeira,
+      valor: Number(row.valor || 0),
+    })
+  }
+
+  const meses = mes ? [Number(mes)] : Array.from({ length: 12 }, (_, index) => index + 1)
+  const valorDescricao = (mapa, descricao) => Number(mapa.get(normalizeText(descricao)) || 0)
+
+  for (const numeroMes of meses) {
+    const movimentos = movimentosPorMes.get(numeroMes) || []
+    const valoresBase = new Map()
+    const valoresPorDescricao = new Map()
+
+    for (const linha of linhasBase) {
+      const valor = getOrcamentoValorCodigo(movimentos, linha)
+      valoresBase.set(Number(linha.id), valor)
+      // Mantém o comportamento da importação: quando a descrição se repete,
+      // a linha específica posterior prevalece para montar os subtotais.
+      valoresPorDescricao.set(normalizeText(linha.descricao), valor)
+    }
+
+    const receitasBrutas = [
+      'VENDA DE IMÓVEIS',
+      'ALUGUÉIS',
+      'VENDA DE MERCADORIAS/GADO',
+      'OUTRAS RECEITAS OPERACIONAIS',
+    ].reduce((total, descricao) => total + valorDescricao(valoresPorDescricao, descricao), 0)
+
+    const deducoes = valorDescricao(valoresPorDescricao, 'VENDAS CANCELADAS')
+      + valorDescricao(valoresPorDescricao, 'IMPOSTOS S/ VENDAS')
+    const receitaLiquida = receitasBrutas + deducoes
+
+    const despesasGerais = [
+      'DESPESAS COM PESSOAL (1)',
+      'OCUPACÃO (2)',
+      'UTILIDADES E SERVICOS (3)',
+      'DESPESAS GERAIS/TERCEIROS (4)',
+      'SERVICOS PROFISSIONAIS (5)',
+      'DESPESAS DE VIAGENS (6)',
+      'DESPESAS COM VEÍCULOS (7)',
+      'DESPESAS COMERCIAIS (8)',
+      'IMPOSTOS E TAXAS (9)',
+      'DESPESAS INDEDUTIVEIS (10)',
+      'CUSTO DO GADO (11)',
+      'DESPESAS MÉDICAS (12)',
+      'RECEITAS/DESPESAS NÃO OPERACIONAIS',
+    ].reduce((total, descricao) => total + valorDescricao(valoresPorDescricao, descricao), 0)
+
+    const receitasFinanceiras = valorDescricao(valoresPorDescricao, 'RECEITAS FINANCEIRAS')
+    const despesasFinanceiras = valorDescricao(valoresPorDescricao, 'DESPESAS FINANCEIRAS')
+    const emprestimos = valorDescricao(valoresPorDescricao, 'Emprestimos e Financiamentos')
+    const resultadoFinanceiro = receitasFinanceiras + despesasFinanceiras + emprestimos
+    const geracaoCaixa = receitaLiquida + despesasGerais + resultadoFinanceiro
+
+    const investimentos = [
+      'ATIVO IMOBILIZADO',
+      'OUTROS INVESTIMENTOS',
+      'ED. FCO. MELAO-CJ 23',
+      'ED. VENDOME-AP 131',
+      'FAZENDA-SÃO MANOEL',
+      'LOTEAMENTO-RES. SANTA CLARA',
+      'LOTEAMENTO-RES. SANTA CLARA QY',
+      'LOTEAMENTO-RES. SANTA CLARA QZ',
+      'LOTEAMENTO-RES. SANTA CLARA II',
+      'SEMOVENTES',
+      'CASA2-ESPERANÇA',
+      'BRASIL AGRO II',
+      'BRASIL AGRO III',
+    ].reduce((total, descricao) => total + valorDescricao(valoresPorDescricao, descricao), 0)
+
+    const distribuicao = valorDescricao(valoresPorDescricao, 'Lucros distribuidos')
+    const sucessao = valorDescricao(valoresPorDescricao, 'Impostos/ Taxas / Comissões')
+
+    const overrides = new Map([
+      [normalizeText('Receitas Brutas'), receitasBrutas],
+      [normalizeText('Deduções das Receitas'), deducoes],
+      [normalizeText('Receita Líquida'), receitaLiquida],
+      [normalizeText('Despesas Gerais e Administrativas'), despesasGerais],
+      [normalizeText('Resultado Financeiro'), resultadoFinanceiro],
+      [normalizeText('Receitas Financeiras'), receitasFinanceiras],
+      [normalizeText('Despesas Financeiras'), despesasFinanceiras],
+      [normalizeText('Emprestimos e Financiamentos'), emprestimos],
+      [normalizeText('Geração de Caixa'), geracaoCaixa],
+      [normalizeText('Investimentos'), investimentos],
+      [normalizeText('Distribuição de Lucros'), distribuicao],
+      [normalizeText('Sucessão'), sucessao],
+    ])
+
+    for (const linha of linhasBase) {
+      const descricao = normalizeText(linha.descricao)
+      const valor = overrides.has(descricao)
+        ? Number(overrides.get(descricao) || 0)
+        : Number(valoresBase.get(Number(linha.id)) || 0)
+      setMesValue(previstosPorLinha, linha.id, numeroMes, valor)
+    }
+  }
+
+  return { disponivel: true, valores: previstosPorLinha }
+}
+
 async function getOrcamentoSaldosMensais(tabelaMovimento, empresa, ano, mes = null) {
   const saldoInicial = emptyMonthMap()
   const saldoFinal = emptyMonthMap()
@@ -270,6 +516,11 @@ async function getOrcamentoSaldosMensais(tabelaMovimento, empresa, ano, mes = nu
 
   if (tabelaMovimento === 'fin_movimento') {
     conditions.push(await getMovimentoRealizadoGuardCondition('fm'))
+  }
+
+  if (tabelaMovimento === 'fin_orcamento_movimento') {
+    const columns = await getTableColumns(tabelaMovimento)
+    if (columns.has('ativo')) conditions.push(`COALESCE(fm.ativo, TRUE) = TRUE`)
   }
 
   if (empresaFiltro !== 'CONSOLIDADO') {
@@ -613,7 +864,8 @@ function buildDailyColumns(ano, mes) {
   })
 }
 
-async function buildCashflowDiario(empresa, ano, mes) {
+async function buildCashflowDiario(empresa, ano, mes, modoContas = 'sintetico') {
+  const modo = normalizeCashflowMode(modoContas)
   const hasCashflowLines = await tableExists('fin_cashflow_linhas')
 
   // Fallback defensivo para instalações antigas que ainda não possuem a
@@ -639,6 +891,7 @@ async function buildCashflowDiario(empresa, ano, mes) {
       ano,
       mes,
       visao: 'diaria',
+      modo_contas: modo,
     }
   }
 
@@ -655,15 +908,13 @@ async function buildCashflowDiario(empresa, ano, mes) {
     getContasReceberFuturoAbertoDiario(empresa, ano, mes),
   ])
 
-  // A visão diária agora usa a mesma estrutura da visão mensal. As contas
-  // analíticas de terceiro nível são inseridas logo abaixo do respectivo pai.
-  const linhasHierarquicas = []
-  for (const linha of linhasImportadas) {
-    linhasHierarquicas.push(linha)
-    const codigo = normalizeCashflowCodigo(linha.codigo)
-    const children = dailyBreakdown.childrenByParent.get(codigo) || []
-    linhasHierarquicas.push(...children)
-  }
+  // O backend aplica o corte por profundidade mesmo se uma base antiga tiver
+  // contas analíticas gravadas diretamente na estrutura.
+  const linhasHierarquicas = buildCashflowLinesForMode(
+    linhasImportadas,
+    dailyBreakdown.childrenByParent,
+    modo,
+  )
 
   const maxRowIdx = linhasHierarquicas.reduce(
     (max, linha) => Math.max(max, Number(linha.row_idx || 0)),
@@ -707,14 +958,197 @@ async function buildCashflowDiario(empresa, ano, mes) {
     ano,
     mes,
     visao: 'diaria',
+    modo_contas: modo,
   }
 }
 
 function mapTotal(valores, mes = null) {
-  if (mes) return Number(valores[mes] || 0)
-  return Object.values(valores).reduce((s, v) => s + Number(v || 0), 0)
+  if (mes) return Number(valores[mes] || valores[String(mes)] || 0)
+  return Object.values(valores || {}).reduce((s, v) => s + Number(v || 0), 0)
 }
 
+const CASHFLOW_VARIACAO_SALDO_DESCRICOES = [
+  'Geração de Caixa',
+  'Investimentos',
+  'Distribuição de Lucros',
+  'Sucessão',
+]
+
+function getCashflowLineByDescription(linhas, descricao) {
+  const target = normalizeAccountDescription(descricao)
+  return (linhas || []).find(linha => normalizeAccountDescription(linha.descricao) === target) || null
+}
+
+function getCashflowMonthValue(valMap, linhaId, mes) {
+  if (!linhaId) return 0
+  const valores = valMap?.[linhaId] || valMap?.[String(linhaId)] || {}
+  return Number(valores?.[mes] ?? valores?.[String(mes)] ?? 0)
+}
+
+function buildCashflowMonthlyBalances({
+  linhas,
+  valMap,
+  saldoInicial,
+  contasPagar = {},
+  contasReceber = {},
+}) {
+  const saldoInicialLinha = getCashflowLineByDescription(linhas, '(A) Saldo Inicial')
+  const saldoFinalLinha = getCashflowLineByDescription(linhas, 'SALDO FINAL')
+  const variacaoLinhas = CASHFLOW_VARIACAO_SALDO_DESCRICOES
+    .map(descricao => getCashflowLineByDescription(linhas, descricao))
+    .filter(Boolean)
+
+  const saldoInicialValores = emptyMonthMap()
+  const saldoFinalValores = emptyMonthMap()
+  const variacaoValores = emptyMonthMap()
+  let saldoCorrente = Number(saldoInicial || 0)
+
+  for (let mes = 1; mes <= 12; mes += 1) {
+    saldoInicialValores[mes] = saldoCorrente
+
+    const variacaoEstrutural = variacaoLinhas.reduce(
+      (total, linha) => total + getCashflowMonthValue(valMap, linha.id, mes),
+      0,
+    )
+    const impactoContas = Number(contasPagar?.[mes] ?? contasPagar?.[String(mes)] ?? 0)
+      + Number(contasReceber?.[mes] ?? contasReceber?.[String(mes)] ?? 0)
+
+    variacaoValores[mes] = variacaoEstrutural + impactoContas
+    saldoCorrente += variacaoValores[mes]
+    saldoFinalValores[mes] = saldoCorrente
+  }
+
+  return {
+    saldoInicialLinha,
+    saldoFinalLinha,
+    saldoInicialValores,
+    saldoFinalValores,
+    variacaoValores,
+  }
+}
+
+
+
+function hasCashflowMonthValue(valMap, linhaId, mes) {
+  if (!linhaId) return false
+  const valores = valMap?.[linhaId] || valMap?.[String(linhaId)] || {}
+  return Object.prototype.hasOwnProperty.call(valores, mes)
+    || Object.prototype.hasOwnProperty.call(valores, String(mes))
+}
+
+/**
+ * As linhas abaixo de SALDO FINAL representam posições mensais, não fluxos.
+ * O importador antigo somava os 31 saldos diários e inflava janeiro para
+ * aproximadamente R$ 294 milhões. Aqui a posição é recomposta pela mesma
+ * fórmula da planilha: Saldos Bancários em C/C + Aplicações Financeiras.
+ */
+function buildCashflowPositionBalances({ linhas, valMap, fallbackSaldoInicial = 0 }) {
+  const saldoInicialLinha = getCashflowLineByDescription(linhas, '(A) Saldo Inicial')
+  const saldoFinalLinha = getCashflowLineByDescription(linhas, 'SALDO FINAL')
+  const saldoCcLinha = getCashflowLineByDescription(linhas, 'Saldos Bancários em C/C')
+  const aplicacoesLinha = getCashflowLineByDescription(linhas, 'Aplicações Financeiras')
+  const curtoPrazoLinha = getCashflowLineByDescription(linhas, 'Curto Prazo')
+  const longoPrazoLinha = getCashflowLineByDescription(linhas, 'Longo Prazo')
+
+  if (!saldoInicialLinha || !saldoFinalLinha || !saldoCcLinha || !aplicacoesLinha) return null
+
+  const saldoInicialValores = emptyMonthMap()
+  const saldoFinalValores = emptyMonthMap()
+  const saldoCcValores = emptyMonthMap()
+  const aplicacoesValores = emptyMonthMap()
+  let saldoAnterior = 0
+
+  for (let mes = 1; mes <= 12; mes += 1) {
+    const saldoCc = getCashflowMonthValue(valMap, saldoCcLinha.id, mes)
+    const aplicacoesImportadas = getCashflowMonthValue(valMap, aplicacoesLinha.id, mes)
+    const possuiCurto = curtoPrazoLinha && hasCashflowMonthValue(valMap, curtoPrazoLinha.id, mes)
+    const possuiLongo = longoPrazoLinha && hasCashflowMonthValue(valMap, longoPrazoLinha.id, mes)
+    const aplicacoes = possuiCurto || possuiLongo
+      ? getCashflowMonthValue(valMap, curtoPrazoLinha?.id, mes)
+        + getCashflowMonthValue(valMap, longoPrazoLinha?.id, mes)
+      : aplicacoesImportadas
+    const saldoFinal = saldoCc + aplicacoes
+
+    const saldoInicialImportado = getCashflowMonthValue(valMap, saldoInicialLinha.id, mes)
+    const saldoInicial = mes === 1
+      ? (hasCashflowMonthValue(valMap, saldoInicialLinha.id, mes)
+          ? saldoInicialImportado
+          : Number(fallbackSaldoInicial || 0))
+      : saldoAnterior
+
+    saldoInicialValores[mes] = saldoInicial
+    saldoCcValores[mes] = saldoCc
+    aplicacoesValores[mes] = aplicacoes
+    saldoFinalValores[mes] = saldoFinal
+    saldoAnterior = saldoFinal
+  }
+
+  return {
+    saldoInicialLinha,
+    saldoFinalLinha,
+    saldoCcLinha,
+    aplicacoesLinha,
+    saldoInicialValores,
+    saldoFinalValores,
+    saldoCcValores,
+    aplicacoesValores,
+  }
+}
+
+/**
+ * Modo sintético: mantém linhas estruturais e contas numéricas de até dois
+ * níveis (ex.: 4 e 4.1). Modo analítico: adiciona o terceiro nível abaixo da
+ * respectiva conta sintética. O filtro também cobre bases antigas em que
+ * contas analíticas chegaram a ser gravadas diretamente em fin_cashflow_linhas.
+ */
+function buildCashflowLinesForMode(linhasImportadas = [], childrenByParent = new Map(), modo = 'sintetico') {
+  const baseLines = []
+  const importedChildrenByParent = new Map()
+
+  for (const linha of linhasImportadas || []) {
+    const codigo = normalizeCashflowCodigo(linha.codigo)
+    const parts = cashflowCodeParts(codigo)
+
+    if (parts.length >= 3) {
+      const parentCode = parts.slice(0, 2).join('.')
+      const children = importedChildrenByParent.get(parentCode) || []
+      children.push(linha)
+      importedChildrenByParent.set(parentCode, children)
+      continue
+    }
+
+    baseLines.push(linha)
+  }
+
+  if (modo !== 'analitico') return baseLines
+
+  const result = []
+  for (const linha of baseLines) {
+    result.push(linha)
+    const codigo = normalizeCashflowCodigo(linha.codigo)
+    if (cashflowCodeDepth(codigo) !== 2) continue
+
+    const candidates = [
+      ...(importedChildrenByParent.get(codigo) || []),
+      ...(childrenByParent.get(codigo) || []),
+    ].sort((a, b) => {
+      const codeCompare = compareCashflowCodes(a.codigo, b.codigo)
+      if (codeCompare !== 0) return codeCompare
+      return Number(a.row_idx || 0) - Number(b.row_idx || 0)
+    })
+
+    const seen = new Set()
+    for (const child of candidates) {
+      const key = normalizeCashflowCodigo(child.codigo)
+        || `${normalizeAccountDescription(child.descricao)}:${child.id}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(child)
+    }
+  }
+
+  return result
+}
 
 function normalizeCashflowCodigo(codigo) {
   const raw = String(codigo || '').trim().replace(',', '.')
@@ -2103,74 +2537,114 @@ router.get('/orcamento/empresas', async (req, res) => {
 
 router.get('/orcamento/movimento', async (req, res) => {
   const empresa = normalizeEmpresaFilter(req.query.empresa)
-  const ano = parseInt(req.query.ano || DEFAULT_MOVIMENTO_YEAR)
+  const ano = parseInt(req.query.ano || DEFAULT_MOVIMENTO_YEAR, 10)
   const mes = req.query.mes ? parseInt(req.query.mes, 10) : null
   const tipo = String(req.query.tipo || '').toLowerCase()
   const busca = String(req.query.busca || '').trim()
-  const limit = Math.min(5000, parseInt(req.query.limit || '500', 10))
+  const statusSolicitado = String(req.query.status || 'ativos').toLowerCase()
+  const status = ['ativos', 'inativos', 'todos'].includes(statusSolicitado) ? statusSolicitado : 'ativos'
+  const limit = Math.min(5000, Math.max(1, parseInt(req.query.limit || '500', 10) || 500))
+  const permissions = { can_inactivate: canInactivateMovimentoOrcado(req.user) }
 
   try {
     if (!(await tableExists('fin_orcamento_movimento'))) {
-      return res.json({ ok: true, data: [], summary: { total_entradas: 0, total_saidas: 0 } })
+      return res.json({
+        ok: true,
+        data: [],
+        summary: { total_entradas: 0, total_saidas: 0, saldo_periodo: 0, total_lancamentos: 0 },
+        permissions,
+      })
+    }
+
+    const columns = await getTableColumns('fin_orcamento_movimento')
+    const hasAtivo = columns.has('ativo')
+    const hasInativadoEm = columns.has('inativado_em')
+    const hasInativadoPor = columns.has('inativado_por')
+    const hasMotivo = columns.has('motivo_inativacao')
+
+    if (status === 'inativos' && !hasAtivo) {
+      return res.json({
+        ok: true,
+        data: [],
+        summary: { total_entradas: 0, total_saidas: 0, saldo_periodo: 0, total_lancamentos: 0 },
+        permissions,
+      })
     }
 
     const params = [ano]
-    const conditions = [`COALESCE(ano, EXTRACT(YEAR FROM data)::int) = $1`]
+    const conditions = [`COALESCE(m.ano, EXTRACT(YEAR FROM m.data)::int) = $1`]
+
+    if (hasAtivo && status === 'ativos') conditions.push(`COALESCE(m.ativo, TRUE) = TRUE`)
+    if (hasAtivo && status === 'inativos') conditions.push(`COALESCE(m.ativo, TRUE) = FALSE`)
+
     if (empresa !== 'CONSOLIDADO') {
       params.push(empresa)
-      conditions.push(`UPPER(TRIM(COALESCE(empresa, ''))) = $${params.length}`)
+      conditions.push(`UPPER(TRIM(COALESCE(m.empresa, ''))) = $${params.length}`)
     }
     if (mes) {
       params.push(mes)
-      conditions.push(`COALESCE(mes, EXTRACT(MONTH FROM data)::int) = $${params.length}`)
+      conditions.push(`COALESCE(m.mes, EXTRACT(MONTH FROM m.data)::int) = $${params.length}`)
     }
-    if (tipo === 'entrada') conditions.push(`COALESCE(entradas, 0) <> 0`)
-    if (tipo === 'saida') conditions.push(`COALESCE(saidas, 0) <> 0`)
+    if (tipo === 'entrada') conditions.push(`COALESCE(m.entradas, 0) <> 0`)
+    if (tipo === 'saida') conditions.push(`COALESCE(m.saidas, 0) <> 0`)
     if (busca) {
       params.push(`%${busca}%`)
       conditions.push(`(
-        COALESCE(fornecedor, '') ILIKE $${params.length}
-        OR COALESCE(historico, '') ILIKE $${params.length}
-        OR COALESCE(banco, '') ILIKE $${params.length}
-        OR COALESCE(nf_doc, '') ILIKE $${params.length}
-        OR COALESCE(natureza_financeira, '') ILIKE $${params.length}
+        COALESCE(m.fornecedor, '') ILIKE $${params.length}
+        OR COALESCE(m.historico, '') ILIKE $${params.length}
+        OR COALESCE(m.banco, '') ILIKE $${params.length}
+        OR COALESCE(m.nf_doc, '') ILIKE $${params.length}
+        OR COALESCE(m.natureza_financeira, '') ILIKE $${params.length}
+        ${hasMotivo ? `OR COALESCE(m.motivo_inativacao, '') ILIKE $${params.length}` : ''}
       )`)
     }
 
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+    const where = `WHERE ${conditions.join(' AND ')}`
     const summaryParams = [...params]
     params.push(limit)
 
+    const auditSelect = [
+      hasAtivo ? `COALESCE(m.ativo, TRUE) AS ativo` : `TRUE AS ativo`,
+      hasInativadoEm ? `m.inativado_em` : `NULL::timestamp AS inativado_em`,
+      hasInativadoPor ? `m.inativado_por` : `NULL::uuid AS inativado_por`,
+      hasMotivo ? `m.motivo_inativacao` : `NULL::text AS motivo_inativacao`,
+      hasInativadoPor ? `iu.name AS inativado_por_nome` : `NULL::text AS inativado_por_nome`,
+      hasInativadoPor ? `iu.email AS inativado_por_email` : `NULL::text AS inativado_por_email`,
+    ].join(',\n              ')
+    const auditJoin = hasInativadoPor ? `LEFT JOIN hub_users iu ON iu.id = m.inativado_por` : ''
+
     const { rows } = await query(
-      `SELECT id,
-              TO_CHAR(data, 'YYYY-MM-DD') AS data,
-              empresa,
-              banco,
-              COALESCE(entradas, 0)::float AS entradas,
-              COALESCE(saidas, 0)::float AS saidas,
-              fornecedor,
-              historico,
-              nf_doc,
-              conta_contabil,
-              centro_custo,
-              obra,
-              natureza_financeira,
-              dia,
-              mes,
-              ano,
-              COALESCE(saldo, 0)::float AS saldo
-         FROM fin_orcamento_movimento
+      `SELECT m.id,
+              TO_CHAR(m.data, 'YYYY-MM-DD') AS data,
+              m.empresa,
+              m.banco,
+              COALESCE(m.entradas, 0)::float AS entradas,
+              COALESCE(m.saidas, 0)::float AS saidas,
+              m.fornecedor,
+              m.historico,
+              m.nf_doc,
+              m.conta_contabil,
+              m.centro_custo,
+              m.obra,
+              m.natureza_financeira,
+              m.dia,
+              m.mes,
+              m.ano,
+              COALESCE(m.saldo, 0)::float AS saldo,
+              ${auditSelect}
+         FROM fin_orcamento_movimento m
+         ${auditJoin}
         ${where}
-        ORDER BY data ASC NULLS LAST, id ASC
+        ORDER BY m.data ASC NULLS LAST, m.id ASC
         LIMIT $${params.length}`,
       params
     )
 
     const { rows: resumoRows } = await query(
-      `SELECT COALESCE(SUM(entradas), 0)::float AS total_entradas,
-              COALESCE(SUM(saidas), 0)::float AS total_saidas,
+      `SELECT COALESCE(SUM(m.entradas), 0)::float AS total_entradas,
+              COALESCE(SUM(m.saidas), 0)::float AS total_saidas,
               COUNT(*)::int AS total_lancamentos
-         FROM fin_orcamento_movimento
+         FROM fin_orcamento_movimento m
         ${where}`,
       summaryParams
     )
@@ -2182,13 +2656,133 @@ router.get('/orcamento/movimento', async (req, res) => {
       total_lancamentos: Number(resumoRows[0]?.total_lancamentos || 0),
     }
 
-    return res.json({ ok: true, data: rows, summary })
+    return res.json({ ok: true, data: rows, summary, permissions })
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message })
   }
 })
 
+async function inativarMovimentoOrcadoHandler(req, res) {
+  if (!canInactivateMovimentoOrcado(req.user)) {
+    return res.status(403).json({
+      ok: false,
+      message: 'Somente usuários autorizados do grupo financeiro podem inativar lançamentos orçados.',
+    })
+  }
+
+  const id = String(req.params.id || '').trim()
+  const motivo = String(req.body?.motivo || '').trim()
+
+  if (!/^\d+$/.test(id)) {
+    return res.status(400).json({ ok: false, message: 'Lançamento inválido.' })
+  }
+  if (motivo.length < 5) {
+    return res.status(400).json({ ok: false, message: 'Informe um motivo com pelo menos 5 caracteres.' })
+  }
+  if (motivo.length > 500) {
+    return res.status(400).json({ ok: false, message: 'O motivo deve ter no máximo 500 caracteres.' })
+  }
+
+  try {
+    if (!(await tableExists('fin_orcamento_movimento'))) {
+      return res.status(404).json({ ok: false, message: 'Tabela de Movimento Orçado não encontrada.' })
+    }
+
+    const columns = await getTableColumns('fin_orcamento_movimento')
+    const required = ['ativo', 'inativado_em', 'inativado_por', 'motivo_inativacao']
+    if (!required.every(column => columns.has(column))) {
+      return res.status(503).json({
+        ok: false,
+        message: 'Execute a migration de inativação do Movimento Orçado antes de usar esta função.',
+      })
+    }
+
+    const result = await transaction(async client => {
+      const { rows: currentRows } = await client.query(
+        `SELECT id,
+                TO_CHAR(data, 'YYYY-MM-DD') AS data,
+                empresa,
+                banco,
+                COALESCE(entradas, 0)::float AS entradas,
+                COALESCE(saidas, 0)::float AS saidas,
+                fornecedor,
+                historico,
+                nf_doc,
+                natureza_financeira,
+                COALESCE(ativo, TRUE) AS ativo
+           FROM fin_orcamento_movimento
+          WHERE id = $1
+          FOR UPDATE`,
+        [id]
+      )
+
+      if (!currentRows.length) {
+        const error = new Error('Lançamento orçado não encontrado.')
+        error.statusCode = 404
+        throw error
+      }
+
+      const before = currentRows[0]
+      if (!before.ativo) {
+        const error = new Error('Este lançamento já está inativado.')
+        error.statusCode = 409
+        throw error
+      }
+
+      const { rows: updatedRows } = await client.query(
+        `UPDATE fin_orcamento_movimento
+            SET ativo = FALSE,
+                inativado_em = NOW(),
+                inativado_por = $2,
+                motivo_inativacao = $3
+          WHERE id = $1
+          RETURNING id,
+                    ativo,
+                    inativado_em,
+                    inativado_por,
+                    motivo_inativacao`,
+        [id, req.user.id, motivo]
+      )
+
+      return { before, updated: updatedRows[0] }
+    })
+
+    await logAudit({
+      tenantId: req.user.tenant_id,
+      userId: req.user.id,
+      action: 'movimento_orcado_inativado',
+      module: 'financeiro',
+      entityType: 'fin_orcamento_movimento',
+      entityId: id,
+      ip: req.ip || req.socket?.remoteAddress,
+      userAgent: req.headers['user-agent'] || '',
+      details: {
+        motivo,
+        registro_antes: result.before,
+        inativado_em: result.updated.inativado_em,
+        inativado_por: req.user.id,
+        inativado_por_nome: req.user.name,
+        inativado_por_email: req.user.email,
+      },
+    })
+
+    return res.json({
+      ok: true,
+      message: 'Lançamento inativado com sucesso.',
+      data: result.updated,
+    })
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ ok: false, message: err.message })
+  }
+}
+
+// POST é o método principal para evitar bloqueios/proxies legados.
+// PATCH permanece disponível para compatibilidade com clientes anteriores.
+router.post('/orcamento/movimento/:id/inativar', inativarMovimentoOrcadoHandler)
+router.patch('/orcamento/movimento/:id/inativar', inativarMovimentoOrcadoHandler)
+
 router.get('/orcamento', async (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
   const empresa = normalizeEmpresaFilter(req.query.empresa)
   const ano = parseInt(req.query.ano || DEFAULT_MOVIMENTO_YEAR)
   const mes = req.query.mes ? parseInt(req.query.mes, 10) : null
@@ -2203,7 +2797,17 @@ router.get('/orcamento', async (req, res) => {
     const realizadosPorRowIdx = {}
     const mesesSet = new Set()
 
-    if (await tableExists('fin_orcamento_valores')) {
+    const previstosAtivos = await getOrcamentoPrevistoFromMovimento(linhasBase, empresa, ano, mes)
+    if (previstosAtivos.disponivel) {
+      Object.assign(previstosPorLinha, previstosAtivos.valores)
+      for (const valores of Object.values(previstosAtivos.valores)) {
+        for (const [mesKey, valor] of Object.entries(valores || {})) {
+          if (Number(valor || 0) !== 0) mesesSet.add(Number(mesKey))
+        }
+      }
+    } else if (await tableExists('fin_orcamento_valores')) {
+      // Compatibilidade com instalações antigas que ainda não possuem a tabela
+      // de Movimento Orçado. Novas instalações calculam sempre dos ativos.
       const params = [empresa, ano]
       const mesFilter = mes ? `AND v.mes = $3` : ''
       if (mes) params.push(mes)
@@ -2389,11 +2993,12 @@ router.get('/cashflow', async (req, res) => {
   const ano     = parseInt(req.query.ano || new Date().getFullYear())
   const visao   = String(req.query.visao || 'mensal').toLowerCase()
   const mes     = req.query.mes ? parseInt(req.query.mes) : null
+  const modo    = normalizeCashflowMode(req.query.modo)
 
   try {
     if (visao === 'diaria') {
       const mesDiario = mes || (new Date().getMonth() + 1)
-      const dataDiaria = await buildCashflowDiario(empresa, ano, mesDiario)
+      const dataDiaria = await buildCashflowDiario(empresa, ano, mesDiario, modo)
       return res.json({ ok: true, data: dataDiaria })
     }
 
@@ -2404,26 +3009,15 @@ router.get('/cashflow', async (req, res) => {
     )
     const balanceStructure = getCashflowBalanceStructure(linhasImportadas)
 
-    // Busca valores agrupados por mês ou para o mês específico.
-    let valQuery, valParams
-    if (mes) {
-      valQuery = `
-        SELECT linha_id, mes, valor
-        FROM fin_cashflow_valores
-        WHERE empresa = $1 AND ano = $2 AND mes = $3
-      `
-      valParams = [empresa, ano, mes]
-    } else {
-      valQuery = `
-        SELECT linha_id, mes, valor
-        FROM fin_cashflow_valores
+    // Carrega o ano completo mesmo quando a tela exibe apenas um mês.
+    // O encadeamento correto do Saldo Inicial/Final depende dos meses anteriores.
+    const { rows: valores } = await query(
+      `SELECT linha_id, mes, valor
+         FROM fin_cashflow_valores
         WHERE empresa = $1 AND ano = $2
-        ORDER BY linha_id, mes
-      `
-      valParams = [empresa, ano]
-    }
-
-    const { rows: valores } = await query(valQuery, valParams)
+        ORDER BY linha_id, mes`,
+      [empresa, ano],
+    )
 
     // Monta mapa linha_id -> { mes -> valor }.
     const valMap = {}
@@ -2438,9 +3032,11 @@ router.get('/cashflow', async (req, res) => {
     // - parcelas abertas alimentam o Cash Flow futuro;
     // - parcelas baixadas/pagas saem do futuro e entram no Movimento Bancário.
     const [cpFuturo, crFuturo, analyticBreakdown, saldoInicialBancosInfo] = await Promise.all([
-      getContasPagarFuturoAberto(empresa, ano, mes),
-      getContasReceberFuturoAberto(empresa, ano, mes),
-      getCashflowAnalyticBreakdown({ linhasImportadas, empresa, ano, mes }),
+      getContasPagarFuturoAberto(empresa, ano),
+      getContasReceberFuturoAberto(empresa, ano),
+      modo === 'analitico'
+        ? getCashflowAnalyticBreakdown({ linhasImportadas, empresa, ano, mes })
+        : Promise.resolve({ childrenByParent: new Map(), valueMap: {}, compositionMap: {} }),
       getSaldoInicialBancosMovimento({
         empresa: empresa === 'CONSOLIDADO' ? null : empresa,
         ano,
@@ -2448,27 +3044,46 @@ router.get('/cashflow', async (req, res) => {
       }),
     ])
 
-    // As linhas do Excel possuem os totais de segundo nível (ex.: 4.5).
-    // O detalhamento de terceiro nível vem do Movimento Bancário + Plano de
-    // Contas e é inserido logo abaixo do pai, sem recalcular nem duplicar o total.
-    const linhas = []
-    for (const linha of linhasImportadas) {
-      linhas.push(linha)
-      const codigo = normalizeCashflowCodigo(linha.codigo)
-      const children = analyticBreakdown.childrenByParent.get(codigo) || []
-      linhas.push(...children)
-    }
+    // No sintético entram apenas contas numéricas de até dois níveis. No
+    // analítico, o terceiro nível é inserido abaixo do pai e permanece somente
+    // demonstrativo, sem ser somado novamente aos totais sintéticos.
+    const linhas = buildCashflowLinesForMode(
+      linhasImportadas,
+      analyticBreakdown.childrenByParent,
+      modo,
+    )
 
     Object.assign(valMap, analyticBreakdown.valueMap)
 
-    const saldoInicialLinha = linhasImportadas.find(
-      linha => normalizeAccountDescription(linha.descricao) === normalizeAccountDescription('(A) Saldo Inicial'),
-    )
-    if (saldoInicialLinha && (!mes || mes === 1)) {
-      if (!valMap[saldoInicialLinha.id]) valMap[saldoInicialLinha.id] = {}
-      valMap[saldoInicialLinha.id][1] = Number(saldoInicialBancosInfo.saldo_inicial || 0)
-      mesesSet.add(1)
+    // SALDO FINAL é uma posição mensal. A fórmula correta da planilha é
+    // Saldos Bancários em C/C + Aplicações Financeiras. Não se somam os saldos
+    // diários nem se inclui novamente CP/CR nesta posição patrimonial.
+    const saldosPosicao = buildCashflowPositionBalances({
+      linhas: linhasImportadas,
+      valMap,
+      fallbackSaldoInicial: Number(saldoInicialBancosInfo.saldo_inicial || 0),
+    })
+    const saldosCalculados = saldosPosicao || buildCashflowMonthlyBalances({
+      linhas: linhasImportadas,
+      valMap,
+      saldoInicial: Number(saldoInicialBancosInfo.saldo_inicial || 0),
+      contasPagar: cpFuturo,
+      contasReceber: crFuturo,
+    })
+
+    if (saldosCalculados.saldoInicialLinha) {
+      valMap[saldosCalculados.saldoInicialLinha.id] = saldosCalculados.saldoInicialValores
     }
+    if (saldosCalculados.saldoFinalLinha) {
+      valMap[saldosCalculados.saldoFinalLinha.id] = saldosCalculados.saldoFinalValores
+    }
+    if (saldosPosicao?.saldoCcLinha) {
+      valMap[saldosPosicao.saldoCcLinha.id] = saldosPosicao.saldoCcValores
+    }
+    if (saldosPosicao?.aplicacoesLinha) {
+      valMap[saldosPosicao.aplicacoesLinha.id] = saldosPosicao.aplicacoesValores
+    }
+    for (let m = 1; m <= 12; m += 1) mesesSet.add(m)
 
     for (const values of Object.values(analyticBreakdown.valueMap)) {
       Object.entries(values || {}).forEach(([m, v]) => {
@@ -2503,10 +3118,14 @@ router.get('/cashflow', async (req, res) => {
     // Monta linhas com valores + total do ano.
     const data = linhas.map(l => {
       const vals = valMap[l.id] || {}
-      const isSaldoInicial = normalizeAccountDescription(l.descricao) === normalizeAccountDescription('(A) Saldo Inicial')
+      const descricaoNormalizada = normalizeAccountDescription(l.descricao)
+      const isSaldoInicial = descricaoNormalizada === normalizeAccountDescription('(A) Saldo Inicial')
+      const isSaldoFinal = descricaoNormalizada === normalizeAccountDescription('SALDO FINAL')
       const total = isSaldoInicial
         ? Number(mes ? (vals[mes] || vals[String(mes)] || 0) : (vals[1] || vals['1'] || 0))
-        : Object.values(vals).reduce((s, v) => s + Number(v || 0), 0)
+        : isSaldoFinal
+          ? Number(vals[mes || 12] || vals[String(mes || 12)] || 0)
+          : Object.values(vals).reduce((s, v) => s + Number(v || 0), 0)
       const composicao = analyticBreakdown.compositionMap?.[l.id] || {}
       const composicaoTotal = Object.values(composicao).reduce(
         (acc, item) => ({
@@ -2534,7 +3153,10 @@ router.get('/cashflow', async (req, res) => {
         ano,
         saldo_inicial_bancos: Number(saldoInicialBancosInfo.saldo_inicial || 0),
         saldo_inicial_contas_consideradas: Number(saldoInicialBancosInfo.contas_consideradas || 0),
-        saldo_inicial_origem: saldoInicialBancosInfo.origem,
+        saldo_inicial_origem: saldosPosicao ? 'posicao_mensal_cashflow' : saldoInicialBancosInfo.origem,
+        saldo_final_calculado: true,
+        saldo_final_origem: saldosPosicao ? 'posicao_mensal_cashflow' : 'fallback_encadeado',
+        modo_contas: modo,
       },
     })
   } catch (err) {
@@ -2731,6 +3353,7 @@ router.get('/cashflow/resumo', async (req, res) => {
   const empresa = (req.query.empresa || 'CONSOLIDADO').toUpperCase()
   const ano     = parseInt(req.query.ano || new Date().getFullYear())
   const mes     = req.query.mes ? parseInt(req.query.mes) : null
+  const visao   = String(req.query.visao || 'mensal').toLowerCase()
 
   const LINHAS_RESUMO = [
     { key: 'saldo_final',        desc: 'SALDO FINAL' },
@@ -2767,32 +3390,290 @@ router.get('/cashflow/resumo', async (req, res) => {
       ano,
       detalhado: true,
     })
-    result.saldo_inicial = mes
-      ? await getCashflowDailyOpeningBalance(empresaFiltro, ano, mes)
-      : Number(saldoInicialBancosInfo.saldo_inicial || 0)
-    result.saldo_inicial_bancos = Number(saldoInicialBancosInfo.saldo_inicial || 0)
-    result.saldo_inicial_contas_consideradas = Number(saldoInicialBancosInfo.contas_consideradas || 0)
-    result.saldo_inicial_origem = saldoInicialBancosInfo.origem
 
     // Soma os lançamentos futuros em aberto no resumo.
     // CP entra negativo; CR entra positivo. Ao baixar/pagar, estes valores saem daqui.
-    const cpFuturo = await getContasPagarFuturoAberto(empresa, ano, mes)
-    const crFuturo = await getContasReceberFuturoAberto(empresa, ano, mes)
+    const [cpFuturo, crFuturo] = await Promise.all([
+      getContasPagarFuturoAberto(empresa, ano),
+      getContasReceberFuturoAberto(empresa, ano),
+    ])
     const totalCpFuturo = mapTotal(cpFuturo, mes)
     const totalCrFuturo = mapTotal(crFuturo, mes)
     const impactoFuturo = totalCpFuturo + totalCrFuturo
+
+    if (visao === 'diaria' && mes) {
+      const [movimentoDiario, cpDiario, crDiario] = await Promise.all([
+        getMovimentoRealizadoDiario(empresaFiltro, ano, mes),
+        getContasPagarFuturoAbertoDiario(empresaFiltro, ano, mes),
+        getContasReceberFuturoAbertoDiario(empresaFiltro, ano, mes),
+      ])
+      const saldoAbertura = await getCashflowDailyOpeningBalance(empresaFiltro, ano, mes)
+      result.saldo_inicial = saldoAbertura
+      result.saldo_final = saldoAbertura
+        + mapTotal(movimentoDiario.receitas)
+        + mapTotal(movimentoDiario.despesas)
+        + mapTotal(cpDiario)
+        + mapTotal(crDiario)
+    } else {
+      const [{ rows: linhasSaldo }, { rows: valoresSaldo }] = await Promise.all([
+        query(`SELECT id, row_idx, codigo, descricao, nivel, tipo FROM fin_cashflow_linhas ORDER BY row_idx`),
+        query(
+          `SELECT linha_id, mes, valor
+             FROM fin_cashflow_valores
+            WHERE empresa = $1 AND ano = $2
+            ORDER BY linha_id, mes`,
+          [empresa, ano],
+        ),
+      ])
+      const valMapSaldo = {}
+      for (const valorRow of valoresSaldo) {
+        if (!valMapSaldo[valorRow.linha_id]) valMapSaldo[valorRow.linha_id] = {}
+        valMapSaldo[valorRow.linha_id][valorRow.mes] = Number(valorRow.valor || 0)
+      }
+      const saldosPosicao = buildCashflowPositionBalances({
+        linhas: linhasSaldo,
+        valMap: valMapSaldo,
+        fallbackSaldoInicial: Number(saldoInicialBancosInfo.saldo_inicial || 0),
+      })
+      const saldosCalculados = saldosPosicao || buildCashflowMonthlyBalances({
+        linhas: linhasSaldo,
+        valMap: valMapSaldo,
+        saldoInicial: Number(saldoInicialBancosInfo.saldo_inicial || 0),
+        contasPagar: cpFuturo,
+        contasReceber: crFuturo,
+      })
+      const mesSaldo = mes || 12
+      result.saldo_inicial = Number(
+        saldosCalculados.saldoInicialValores[mes ? mesSaldo : 1] || 0,
+      )
+      result.saldo_final = Number(saldosCalculados.saldoFinalValores[mesSaldo] || 0)
+      if (saldosPosicao) {
+        result.saldo_cc = Number(saldosPosicao.saldoCcValores[mesSaldo] || 0)
+        result.aplicacoes = Number(saldosPosicao.aplicacoesValores[mesSaldo] || 0)
+        result.saldo_final_origem = 'posicao_mensal_cashflow'
+      }
+    }
+
+    result.saldo_inicial_bancos = Number(saldoInicialBancosInfo.saldo_inicial || 0)
+    result.saldo_inicial_contas_consideradas = Number(saldoInicialBancosInfo.contas_consideradas || 0)
+    result.saldo_inicial_origem = result.saldo_final_origem === 'posicao_mensal_cashflow'
+      ? 'posicao_mensal_cashflow'
+      : saldoInicialBancosInfo.origem
+    result.saldo_final_calculado = true
+    result.saldo_final_origem = result.saldo_final_origem || (visao === 'diaria' ? 'movimento_diario' : 'fallback_encadeado')
 
     result.receita_bruta = Number(result.receita_bruta || 0) + totalCrFuturo
     result.receita_liquida = Number(result.receita_liquida || 0) + totalCrFuturo
     result.despesas = Number(result.despesas || 0) + totalCpFuturo
     result.geracao_caixa = Number(result.geracao_caixa || 0) + impactoFuturo
-    result.saldo_final = Number(result.saldo_final || 0) + impactoFuturo
     result.contas_pagar_futuro_aberto = totalCpFuturo
     result.contas_receber_futuro_aberto = totalCrFuturo
 
     return res.json({ ok: true, data: result })
   } catch (err) {
     return res.status(500).json({ ok: false, message: err.message })
+  }
+})
+
+
+// ─── POST /financeiro/movimento/manual ───────────────────────────────────────
+// Cadastro direto de movimentos bancários manuais com classificação contábil editável.
+// A conta bancária define empresa e banco; o lançamento não altera o saldo inicial.
+router.post('/movimento/manual', async (req, res) => {
+  const contaId = Number.parseInt(String(req.body?.banco_conta_id || ''), 10)
+  const tipo = String(req.body?.tipo || '').trim().toLowerCase()
+  const data = String(req.body?.data || '').trim()
+  const valor = parseManualMovementMoney(req.body?.valor)
+  const descricaoInformada = String(req.body?.descricao || '').trim()
+  const contraparte = String(req.body?.contraparte || '').trim()
+  const planoContaId = Number.parseInt(String(req.body?.plano_conta_id || ''), 10)
+
+  const TIPOS = {
+    tarifa_bancaria: {
+      historico: 'Tarifas bancárias',
+      conta_contabil: 'DESPESAS BANCARIAS E COMISSOES',
+      natureza_financeira: '5.2.2',
+      entrada: false,
+    },
+    rendimento_aplicacao: {
+      historico: 'Rendimento de aplicação',
+      conta_contabil: 'REND. S/APLICACOES FINANCEIRAS',
+      natureza_financeira: '5.1.3',
+      entrada: true,
+    },
+    distribuicao_lucros: {
+      historico: 'Distribuição de lucros',
+      conta_contabil: 'DISTRIBUIÇÃO DE LUCROS',
+      natureza_financeira: null,
+      entrada: true,
+    },
+    reembolso_despesas: {
+      historico: 'Reembolso de despesas',
+      conta_contabil: 'REEMBOLSO DE DESPESAS',
+      natureza_financeira: null,
+      entrada: true,
+    },
+  }
+
+  if (!Number.isInteger(contaId) || contaId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Selecione uma conta bancária.' })
+  }
+  if (!Object.prototype.hasOwnProperty.call(TIPOS, tipo)) {
+    return res.status(400).json({ ok: false, message: 'Tipo de lançamento inválido.' })
+  }
+  if (!isValidIsoDate(data)) {
+    return res.status(400).json({ ok: false, message: 'Informe uma data válida.' })
+  }
+  if (!Number.isFinite(valor) || valor <= 0) {
+    return res.status(400).json({ ok: false, message: 'Informe um valor maior que zero.' })
+  }
+  if (!Number.isInteger(planoContaId) || planoContaId <= 0) {
+    return res.status(400).json({ ok: false, message: 'Selecione uma conta contábil.' })
+  }
+  if (contraparte.length > 255) {
+    return res.status(400).json({ ok: false, message: 'O fornecedor/favorecido deve ter no máximo 255 caracteres.' })
+  }
+  if (descricaoInformada.length > 500) {
+    return res.status(400).json({ ok: false, message: 'A descrição deve ter no máximo 500 caracteres.' })
+  }
+
+  const configuracao = TIPOS[tipo]
+
+  try {
+    const created = await transaction(async client => {
+      const { rows: contas } = await client.query(
+        `SELECT id, empresa, banco_nome, agencia, conta, digito, ativo
+           FROM fin_bancos_contas
+          WHERE id = $1
+          FOR SHARE`,
+        [contaId]
+      )
+
+      if (!contas.length) {
+        const error = new Error('Conta bancária não encontrada.')
+        error.statusCode = 404
+        throw error
+      }
+
+      const conta = contas[0]
+      if (!conta.ativo) {
+        const error = new Error('A conta bancária selecionada está inativa.')
+        error.statusCode = 409
+        throw error
+      }
+
+      const { rows: contasContabeis } = await client.query(
+        `SELECT id, codigo, descricao, tipo, ativo
+           FROM fin_plano_contas
+          WHERE id = $1
+          FOR SHARE`,
+        [planoContaId]
+      )
+      if (!contasContabeis.length || !contasContabeis[0].ativo) {
+        const error = new Error('Conta contábil não encontrada ou inativa.')
+        error.statusCode = 404
+        throw error
+      }
+      const contaContabil = contasContabeis[0]
+      if (String(contaContabil.tipo || '').toUpperCase() !== 'A') {
+        const error = new Error('Selecione uma conta contábil analítica.')
+        error.statusCode = 400
+        throw error
+      }
+
+      const [ano, mes, dia] = data.split('-').map(Number)
+      const historico = descricaoInformada || configuracao.historico
+      const entradas = configuracao.entrada ? valor : 0
+      const saidas = configuracao.entrada ? 0 : valor
+
+      const { rows } = await client.query(
+        `INSERT INTO fin_movimento (
+           data, empresa, banco, entradas, saidas, fornecedor, historico,
+           nf_doc, emissao_doc, conta_contabil, centro_custo, obra,
+           natureza_financeira, n_cheque, dia, mes, ano, saldo,
+           tipo_lancamento, vencimento, fornecedor_id, banco_conta_id
+         )
+         VALUES (
+           $1, $2, $3, $4, $5, $6, $7,
+           NULL, NULL, $8, NULL, NULL,
+           $9, NULL, $10, $11, $12, NULL,
+           'manual', NULL, NULL, $13
+         )
+         RETURNING
+           id,
+           TO_CHAR(data, 'YYYY-MM-DD') AS data,
+           empresa,
+           banco,
+           entradas::float AS entradas,
+           saidas::float AS saidas,
+           historico,
+           conta_contabil,
+           natureza_financeira,
+           banco_conta_id,
+           tipo_lancamento`,
+        [
+          data,
+          String(conta.empresa || '').trim().toUpperCase(),
+          conta.banco_nome || null,
+          entradas,
+          saidas,
+          contraparte || null,
+          historico,
+          String(contaContabil.descricao || configuracao.conta_contabil || '').trim(),
+          String(contaContabil.codigo || configuracao.natureza_financeira || '').trim() || null,
+          dia,
+          mes,
+          ano,
+          conta.id,
+        ]
+      )
+
+      return {
+        movimento: rows[0],
+        classificacao: contaContabil,
+        conta: {
+          id: conta.id,
+          empresa: conta.empresa,
+          banco_nome: conta.banco_nome,
+          agencia: conta.agencia,
+          conta: conta.conta,
+          digito: conta.digito,
+        },
+      }
+    })
+
+    await logAudit({
+      tenantId: req.user?.tenant_id,
+      userId: req.user?.id,
+      action: 'movimento_bancario_manual_criado',
+      module: 'financeiro',
+      entityType: 'fin_movimento',
+      entityId: created.movimento.id,
+      ip: req.ip || req.socket?.remoteAddress,
+      userAgent: req.headers['user-agent'] || '',
+      details: {
+        tipo,
+        conta_bancaria: created.conta,
+        movimento: created.movimento,
+        classificacao: created.classificacao,
+      },
+    })
+
+    return res.status(201).json({
+      ok: true,
+      message: ({
+        tarifa_bancaria: 'Tarifa bancária lançada com sucesso.',
+        rendimento_aplicacao: 'Rendimento de aplicação lançado com sucesso.',
+        distribuicao_lucros: 'Distribuição de lucros lançada com sucesso.',
+        reembolso_despesas: 'Reembolso de despesas lançado com sucesso.',
+      })[tipo] || 'Lançamento bancário salvo com sucesso.',
+      data: created.movimento,
+    })
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({
+      ok: false,
+      message: err.message || 'Não foi possível salvar o lançamento.',
+    })
   }
 })
 

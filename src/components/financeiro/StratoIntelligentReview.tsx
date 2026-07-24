@@ -190,6 +190,15 @@ export type StratoApplySelection = {
   arquivo: string
   item: number
   parcela: number
+  linha_retorno?: number | null
+  parcela_id?: string | null
+  nosso_numero?: string | null
+  cliente_nome?: string | null
+  parcela_nome?: string | null
+  obra?: string | null
+  unidade?: string | null
+  juros_ajustados?: number
+  desconto_ajustado?: number
 }
 
 type Props = {
@@ -392,18 +401,27 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
     .filter(({ item }) => item.multiparcelas || item.execucao_automatica_bloqueada)
     .map(({ key }) => key)), [files])
   const [expanded, setExpanded] = useState<Set<string>>(new Set(initialKeys))
-  const eligibleSelections = useMemo<StratoApplySelection[]>(() => files.flatMap((file, fileIndex) =>
+  const eligibleSelections = useMemo<StratoApplySelection[]>(() => files.flatMap(file =>
     (file.analise_inteligente.itens || []).flatMap((item, itemIndex) =>
-      (item.parcelas || []).flatMap((parcel, parcelIndex) => (
-        isParcelEligible(item, parcel)
-          ? [{
-              key: parcelSelectionKey(file, item, parcel),
-              arquivo: file.arquivo,
-              item: itemIndex,
-              parcela: parcelIndex,
-            }]
-          : []
-      )),
+      (item.parcelas || []).flatMap((parcel, parcelIndex) => {
+        if (!isParcelEligible(item, parcel)) return []
+        const row = parcel.relatorio || {}
+        return [{
+          key: parcelSelectionKey(file, item, parcel),
+          arquivo: file.arquivo,
+          item: itemIndex,
+          parcela: parcelIndex,
+          linha_retorno: item.linha ?? null,
+          parcela_id: parcel.parcela?.id || null,
+          nosso_numero: item.boleto || row.boleto || null,
+          cliente_nome: row.cliente_nome || parcel.cliente?.nome || null,
+          parcela_nome: row.parcela || null,
+          obra: row.obra || null,
+          unidade: row.unidade || null,
+          juros_ajustados: Number(parcel.valor_juros_financeiro || 0) + Number(parcel.valor_moras || 0),
+          desconto_ajustado: Number(parcel.valor_desconto || 0),
+        }]
+      }),
     ),
   ), [files])
   const [selected, setSelected] = useState<Set<string>>(
@@ -466,8 +484,10 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
 
   function applySelected() {
     if (!onApply || applying || selectedSelections.length === 0) return
+    const totalInterest = selectedSelections.reduce((sum, selection) => sum + Number(selection.juros_ajustados || 0), 0)
+    const totalDiscount = selectedSelections.reduce((sum, selection) => sum + Number(selection.desconto_ajustado || 0), 0)
     const confirmed = window.confirm(
-      `Confirma a aplicação de ${selectedSelections.length} ajuste(s) e baixa(s)? Cada parcela terá um Movimento Bancário individual.`,
+      `Confirma ${selectedSelections.length} parcela(s)? Juros a ajustar: ${money(totalInterest)}. Desconto a ajustar: ${money(totalDiscount)}.`,
     )
     if (!confirmed) return
     void onApply(selectedSelections)
@@ -540,8 +560,8 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
         <div className="mt-3 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
           <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
-            <p className="font-semibold">O backend recalcula e valida todos os valores antes de gravar.</p>
-            <p className="mt-0.5">Parcelas localizadas e parcelas ausentes em contratos existentes podem ser aplicadas. Cliente ou contrato ausente/ambíguo permanece bloqueado para evitar cadastro incompleto.</p>
+            <p className="font-semibold">A confirmação do operador é a validação final.</p>
+            <p className="mt-0.5">O vínculo usa parcela, nosso número, nome do cliente e fração. Na gravação, o sistema ajusta juros/desconto, baixa a parcela e cria o Movimento Bancário.</p>
           </div>
         </div>
 
@@ -657,6 +677,11 @@ export default function StratoIntelligentReview({ files, onClose, onApply, apply
                                           </p>
                                         )}
                                         {financialNatureLabel(parcel) ? <p className="mt-1 max-w-[220px] text-[9px] font-medium leading-4 text-violet-700">{financialNatureLabel(parcel)}</p> : null}
+                                        {eligible && (
+                                          <p className="mt-1 max-w-[220px] rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-[9px] font-semibold leading-4 text-emerald-800">
+                                            Ao aplicar: juros {money(Number(parcel.valor_juros_financeiro || 0) + Number(parcel.valor_moras || 0))} · desconto {money(parcel.valor_desconto)}
+                                          </p>
+                                        )}
                                         {parcel.divergencias?.length ? <p className="mt-1 max-w-[220px] text-[9px] leading-4 text-slate-500">{parcel.divergencias.map(divergenceLabel).join(' · ')}</p> : null}
                                         {parcel.evidencias_correspondencia?.length ? <p className="mt-1 max-w-[220px] text-[9px] leading-4 text-slate-400">Evidências: {parcel.evidencias_correspondencia.map(evidenceLabel).join(', ')}</p> : null}
                                         {parcel.confianca != null ? <p className="mt-1 text-[9px] text-slate-400">Confiança {percent(parcel.confianca)}</p> : null}

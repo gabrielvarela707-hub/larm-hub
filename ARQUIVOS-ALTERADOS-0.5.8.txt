@@ -1,0 +1,28 @@
+ARQUIVOS ALTERADOS / ADICIONADOS — BACKEND 0.5.8
+=================================================
+
+ALTERADOS
+- package.json
+- package-lock.json
+- scripts/auditar_sincronizacao_strato_larmhub.js
+- scripts/test_auditoria_strato_larmhub.js
+- src/data/system_releases_seed.js
+- data/system_releases_seed.js
+
+ADICIONADOS
+- scripts/simular_sincronizacao_strato_larmhub.js
+- scripts/test_simulacao_strato_larmhub.js
+- docs/auditorias/CB230700-LUCKY/previa-etapa-b-0.5.8.md
+- README-ATUALIZACAO-0.5.8.txt
+- ARQUIVOS-ALTERADOS-0.5.8.txt
+- SHA256SUMS-0.5.8.txt
+
+MANTIDO
+- scripts/sqlserver/auditar_cb230700_lucky.sql
+
+SEM ALTERAÇÃO
+- Rotas da API
+- Serviços operacionais
+- Estrutura do banco
+- Frontend
+- Processamento automático dos retornos

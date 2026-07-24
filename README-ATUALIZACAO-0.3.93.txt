@@ -1,18 +1,28 @@
-LARMHUB WEB 0.3.93 — NOVO LANÇAMENTO NO MOVIMENTO BANCÁRIO
+LARMHUB API 0.3.93 — LANÇAMENTO MANUAL NO MOVIMENTO BANCÁRIO
 
 Arquivos alterados:
-- src/app/(dashboard)/financeiro/movimento/page.tsx
-- src/app/(dashboard)/financeiro/movimento/novo/page.tsx
+- src/routes/financeiro.js
+- src/data/system_releases_seed.js
+- data/system_releases_seed.js
 - package.json
 - package-lock.json
 
+Não há migration de estrutura.
+
 Instalação:
-1. Extraia o ZIP na raiz do frontend.
-2. Execute npm run build.
-3. Publique o frontend na Vercel.
+1. Extraia o ZIP na raiz /var/www/lotemobile-api.
+2. Execute:
+   node --check src/routes/financeiro.js
+   node --check src/data/system_releases_seed.js
+   node scripts/migrate_system_releases.js
+   pm2 restart larmhub-api
 
-A tela adiciona o botão Novo lançamento e permite cadastrar:
-- Tarifa bancária;
-- Rendimento de aplicação.
+Rota criada:
+POST /financeiro/movimento/manual
 
-A API 0.3.93 precisa ser publicada antes ou junto com o frontend.
+Regras:
+- Tarifa bancária: saída, conta DESPESAS BANCARIAS E COMISSOES, natureza 5.2.2.
+- Rendimento de aplicação: entrada, conta REND. S/APLICACOES FINANCEIRAS, natureza 5.1.3.
+- Empresa e banco vêm da conta selecionada.
+- O saldo inicial da conta não é alterado.
+- O lançamento recebe tipo_lancamento=manual e aparece após o corte das importações de 2026.

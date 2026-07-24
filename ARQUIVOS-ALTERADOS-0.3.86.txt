@@ -1,0 +1,11 @@
+scripts/seed_corrigir_duplicidades_movimento_26_29_30.js
+scripts/seed_movimento_bancario_2026_06_29_30.js
+scripts/system_releases_seed.js
+src/data/system_releases_seed.js
+data/system_releases_seed.js
+system_releases_seed.js
+package.json
+package-lock.json
+README-ATUALIZACAO-0.3.86.txt
+ARQUIVOS-ALTERADOS-0.3.86.txt
+SHA256SUMS.txt

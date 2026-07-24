@@ -1,18 +1,21 @@
-# Atualização 0.3.73 — Frontend
+# Atualização 0.3.73 — Backend
 
 ## Correção
 
-- As setas dos cabeçalhos Código, Cliente e Categoria agora aplicam a ordenação ao clicar.
-- O mesmo comportamento foi corrigido em Fornecedores.
-- O segundo clique alterna entre crescente e decrescente.
-- A listagem visível recebe uma ordenação defensiva enquanto a API retorna os dados ordenados do banco.
-- Nenhuma tela ou regra fora dos cadastros foi alterada.
+- As rotas de Clientes e Fornecedores agora aplicam corretamente os parâmetros de ordenação.
+- Compatibilidade com `ordenar/direcao`, `sort/direction` e `order_by/order_dir`.
+- Ordenação por Código, Nome e Categoria é executada no PostgreSQL antes da paginação.
+- Respostas de listagem usam `Cache-Control: no-store`.
+- Sem migration e sem alteração em boletos ou módulos financeiros.
 
 ## Aplicação
 
-Extraia na raiz do frontend e publique novamente.
+```bash
+pm2 restart larmhub-api
+```
+
+Para atualizar o changelog:
 
 ```bash
-npm run type-check
-npm run build
+node scripts/migrate_system_releases.js
 ```

@@ -1,19 +1,9 @@
-FRONTEND
-- src/app/(dashboard)/financeiro/movimento-orcado/page.tsx
-- src/app/(dashboard)/financeiro/receber/page.tsx
-- src/lib/api/financeiro.ts
-- src/data/system_releases_seed.js
-- data/system_releases_seed.js
-- package.json
-- package-lock.json
-
-BACKEND
-- server/src/routes/financeiro.js
-- server/src/routes/recebiveis.js
-- server/scripts/migrate_movimento_orcado_inativacao.js
-- server/src/data/system_releases_seed.js
-- server/scripts/system_releases_seed.js
-- server/data/system_releases_seed.js
-- server/system_releases_seed.js
-- server/package.json
-- server/package-lock.json
+src/routes/financeiro.js
+src/routes/recebiveis.js
+scripts/migrate_movimento_orcado_inativacao.js
+src/data/system_releases_seed.js
+scripts/system_releases_seed.js
+data/system_releases_seed.js
+system_releases_seed.js
+package.json
+package-lock.json

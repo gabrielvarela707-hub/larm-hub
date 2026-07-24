@@ -1,6 +1,14 @@
-LARMHUB WEB — ATUALIZAÇÃO 0.3.47
+LARMHUB API — ATUALIZAÇÃO 0.3.47
 
-Extraia o conteúdo deste ZIP na raiz do projeto frontend e publique novamente na Vercel.
+1. Faça backup do PostgreSQL.
+2. Extraia este ZIP diretamente em /var/www/lotemobile-api.
+3. Execute:
 
-Alterações: recálculo de parcelas vencidas, configuração Bradesco, emissão de boleto,
-geração de remessa, importação de retorno e seleção em lote no Contas a Receber.
+   cd /var/www/lotemobile-api
+   node scripts/migrate_recalculo_bradesco_recebiveis.js
+   node scripts/migrate_system_releases.js
+   pm2 restart larmhub-api
+   pm2 logs larmhub-api --lines 80
+
+A configuração inicial Bradesco é criada em modo de HOMOLOGAÇÃO.
+Não marque como homologada antes de validar o primeiro arquivo TST com o banco.

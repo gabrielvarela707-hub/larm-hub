@@ -1,29 +1,41 @@
-LARMHUB FRONTEND 0.3.77
+LARMHUB BACKEND 0.3.77
 Cash Flow — visão sintética padrão e Saldo Final corrigido
 
 ALTERAÇÕES
-- O Cash Flow abre por padrão no modo SINTÉTICO.
-- Contas analíticas deixam de poluir a listagem principal.
-- Criado botão "Exibir analíticas" / "Ocultar analíticas".
-- O detalhe dos lançamentos continua disponível ao clicar no valor sintético.
-- O frontend envia o parâmetro modo=sintetico|analitico para a API.
-- Cards e tabela passam a consumir o mesmo Saldo Final calculado pelo backend.
+- GET /financeiro/cashflow aceita modo=sintetico|analitico.
+- O modo padrão é sintético; contas analíticas são retornadas somente quando solicitadas.
+- As contas analíticas permanecem demonstrativas e não são somadas aos pais.
+- O Saldo Inicial passa a usar a soma das contas bancárias ativas do sistema.
+- O Saldo Final é encadeado mês a mês com a estrutura do Cash Flow.
+- CP/CR ainda em aberto continuam compondo a projeção futura.
+- O total anual da linha SALDO FINAL passa a representar dezembro, não a soma dos 12 saldos.
+- O resumo mensal e diário passa a usar o mesmo cálculo correto da tabela.
+- Valores antigos importados de Saldo Inicial/Final ficam preservados no banco, mas não são usados na exibição.
+- Nenhuma migration de estrutura é necessária.
 - Versão técnica atualizada para 0.3.77.
 
 ARQUIVOS ALTERADOS
-- src/app/(dashboard)/financeiro/cashflow/page.tsx
-- src/lib/api/financeiro.ts
+- src/routes/financeiro.js
 - src/data/system_releases_seed.js
+- scripts/system_releases_seed.js
 - data/system_releases_seed.js
+- system_releases_seed.js
 - package.json
 - package-lock.json
 
 PUBLICAÇÃO
-1. Substitua somente os arquivos acima no frontend.
+1. Substitua somente os arquivos acima no backend.
 2. Execute npm ci.
-3. Execute npm run type-check.
-4. Publique normalmente no Vercel.
+3. Execute node scripts/migrate_system_releases.js.
+4. Reinicie a API, por exemplo: pm2 restart larmhub-api.
 
-OBSERVAÇÃO
-O backend 0.3.77 deve ser publicado junto para que o filtro sintético/analítico
-e o novo cálculo do Saldo Final sejam aplicados.
+NÃO É NECESSÁRIO
+- Reimportar o Cash Flow.
+- Alterar fin_cashflow_valores manualmente.
+- Executar migration de tabela.
+
+VALIDAÇÃO ESPERADA
+- A tela abre mostrando apenas contas sintéticas.
+- O botão Exibir analíticas libera o terceiro nível.
+- O Saldo Final de janeiro deixa de mostrar aproximadamente R$ 294 milhões e
+  passa a refletir a posição real, próxima de R$ 9,4 milhões conforme os dados atuais.

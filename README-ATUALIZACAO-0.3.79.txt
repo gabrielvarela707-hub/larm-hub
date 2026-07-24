@@ -1,30 +1,70 @@
-LARMHUB FRONTEND 0.3.79
-Financeiro — vencimento como primeira coluna
+LARMHUB BACKEND 0.3.79
+Movimento Bancário 29/30 de junho e limpeza integral do Contas a Pagar
 
-ALTERAÇÕES
-- Contas a Pagar (/financeiro/pagar): Vencimento passa a ser a primeira coluna.
-- Contas a Pagar legado (/financeiro/contas-pagar): Vencimento também passa a ser a primeira coluna.
-- Contas a Receber (/financeiro/receber): Vencimento passa a ser a primeira coluna de dados, logo após a caixa de seleção.
-- Mantidos filtros, ordenação, paginação, ações e demais funcionalidades existentes.
-- Datas de vencimento e emissão da listagem legada de Contas a Pagar passam a usar o padrão dd/mm/aaaa.
-- Versão técnica atualizada para 0.3.79.
+1) MOVIMENTO BANCÁRIO — 29 E 30/06/2026
+Foi criado um seed específico e idempotente para inserir somente os 20 lançamentos faltantes:
+- 29/06/2026: 13 registros
+- 30/06/2026: 7 registros
+- Entradas: R$ 129.498,9900
+- Saídas: R$ 143.258,6400
 
-ARQUIVOS ALTERADOS
-- src/app/(dashboard)/financeiro/pagar/page.tsx
-- src/app/(dashboard)/financeiro/contas-pagar/page.tsx
-- src/app/(dashboard)/financeiro/receber/page.tsx
-- src/lib/api/financeiro.ts
-- src/data/system_releases_seed.js
-- data/system_releases_seed.js
-- package.json
-- package-lock.json
+O seed:
+- compara os registros pelo conteúdo antes de inserir;
+- não insere 01/07/2026;
+- calcula dia, mês e ano diretamente pela Data;
+- registra lote, arquivo de origem, linha da planilha e hash;
+- gera backup dos movimentos já existentes em 29 e 30/06;
+- usa transação e bloqueio da tabela.
 
-PUBLICAÇÃO
-1. Substitua somente os arquivos do pacote no frontend.
-2. Execute: npm ci
-3. Execute: npm run type-check
-4. Publique normalmente no Vercel.
+PRÉVIA
+  node scripts/seed_movimento_bancario_2026_06_29_30.js
 
-VALIDAÇÃO REALIZADA
-- npm run type-check: concluído sem erros.
-- next build: compilação e validação de tipos concluídas; o processo avançou para coleta de páginas e excedeu o limite do ambiente de teste.
+EXECUÇÃO ESPERADA, CASO A PRÉVIA MOSTRE 20 FALTANTES
+  node scripts/seed_movimento_bancario_2026_06_29_30.js --execute --confirmar=20
+
+Se a prévia mostrar outra quantidade, use exatamente a quantidade exibida. Se mostrar zero, não execute.
+
+2) LIMPEZA TOTAL DO CONTAS A PAGAR
+Foi criado um seed para apagar integralmente:
+- fin_lancamentos_cp;
+- fin_parcelas_cp;
+- fin_lancamentos_cp_boletos, quando existir.
+
+O seed:
+- abre em modo prévia;
+- exige confirmação com a quantidade atual de lançamentos;
+- cria backup JSON compactado em scripts/backups;
+- cria cópia adicional em fin_importacao_backup, quando a tabela existir;
+- usa transação e bloqueio exclusivo;
+- valida que Contas a Pagar ficou vazio antes do COMMIT;
+- NÃO apaga registros de fin_movimento.
+
+PRÉVIA
+  node scripts/seed_limpar_todas_contas_pagar.js
+
+A prévia mostrará, por exemplo:
+  Lançamentos: 83
+  Para executar: --execute --confirmar=83
+
+EXECUÇÃO
+  node scripts/seed_limpar_todas_contas_pagar.js --execute --confirmar=QUANTIDADE_DA_PREVIA
+
+IMPACTOS ESPERADOS DA LIMPEZA
+- Contas a Pagar ficará completamente vazia para lançamentos manuais a partir de 01/07/2026.
+- Movimentos bancários históricos serão preservados.
+- Movimentos que antes estavam ligados a parcelas de Contas a Pagar perderão somente esse vínculo e poderão aparecer como Realizado, em vez de Pago.
+- Valores futuros/em aberto de Contas a Pagar deixarão de compor o Cash Flow, pois os títulos serão removidos.
+- As sequências de IDs não são reiniciadas.
+
+3) VERSIONAMENTO
+Depois dos seeds:
+  node scripts/migrate_system_releases.js
+  pm2 restart larmhub-api
+
+ORDEM RECOMENDADA
+1. npm ci
+2. Prévia e execução do Movimento Bancário de 29/30.
+3. Prévia e execução da limpeza total do Contas a Pagar.
+4. node scripts/migrate_system_releases.js
+5. pm2 restart larmhub-api
+6. Publicar o frontend 0.3.79.

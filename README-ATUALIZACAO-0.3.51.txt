@@ -1,12 +1,12 @@
-LARMHUB 0.3.51 — FRONTEND
+LARMHUB 0.3.51 — BACKEND
 
-1. Extraia este pacote na raiz do projeto frontend.
-2. Publique novamente na Vercel.
+1. Extraia este pacote diretamente em /var/www/lotemobile-api.
+2. Execute:
+   node scripts/migrate_system_releases.js
+   pm2 restart larmhub-api
 
-Alterações:
-- Grupo "Cadastros" restaurado acima do Financeiro.
-- Itens organizados em ordem alfabética.
-- Clientes e Fornecedores centralizados em Cadastros.
-- Fornecedores removido do menu Financeiro para evitar duplicidade.
+Alteração:
+- O recálculo agora localiza valores mensais de IPCA/IGP-M pelo código normalizado do índice e não apenas pelo ID salvo no contrato.
+- Referências de data são retornadas no formato YYYY-MM-DD para evitar divergência de fuso/formatação.
 
 Não há migration de banco nesta versão.

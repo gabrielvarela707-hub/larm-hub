@@ -1,0 +1,23 @@
+BASE ANALISADA
+lotemobile_prod (7).zip
+SHA-256: 893c2e9683366f092c836cebde1d131148f4303c889712d2a7a78a2225e65c78
+
+PLANILHA ANALISADA
+Movimento Bancário-2026 - LarmHub.xlsx
+SHA-256: dca0081529c42181d8f34c57ad6b4662d37d600666d32fc7babe98264ac51c05
+
+CORTE
+Inclusivo em 01/07/2026.
+
+ESTADO ESPERADO ANTES DA EXECUÇÃO
+- 2.249 registros importados no lote MOV-2026-20260617220743
+- 11 registros protegidos
+- 0 referências aos 2.249 registros removíveis
+
+TRATAMENTO DE DUPLICIDADES/VÍNCULOS
+- Linha 1671 da planilha -> movimento 98050 (Amil)
+- Linha 2017 da planilha -> movimento 98051 (Amil)
+- Linha 2293 da planilha -> movimento 98049 (Serasa)
+
+Os três IDs permanecem os mesmos. O campo vencimento, fornecedor_id,
+banco_conta_id, movimento_id das parcelas e documentos existentes não são apagados.

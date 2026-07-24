@@ -1,22 +1,10 @@
-LARMHUB FRONTEND 0.3.72 — SETAS VISÍVEIS NOS CABEÇALHOS
+LARMHUB BACKEND — CHANGELOG 0.3.72 SOMENTE
 
-Arquivos alterados:
-- src/app/(dashboard)/cadastros/clientes/page.tsx
-- src/app/(dashboard)/financeiro/fornecedores/page.tsx
+Este pacote não altera rotas, banco operacional ou package.json.
+
+Arquivos:
 - src/data/system_releases_seed.js
-- package.json
-- package-lock.json
-
-Ajustes:
-- Código, Cliente e Categoria exibem ↕ quando não estão ativos.
-- A coluna ativa exibe ↑ para crescente e ↓ para decrescente.
-- O mesmo comportamento foi aplicado em Fornecedores.
-- O seletor de ordenação foi mantido.
-- Nenhuma regra de backend ou financeira foi alterada.
+- data/system_releases_seed.js
 
 Aplicação:
-1. Extrair na raiz do frontend.
-2. Executar npm ci apenas se necessário.
-3. Executar npm run type-check.
-4. Executar npm run build.
-5. Publicar no Vercel e atualizar com Ctrl + F5.
+node scripts/migrate_system_releases.js

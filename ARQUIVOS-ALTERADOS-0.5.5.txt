@@ -1,18 +1,18 @@
-LARMHUB FRONTEND 0.5.5 — ARQUIVOS ALTERADOS
+LARMHUB BACKEND 0.5.5 — ARQUIVOS ALTERADOS
 
 MODIFICADOS
 - package.json
 - package-lock.json
-- src/app/(dashboard)/financeiro/pagar/page.tsx
+- src/routes/fornecedores_bancos.js
+- src/data/system_releases_seed.js
+- data/system_releases_seed.js
 
 NOVOS
-- scripts/test_pagamento_fornecedor_cp_frontend.js
-- README-ATUALIZACAO-0.5.5-FRONTEND.txt
-- SHA256SUMS-0.5.5-FRONTEND.txt
+- src/services/contasPagarPagamentoService.js
+- scripts/test_pagamento_fornecedor_cp.js
+- README-ATUALIZACAO-0.5.5-BACKEND.txt
+- SHA256SUMS-0.5.5-BACKEND.txt
 
-NÃO ALTERADOS
-- Rateio e seus cálculos.
-- Listagem do Contas a Pagar.
-- Baixas e cancelamentos.
-- Movimento Bancário.
-- Componentes compartilhados do financeiro.
+BANCO DE DADOS
+- Nenhuma tabela, coluna, índice, trigger ou registro financeiro é alterado por migration.
+- A atualização usa campos que já existem em fin_fornecedores e fin_lancamentos_cp.

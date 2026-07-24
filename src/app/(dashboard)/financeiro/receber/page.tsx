@@ -825,6 +825,7 @@ export default function ContasReceberPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   const [busca, setBusca] = useState('')
+  const [buscaInput, setBuscaInput] = useState('')
   const [clienteId, setClienteId] = useState('')
   const [tipoReceitaId, setTipoReceitaId] = useState('')
   const [obraId, setObraId] = useState('')
@@ -883,7 +884,7 @@ export default function ContasReceberPage() {
   const stratoReportInputRef = useRef<HTMLInputElement | null>(null)
   const lastConfigCepRef = useRef('')
   const boletoChannelOwnerRef = useRef(`receber-${Math.random().toString(16).slice(2)}-${Date.now()}`)
-  const tableMinWidth = 2030
+  const tableMinWidth = 2180
 
   const requestParams = useMemo(() => ({
     page,
@@ -969,6 +970,16 @@ export default function ContasReceberPage() {
   useEffect(() => { void loadSystemCompanies() }, [loadSystemCompanies])
   useEffect(() => { load() }, [load])
 
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      const normalizedSearch = buscaInput.trim()
+      setPage(1)
+      setBusca(current => current === normalizedSearch ? current : normalizedSearch)
+    }, 350)
+
+    return () => window.clearTimeout(timeout)
+  }, [buscaInput])
+
   const handleSort = (key: SortKey) => {
     if (sort === key) setDirection(current => current === 'asc' ? 'desc' : 'asc')
     else {
@@ -980,6 +991,7 @@ export default function ContasReceberPage() {
 
   const resetFilters = () => {
     setBusca('')
+    setBuscaInput('')
     setClienteId('')
     setTipoReceitaId('')
     setObraId('')
@@ -1659,7 +1671,7 @@ export default function ContasReceberPage() {
         ...pendingStratoApplyPayload,
         baixar_liquidacoes: true,
         aplicar_analise_inteligente: true,
-        selecoes_inteligentes: selections.map(selection => selection.key),
+        selecoes_inteligentes: selections,
       })
       const responseResults = Array.isArray(response.data?.data?.arquivos)
         ? response.data.data.arquivos as ReturnProcessingResult[]
@@ -1873,7 +1885,19 @@ export default function ContasReceberPage() {
           <FilterField label="Busca" className="xl:col-span-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input value={busca} onChange={event => setBusca(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { setPage(1); load() } }} placeholder="Cliente, contrato, receita, obra ou documento..." className={`${inputClass} pl-9`} />
+              <input
+                value={buscaInput}
+                onChange={event => setBuscaInput(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') {
+                    setPage(1)
+                    setBusca(event.currentTarget.value.trim())
+                  }
+                }}
+                placeholder="Cliente, contrato, receita, obra ou documento..."
+                className={`${inputClass} pl-9`}
+                aria-label="Buscar contas a receber"
+              />
             </div>
           </FilterField>
           <FilterField label="Cliente">
@@ -2076,13 +2100,46 @@ export default function ContasReceberPage() {
       </div>
 
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold text-slate-700">Busca na tabela</p>
+            <p className="text-[10px] text-slate-400">A pesquisa considera cliente, CPF/CNPJ, contrato, receita, documento, obra e unidade.</p>
+          </div>
+          <div className="relative w-full sm:w-[430px]">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={buscaInput}
+              onChange={event => setBuscaInput(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') {
+                  setPage(1)
+                  setBusca(event.currentTarget.value.trim())
+                }
+              }}
+              placeholder="Digite para localizar uma parcela..."
+              className={`${inputClass} pr-9 pl-9`}
+              aria-label="Buscar na tabela de contas a receber"
+            />
+            {buscaInput && (
+              <button
+                type="button"
+                onClick={() => setBuscaInput('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                title="Limpar busca"
+                aria-label="Limpar busca da tabela"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
         <div ref={topScrollRef} onScroll={event => syncHorizontalScroll(event.currentTarget, tableScrollRef.current)} className="h-4 overflow-x-auto overflow-y-hidden border-b border-slate-100 bg-slate-50/70" title="Barra de rolagem horizontal da tabela">
           <div style={{ width: tableMinWidth }} className="h-1" />
         </div>
         <div ref={tableScrollRef} onScroll={event => syncHorizontalScroll(event.currentTarget, topScrollRef.current)} className="max-h-[70vh] overflow-auto">
           <table className="w-full table-fixed text-xs" style={{ minWidth: tableMinWidth }}>
             <colgroup>
-              <col style={{ width: 42 }} /><col style={{ width: 115 }} /><col style={{ width: 245 }} /><col style={{ width: 160 }} /><col style={{ width: 230 }} /><col style={{ width: 245 }} /><col style={{ width: 135 }} /><col style={{ width: 85 }} /><col style={{ width: 125 }} /><col style={{ width: 175 }} /><col style={{ width: 115 }} /><col style={{ width: 250 }} />
+              <col style={{ width: 42 }} /><col style={{ width: 115 }} /><col style={{ width: 245 }} /><col style={{ width: 160 }} /><col style={{ width: 230 }} /><col style={{ width: 245 }} /><col style={{ width: 135 }} /><col style={{ width: 85 }} /><col style={{ width: 125 }} /><col style={{ width: 145 }} /><col style={{ width: 175 }} /><col style={{ width: 115 }} /><col style={{ width: 250 }} />
             </colgroup>
             <thead className="sticky top-0 z-20">
               <tr className="bg-[#0d1b2a] text-white">
@@ -2095,6 +2152,7 @@ export default function ContasReceberPage() {
                 <th className="px-3 py-3 text-left">Documento</th>
                 <SortHeader label="Parcela" sortKey="parcela" active={sort} direction={direction} onSort={handleSort} align="center" />
                 <SortHeader label="Valor" sortKey="valor" active={sort} direction={direction} onSort={handleSort} align="right" />
+                <th className="px-3 py-3 text-right">Valor recebido</th>
                 <SortHeader label="Recebimento" sortKey="recebimento" active={sort} direction={direction} onSort={handleSort} />
                 <SortHeader label="Status" sortKey="status" active={sort} direction={direction} onSort={handleSort} />
                 <th className="px-3 py-3 text-left">Ações</th>
@@ -2102,11 +2160,14 @@ export default function ContasReceberPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={12} className="py-14 text-center text-slate-400"><Loader2 className="inline w-4 h-4 animate-spin mr-2" />Carregando recebíveis...</td></tr>
+                <tr><td colSpan={13} className="py-14 text-center text-slate-400"><Loader2 className="inline w-4 h-4 animate-spin mr-2" />Carregando recebíveis...</td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={12} className="py-14 text-center text-slate-400">Nenhuma parcela encontrada para os filtros selecionados.</td></tr>
+                <tr><td colSpan={13} className="py-14 text-center text-slate-400">Nenhuma parcela encontrada para os filtros selecionados.</td></tr>
               ) : rows.map(row => {
                 const eligible = ['aberta', 'atrasada'].includes(row.status)
+                const originalValue = Number(row.valor_nominal || 0)
+                const receivedValue = Number(row.valor_pago || 0)
+                const receivedDifference = Math.round(((receivedValue - originalValue) + Number.EPSILON) * 100) / 100
                 return (
                   <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50/70 align-top">
                     <td className="px-3 py-3 text-center"><input type="checkbox" disabled={!eligible} checked={selected.has(row.id)} onChange={() => toggleSelected(row.id)} aria-label={`Selecionar parcela de ${row.cliente_nome || 'cliente'}`} /></td>
@@ -2118,16 +2179,24 @@ export default function ContasReceberPage() {
                     <td className="px-3 py-3 text-slate-600 truncate" title={row.receita_documento || row.documento_legado || ''}>{row.receita_documento || row.documento_legado || '—'}</td>
                     <td className="px-3 py-3 text-center text-slate-600 whitespace-nowrap">{row.parcela_numero_legado || row.numero || '—'}{row.parcela_total_legado ? `/${row.parcela_total_legado}` : ''}</td>
                     <td className="px-3 py-3 text-right font-semibold tabular-nums text-slate-800 whitespace-nowrap">
-                      <p title="Valor líquido após descontos e juros">{formatCurrency(row.valor_total)}</p>
-                      {(Number(row.valor_desconto || 0) > 0 || Number(row.valor_juros_mora || 0) > 0) && (
-                        <div className="mt-1 space-y-0.5 text-[9px] font-normal">
-                          <p className="text-slate-500">Nominal {formatCurrency(row.valor_nominal)}</p>
-                          {Number(row.valor_desconto || 0) > 0 && <p className="text-rose-600">Desconto -{formatCurrency(row.valor_desconto || 0)}</p>}
-                          {Number(row.valor_juros_mora || 0) > 0 && <p className="text-amber-700">Juros +{formatCurrency(row.valor_juros_mora || 0)}</p>}
-                          {row.status === 'paga' && Number(row.valor_pago || 0) > 0 && <p className="text-emerald-700">Recebido {formatCurrency(row.valor_pago || 0)}</p>}
-                        </div>
-                      )}
+                      <p title="Valor original da parcela">{formatCurrency(originalValue)}</p>
                       {row.valor_recalculado != null && <p className="mt-1 text-[9px] font-normal text-blue-600" title={`Recalculado para ${formatDate(row.data_recalculo)}`}>recalculado</p>}
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums whitespace-nowrap">
+                      {row.status === 'paga' && receivedValue > 0 ? (
+                        <>
+                          <p className="font-semibold text-emerald-700" title="Valor efetivamente recebido e enviado ao Movimento Bancário">{formatCurrency(receivedValue)}</p>
+                          {receivedDifference !== 0 && (
+                            <p className={cn('mt-1 text-[9px] font-medium', receivedDifference > 0 ? 'text-amber-700' : 'text-rose-600')}>
+                              Diferença {receivedDifference > 0 ? '+' : '-'}{formatCurrency(Math.abs(receivedDifference))}
+                            </p>
+                          )}
+                          {Number(row.valor_juros_mora || 0) > 0 && <p className="mt-0.5 text-[9px] text-amber-700">Juros +{formatCurrency(row.valor_juros_mora || 0)}</p>}
+                          {Number(row.valor_desconto || 0) > 0 && <p className="mt-0.5 text-[9px] text-rose-600">Desconto -{formatCurrency(row.valor_desconto || 0)}</p>}
+                        </>
+                      ) : (
+                        <p className="text-slate-400">—</p>
+                      )}
                     </td>
                     <td className="px-3 py-3">
                       {editingReceiptDateId === row.id ? (

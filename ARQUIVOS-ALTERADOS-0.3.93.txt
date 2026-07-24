@@ -1,7 +1,9 @@
-ARQUIVOS ALTERADOS — LARMHUB WEB 0.3.93
+ARQUIVOS ALTERADOS — LARMHUB API 0.3.93
 
-- src/app/(dashboard)/financeiro/movimento/page.tsx
-- src/app/(dashboard)/financeiro/movimento/novo/page.tsx
-- src/app/(dashboard)/financeiro/fornecedores/page.tsx (mantida paginação 0.3.92)
+- src/routes/financeiro.js
+- src/middleware/rateLimiter.js (mantida correção 0.3.91)
+- src/data/system_releases_seed.js
+- data/system_releases_seed.js
+- scripts/migrate_system_releases.js
 - package.json
 - package-lock.json

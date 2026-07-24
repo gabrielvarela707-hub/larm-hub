@@ -1,10 +1,12 @@
-LARMHUB FRONTEND — v0.3.52
+LARMHUB BACKEND — v0.3.52
 
-Correção da geração de boleto no Contas a Receber.
+Correção e diagnóstico da geração de boleto Bradesco.
 
-- A aba do boleto só abre após resposta válida da API.
-- Erros são exibidos dentro do modal.
-- Botões mostram estado de carregamento.
+- Validação explícita de configuração e dados do cliente.
+- Mensagens de erro detalhadas.
+- Boleto usa o valor final recalculado.
 - Nenhuma migration de banco.
 
-Extraia na raiz do frontend e publique novamente na Vercel.
+Após extrair na raiz da API:
+node scripts/migrate_system_releases.js
+pm2 restart larmhub-api

@@ -1,15 +1,21 @@
-LARMHUB WEB 0.3.56
+LARMHUB API 0.3.56
 
 AJUSTE
-- Habilita o lápis de edição na visão diária do Cash Flow para saldos de aplicações.
-- O dia e o mês selecionados são enviados corretamente ao backend.
+- Habilita a gravação dos saldos de aplicações na visão diária do Cash Flow.
+- O valor informado em um dia permanece nos dias seguintes do mesmo mês até uma nova posição.
+- As linhas agregadas continuam calculadas automaticamente.
 
 ARQUIVOS ALTERADOS
-- src/app/(dashboard)/financeiro/cashflow/page.tsx
-- src/lib/api/financeiro.ts
+- src/routes/financeiro.js
+- scripts/migrate_cashflow_valores_diarios.js
 - src/data/system_releases_seed.js
+- data/system_releases_seed.js
 - package.json
 - package-lock.json
 
 ATUALIZAÇÃO
-- Extraia este ZIP na raiz do frontend e publique novamente na Vercel.
+1. Extraia este ZIP diretamente em /var/www/lotemobile-api.
+2. Execute:
+   node scripts/migrate_cashflow_valores_diarios.js
+   node scripts/migrate_system_releases.js
+   pm2 restart larmhub-api

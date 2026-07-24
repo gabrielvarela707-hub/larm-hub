@@ -1,21 +1,26 @@
-LARMHUB FRONTEND v0.3.46
+LARMHUB BACKEND v0.3.46
 
-CONTAS A RECEBER
-- Substitui a tela mockada por uma listagem real de contratos, receitas e parcelas.
-- Inicia no primeiro dia do mês atual.
-- Para consultar o passado, altere o campo "Vencimento de".
-- Filtros: busca, cliente, tipo de receita, obra, período e status.
-- Inclui ordenação, paginação, cabeçalho fixo, barra horizontal superior e setas flutuantes.
-- Exportação Excel usa os filtros ativos.
-- O botão "Novo Lançamento de Receita" permanece visível, mas bloqueado até a definição do formulário.
-- Recebimentos conciliados exibem a origem "Conciliação bancária".
-- Removido o contador mockado do menu Contas a Receber.
+CONTAS A RECEBER OPERACIONAL
+- Endpoints reais de listagem, filtros e exportação:
+  GET /financeiro/contas-receber
+  GET /financeiro/contas-receber/filtros
+  GET /financeiro/contas-receber/exportar
+- Consulta com_parcelas, com_contratos, fin_receitas, fin_tipos_receita, cad_clientes e cad_produtos.
+- Paginação e filtros por cliente, receita, obra, status e vencimento.
+- Valor do Strato usa valor_total_relatorio, evitando duplicar correção e encargos.
+- Migration prepara o relacionamento da parcela com o Movimento Bancário.
+
+ATUALIZAÇÃO
+cd /var/www/lotemobile-api
+node scripts/migrate_contas_receber_operacional.js
+node scripts/migrate_system_releases.js
+pm2 restart larmhub-api
+pm2 logs larmhub-api --lines 80
 
 IMPORTANTE
-O relatório importado anteriormente contém o saldo em aberto na posição de 01/06/2026.
-Parcelas antigas totalmente pagas ainda dependem da importação histórica de ts1_bole/ts1_core.
+A migration não faz conciliação retroativa automática. Ela prepara os campos movimento_id,
+origem_baixa, conciliado_em e conciliacao_dados. A rotina de conciliação bancária deverá
+preencher esse vínculo quando identificar o recebimento.
 
-INSTALAÇÃO
-1. Extraia o ZIP na raiz do frontend.
-2. Confirme a substituição dos arquivos.
-3. Publique novamente na Vercel.
+O histórico completo de parcelas pagas ainda deve ser importado das tabelas legadas
+Strato ts1_bole/ts1_core. A tela já está preparada para exibi-lo após essa importação.

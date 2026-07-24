@@ -1,0 +1,182 @@
+{
+  "versao": "0.5.6",
+  "modo": "ANALISE_OFFLINE_DO_DUMP_POSTGRESQL_E_ARQUIVOS_RETORNO",
+  "fontes": {
+    "postgresql": "lotemobile_prod (10).sql",
+    "retorno": "CB230700 LUCKY .RET",
+    "relatorio": "RET 23072026 LUCKY.pdf",
+    "sqlserver_bak": "BKPTMP(3).zip — restauração SQL Server necessária para confirmação final"
+  },
+  "resumo": {
+    "nao_localizados": 2,
+    "clientes_novos_confirmados": 0,
+    "contratos_novos_confirmados": 0,
+    "casos": [
+      {
+        "cliente": "MARCIA BEATRIZ DE OLIVEIRA SANTOS",
+        "acao": "corrigir a parcela importada e baixar após confirmação no SQL Server"
+      },
+      {
+        "cliente": "BRIZA LUCCI MAUSE",
+        "acao": "confirmar antecipação consolidada de 10 parcelas e baixar após confirmação no SQL Server"
+      }
+    ]
+  },
+  "marcia": {
+    "cliente_codigo": 1335,
+    "contrato": "STR-1203-B-4",
+    "boleto": "260000389786",
+    "retorno": {
+      "parcela": "052/120",
+      "vencimento": "2026-06-10",
+      "principal": 1715.93,
+      "juros": 58.25,
+      "pago": 1774.18,
+      "controle": "101266"
+    },
+    "larmhub_candidato": {
+      "id": "16f548e5-74eb-445c-9b61-61e5e81b800e",
+      "documento": "1203 13/30",
+      "parcela_numero": 13,
+      "parcela_total": 30,
+      "vencimento": "2026-06-10",
+      "valor": 1727.42,
+      "status": "atrasada"
+    },
+    "diagnostico": "Mesmo contrato e vencimento, mas a fração foi importada como 13/30 em vez de 52/120 e o valor está R$ 11,49 acima do título."
+  },
+  "briza": {
+    "cliente_codigo": 1480,
+    "contrato": "STR-1366-F-1",
+    "boleto": "260000392183",
+    "retorno": {
+      "documento": "18a27-ANT",
+      "pago_total": 18474.79,
+      "data_ocorrencia": "2026-07-22",
+      "data_credito": "2026-07-23"
+    },
+    "componentes": [
+      {
+        "id": "c55a7505-fb9e-48a6-a5ec-a61e40fa4ef0",
+        "parcela": "018/037",
+        "vencimento": "2027-06-15",
+        "valor_larmhub": 2061.25,
+        "valor_strato": 2073.21,
+        "diferenca_nominal": 11.96,
+        "valor_pago_rateado": 1847.48,
+        "desconto_estimado": 225.73,
+        "status": "aberta",
+        "movimento_id": null
+      },
+      {
+        "id": "a168b160-bd17-4173-9cb5-49964f132615",
+        "parcela": "019/037",
+        "vencimento": "2027-07-15",
+        "valor_larmhub": 2061.25,
+        "valor_strato": 2073.21,
+        "diferenca_nominal": 11.96,
+        "valor_pago_rateado": 1847.48,
+        "desconto_estimado": 225.73,
+        "status": "aberta",
+        "movimento_id": null
+      },
+      {
+        "id": "ba1c506c-e84a-45c8-a653-bb5e8fb4b707",
+        "parcela": "020/037",
+        "vencimento": "2027-08-15",
+        "valor_larmhub": 2061.25,
+        "valor_strato": 2073.21,
+        "diferenca_nominal": 11.96,
+        "valor_pago_rateado": 1847.48,
+        "desconto_estimado": 225.73,
+        "status": "aberta",
+        "movimento_id": null
+      },
+      {
+        "id": "fa2803bd-d7c1-49ca-b0d2-d29e1911e112",
+        "parcela": "021/037",
+        "vencimento": "2027-09-15",
+        "valor_larmhub": 2061.25,
+        "valor_strato": 2073.21,
+        "diferenca_nominal": 11.96,
+        "valor_pago_rateado": 1847.48,
+        "desconto_estimado": 225.73,
+        "status": "aberta",
+        "movimento_id": null
+      },
+      {
+        "id": "9a9bbe59-fef8-4fe9-b23c-bb8c12189c55",
+        "parcela": "022/037",
+        "vencimento": "2027-10-15",
+        "valor_larmhub": 2061.25,
+        "valor_strato": 2073.21,
+        "diferenca_nominal": 11.96,
+        "valor_pago_rateado": 1847.48,
+        "desconto_estimado": 225.73,
+        "status": "aberta",
+        "movimento_id": null
+      },
+      {
+        "id": "621756b2-ebf6-4b72-bce6-b2253d27c20d",
+        "parcela": "023/037",
+        "vencimento": "2027-11-15",
+        "valor_larmhub": 2061.25,
+        "valor_strato": 2073.21,
+        "diferenca_nominal": 11.96,
+        "valor_pago_rateado": 1847.48,
+        "desconto_estimado": 225.73,
+        "status": "aberta",
+        "movimento_id": null
+      },
+      {
+        "id": "5af98c97-93da-4b84-87cc-6d5916b6741e",
+        "parcela": "024/037",
+        "vencimento": "2027-12-15",
+        "valor_larmhub": 2061.25,
+        "valor_strato": 2073.21,
+        "diferenca_nominal": 11.96,
+        "valor_pago_rateado": 1847.48,
+        "desconto_estimado": 225.73,
+        "status": "aberta",
+        "movimento_id": null
+      },
+      {
+        "id": "38be5f40-0b33-407b-befb-9fd3e620edad",
+        "parcela": "025/037",
+        "vencimento": "2028-01-15",
+        "valor_larmhub": 2061.25,
+        "valor_strato": 2073.21,
+        "diferenca_nominal": 11.96,
+        "valor_pago_rateado": 1847.48,
+        "desconto_estimado": 225.73,
+        "status": "aberta",
+        "movimento_id": null
+      },
+      {
+        "id": "4c871fb8-2a0d-4820-b958-af70f4a122c8",
+        "parcela": "026/037",
+        "vencimento": "2028-02-15",
+        "valor_larmhub": 2061.25,
+        "valor_strato": 2073.21,
+        "diferenca_nominal": 11.96,
+        "valor_pago_rateado": 1847.48,
+        "desconto_estimado": 225.73,
+        "status": "aberta",
+        "movimento_id": null
+      },
+      {
+        "id": "f2dd0d70-d794-4cfd-a6f9-aac8b671d945",
+        "parcela": "027/037",
+        "vencimento": "2028-03-15",
+        "valor_larmhub": 2061.25,
+        "valor_strato": 2073.21,
+        "diferenca_nominal": 11.96,
+        "valor_pago_rateado": 1847.47,
+        "desconto_estimado": 225.74,
+        "status": "aberta",
+        "movimento_id": null
+      }
+    ],
+    "diagnostico": "As parcelas 18/37 a 27/37 já existem e estão abertas. Cada uma está em R$ 2.061,25 no LarmHub, enquanto o Strato mostra R$ 2.073,21. O pagamento consolidado exige confirmação no SQL Server antes da baixa."
+  }
+}

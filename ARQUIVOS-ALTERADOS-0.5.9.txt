@@ -1,0 +1,11 @@
+package.json
+package-lock.json
+data/system_releases_seed.js
+scripts/cb230700_lucky_plan.js
+scripts/aplicar_correcao_cb230700_lucky.js
+scripts/conferir_correcao_cb230700_lucky.js
+scripts/rollback_correcao_cb230700_lucky.js
+scripts/test_correcao_cb230700_lucky.js
+README-ATUALIZACAO-0.5.9-BACKEND.txt
+ARQUIVOS-ALTERADOS-0.5.9.txt
+SHA256SUMS-0.5.9-BACKEND.txt

@@ -1,10 +1,14 @@
-FRONTEND 0.3.78
+BACKEND 0.3.78
 
 package.json
 package-lock.json
-src/app/(dashboard)/financeiro/cashflow/page.tsx
-src/lib/api/financeiro.ts
+src/routes/financeiro.js
+scripts/migrate_cashflow_posicoes_2026.js
+scripts/data/cashflow_posicoes_2026.json
+scripts/import_financeiro.py
 src/data/system_releases_seed.js
+scripts/system_releases_seed.js
 data/system_releases_seed.js
+system_releases_seed.js
 README-ATUALIZACAO-0.3.78.txt
 ARQUIVOS-ALTERADOS-0.3.78.txt

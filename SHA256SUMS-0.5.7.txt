@@ -1,0 +1,8 @@
+150930818e8692aca7094df3210e10b356fb429496aba06851b2e40e653b64c9  ./ARQUIVOS-ALTERADOS-0.5.7.txt
+60a314cfcf2702505d703a28d49f31e4e525ca91789256d003278be4c3499ca4  ./README-ATUALIZACAO-0.5.7.txt
+15419b6a4a3f44e0aaede83683362c83dcca8ea060390dae750da29a274658a6  ./data/system_releases_seed.js
+fa09f7d77f94904a61d29018f41769bd881bd2a1d4cd4c1c54d825675c22a2a5  ./package-lock.json
+dcac76cf78d81ef64794d64d9858416bd1c59b87386ecbee9d78aa5e0f874fc5  ./package.json
+a5f2c21e732742d934ceb7b841716527a68e6f08a7f335ca9345b60c57c3b5e6  ./scripts/auditar_sincronizacao_strato_larmhub.js
+1b2de3cae46884f61171284de3243f4dc7411b19152a16b380ed010c461f72db  ./scripts/test_auditoria_strato_larmhub.js
+15419b6a4a3f44e0aaede83683362c83dcca8ea060390dae750da29a274658a6  ./src/data/system_releases_seed.js

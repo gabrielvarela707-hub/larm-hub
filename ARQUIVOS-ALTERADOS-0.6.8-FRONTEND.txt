@@ -1,0 +1,4 @@
+src/components/financeiro/StratoIntelligentReview.tsx
+src/app/(dashboard)/financeiro/receber/page.tsx
+README-ATUALIZACAO-0.6.8-FRONTEND.txt
+ARQUIVOS-ALTERADOS-0.6.8-FRONTEND.txt

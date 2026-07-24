@@ -1,0 +1,12 @@
+package.json
+package-lock.json
+src/services/stratoReturnReportAnalyzer.js
+src/services/stratoMultiParcelAnalysisService.js
+src/routes/recebiveis.js
+src/data/system_releases_seed.js
+data/system_releases_seed.js
+scripts/test_strato_multi_analysis.js
+scripts/test_retorno_multiparcelas.js
+README-ATUALIZACAO-0.6.2-BACKEND.txt
+ARQUIVOS-ALTERADOS-0.6.2.txt
+SHA256SUMS-0.6.2-BACKEND.txt
