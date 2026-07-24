@@ -1,0 +1,9 @@
+LARMHUB FRONTEND 0.6.4 — ARQUIVOS ALTERADOS
+
+package.json
+package-lock.json
+src/app/(dashboard)/financeiro/receber/page.tsx
+src/components/financeiro/StratoIntelligentReview.tsx
+scripts/test_strato_review_frontend.js
+scripts/test_strato_apply_frontend.js (novo)
+README-ATUALIZACAO-0.6.4-FRONTEND.txt

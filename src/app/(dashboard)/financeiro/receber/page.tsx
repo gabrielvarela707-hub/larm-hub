@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react'
 import TableFloatingNav from '@/components/table-floating-nav'
-import StratoIntelligentReview, { type StratoAnalysisFile, type StratoIntelligentAnalysis } from '@/components/financeiro/StratoIntelligentReview'
+import StratoIntelligentReview, { type StratoAnalysisFile, type StratoApplySelection, type StratoIntelligentAnalysis } from '@/components/financeiro/StratoIntelligentReview'
 import { apiClient, useAuthStore } from '@/lib/auth-store'
 import { hasModuleAccess } from '@/lib/module-access'
 import { cn } from '@/lib/utils'
@@ -32,6 +32,11 @@ const FINANCE_WRITE_ROLES = new Set([
 ])
 
 type StatusReceber = 'aberta' | 'atrasada' | 'paga' | 'cancelada'
+type IntelligentReturnPayload = {
+  files: Array<{ filename: string; content: string }>
+  relatorios_strato: Array<{ filename: string; mime_type: string; base64: string }>
+}
+
 type EmpresaCobranca = 'LARM' | 'LUCKY'
 type SortKey = 'cliente' | 'contrato' | 'receita' | 'parcela' | 'valor' | 'vencimento' | 'recebimento' | 'status'
 type SortDirection = 'asc' | 'desc'
@@ -496,7 +501,7 @@ function escapePdfHtml(value: unknown) {
 function buildReturnPdfHtml(result: ReturnProcessingResult) {
   const generatedAt = new Date().toLocaleString('pt-BR')
   const title = result.preview ? 'Prévia do retorno Bradesco' : result.duplicated ? 'Retorno Bradesco já processado' : 'Resultado do retorno Bradesco'
-  const rows = (result.itens || []).map(item => {
+  const rows = (result.itens || []).map((item, itemIndex) => {
     const status = returnItemStatusLabel(item, Boolean(result.duplicated))
     const reason = returnItemReason(item, Boolean(result.duplicated))
     const rowClass = item.status_processamento === 'nao_localizado' && item.ocorrencia === '06'
@@ -506,7 +511,7 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
         : ''
     return `
       <tr${rowClass}>
-        <td>${escapePdfHtml(item.linha)}</td>
+        <td>${escapePdfHtml(itemIndex + 1)}</td>
         <td>${escapePdfHtml(item.arquivo_origem || result.arquivo || '—')}</td>
         <td>${escapePdfHtml(status)}</td>
         <td>${escapePdfHtml(`${item.ocorrencia || '—'} · ${item.ocorrencia_descricao || '—'}`)}</td>
@@ -577,7 +582,7 @@ function buildReturnPdfHtml(result: ReturnProcessingResult) {
   <table>
     <thead>
       <tr>
-        <th style="width: 4%">Linha</th>
+        <th style="width: 4%">Item</th>
         <th style="width: 10%">Arquivo</th>
         <th style="width: 8%">Status</th>
         <th style="width: 11%">Ocorrência</th>
@@ -813,6 +818,8 @@ export default function ContasReceberPage() {
   const [returnLoading, setReturnLoading] = useState(false)
   const [returnResult, setReturnResult] = useState<ReturnProcessingResult | null>(null)
   const [stratoIntelligentReview, setStratoIntelligentReview] = useState<StratoAnalysisFile[]>([])
+  const [pendingStratoApplyPayload, setPendingStratoApplyPayload] = useState<IntelligentReturnPayload | null>(null)
+  const [stratoApplyLoading, setStratoApplyLoading] = useState(false)
   const [stratoReportFiles, setStratoReportFiles] = useState<File[]>([])
   const [boletoLoadingId, setBoletoLoadingId] = useState<string | null>(null)
   const [boletoError, setBoletoError] = useState('')
@@ -1468,6 +1475,8 @@ export default function ContasReceberPage() {
     setSuccess('')
     setReturnResult(null)
     setStratoIntelligentReview([])
+    setPendingStratoApplyPayload(null)
+    let intelligentPayload: IntelligentReturnPayload | null = null
     try {
       const payloadFiles = await Promise.all(files.map(async file => ({
         filename: file.name,
@@ -1478,6 +1487,10 @@ export default function ContasReceberPage() {
         mime_type: file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream'),
         base64: await fileToBase64(file),
       })))
+      intelligentPayload = {
+        files: payloadFiles,
+        relatorios_strato: payloadReports,
+      }
       const response = await apiClient.post('/financeiro/contas-receber/bradesco/retorno', {
         files: payloadFiles,
         relatorios_strato: payloadReports,
@@ -1499,6 +1512,7 @@ export default function ContasReceberPage() {
           analise_inteligente: result.analise_inteligente as StratoIntelligentAnalysis,
         }))
       setStratoIntelligentReview(intelligentFiles)
+      setPendingStratoApplyPayload(intelligentFiles.length ? intelligentPayload : null)
 
       const companies = Array.from(new Set(responseResults.map(result => result.empresa).filter(Boolean)))
       const receiptDates = Array.from(new Set(responseResults.map(result => result.data_recebimento).filter(Boolean)))
@@ -1568,6 +1582,7 @@ export default function ContasReceberPage() {
 
       if (reviewFiles.length) {
         setStratoIntelligentReview(reviewFiles)
+        setPendingStratoApplyPayload(intelligentPayload)
         setError('')
         setSuccess(responseData?.message || 'Análise inteligente concluída. Revise as parcelas relacionadas antes da aplicação.')
         setStratoReportFiles([])
@@ -1578,6 +1593,39 @@ export default function ContasReceberPage() {
     } finally {
       setReturnLoading(false)
       if (returnInputRef.current) returnInputRef.current.value = ''
+    }
+  }
+
+  const applyStratoIntelligentReview = async (selections: StratoApplySelection[]) => {
+    if (!pendingStratoApplyPayload || !selections.length) return
+    setStratoApplyLoading(true)
+    setError('')
+    setSuccess('')
+    try {
+      const response = await apiClient.post('/financeiro/contas-receber/bradesco/retorno', {
+        ...pendingStratoApplyPayload,
+        baixar_liquidacoes: true,
+        aplicar_analise_inteligente: true,
+        selecoes_inteligentes: selections.map(selection => selection.key),
+      })
+      const responseResults = Array.isArray(response.data?.data?.arquivos)
+        ? response.data.data.arquivos as ReturnProcessingResult[]
+        : []
+      const refreshedReview = responseResults
+        .filter(result => Boolean(result.analise_inteligente))
+        .map(result => ({
+          arquivo: result.arquivo,
+          analise_inteligente: result.analise_inteligente as StratoIntelligentAnalysis,
+        }))
+      if (refreshedReview.length) setStratoIntelligentReview(refreshedReview)
+      setPendingStratoApplyPayload(null)
+      const summary = response.data?.data?.resumo
+      setSuccess(response.data?.message || `${Number(summary?.parcelas_aplicadas || 0)} parcela(s) aplicada(s) com sucesso.`)
+      await load()
+    } catch (requestError: unknown) {
+      setError(requestErrorMessage(requestError, 'Não foi possível aplicar os ajustes e baixas selecionados.'))
+    } finally {
+      setStratoApplyLoading(false)
     }
   }
 
@@ -1831,7 +1879,15 @@ export default function ContasReceberPage() {
       {success && <Notice type="success" onClose={() => setSuccess('')}>{success}</Notice>}
 
       {stratoIntelligentReview.length > 0 && (
-        <StratoIntelligentReview files={stratoIntelligentReview} onClose={() => setStratoIntelligentReview([])} />
+        <StratoIntelligentReview
+          files={stratoIntelligentReview}
+          applying={stratoApplyLoading}
+          onApply={pendingStratoApplyPayload ? applyStratoIntelligentReview : undefined}
+          onClose={() => {
+            setStratoIntelligentReview([])
+            setPendingStratoApplyPayload(null)
+          }}
+        />
       )}
 
       {returnResult && (
@@ -1915,7 +1971,7 @@ export default function ContasReceberPage() {
               <div className="overflow-x-auto rounded-lg border border-slate-200">
               <table className="min-w-[1220px] w-full text-xs">
                 <thead className="bg-slate-50 text-slate-700"><tr>
-                  <th className="px-3 py-2 text-left">Linha</th>
+                  <th className="px-3 py-2 text-left">Item</th>
                   <th className="px-3 py-2 text-left">Arquivo</th>
                   <th className="px-3 py-2 text-left">Status</th>
                   <th className="px-3 py-2 text-left">Ocorrência</th>
@@ -1929,9 +1985,9 @@ export default function ContasReceberPage() {
                   <th className="px-3 py-2 text-left">Detalhe</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {returnResult.itens.map(item => (
+                  {returnResult.itens.map((item, itemIndex) => (
                     <tr key={`${item.arquivo_origem || returnResult.arquivo}-${item.linha}-${item.nosso_numero || item.documento || item.ocorrencia}`} className={item.status_processamento === 'nao_localizado' && item.ocorrencia === '06' ? 'bg-amber-50/60' : ''}>
-                      <td className="px-3 py-2">{item.linha}</td>
+                      <td className="px-3 py-2">{itemIndex + 1}</td>
                       <td className="px-3 py-2 text-[10px] text-slate-500">{item.arquivo_origem || returnResult.arquivo}</td>
                       <td className="px-3 py-2">
                         <span className={cn('inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold', returnItemStatusClass(item))}>

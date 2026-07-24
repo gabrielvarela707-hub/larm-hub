@@ -9,6 +9,7 @@ import {
   Download,
   FileSearch,
   LockKeyhole,
+  Loader2,
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -176,9 +177,18 @@ export type StratoAnalysisFile = {
   analise_inteligente: StratoIntelligentAnalysis
 }
 
+export type StratoApplySelection = {
+  key: string
+  arquivo: string
+  item: number
+  parcela: number
+}
+
 type Props = {
   files: StratoAnalysisFile[]
   onClose: () => void
+  onApply?: (selections: StratoApplySelection[]) => Promise<void>
+  applying?: boolean
 }
 
 function money(value?: number | null) {
@@ -255,6 +265,22 @@ function groupKey(file: StratoAnalysisFile, item: StratoAnalysisItem, index: num
   return `${file.arquivo}-${item.linha ?? index}-${item.boleto || item.documento || index}`
 }
 
+function parcelSelectionKey(fileIndex: number, itemIndex: number, parcelIndex: number) {
+  return `${fileIndex}:${itemIndex}:${parcelIndex}`
+}
+
+function isParcelEligible(item: StratoAnalysisItem, parcel: StratoAnalysisParcel) {
+  const action = String(parcel.acao_proposta || '')
+  const classification = String(parcel.classificacao || '')
+  const allowedAction = ['BAIXAR_PARCELA', 'ATUALIZAR_E_BAIXAR', 'CRIAR_PARCELA_E_BAIXAR'].includes(action)
+  const hardBlocked = [
+    'CLIENTE_AUSENTE', 'CLIENTE_AMBIGUO',
+    'CONTRATO_AUSENTE', 'CONTRATO_AMBIGUO',
+    'PARCELA_AMBIGUA',
+  ].includes(classification)
+  return allowedAction && !hardBlocked && item.soma_confere_com_retorno !== false
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -293,7 +319,7 @@ function buildPrintHtml(files: StratoAnalysisFile[]) {
     })).join('')
     return `<section>
       <h2>${escapeHtml(file.arquivo)} · ${escapeHtml(analysis.empresa || 'Empresa não identificada')}</h2>
-      <p>Versão da análise ${escapeHtml(analysis.versao || '0.6.2')} · modo somente análise · nenhuma alteração financeira executada.</p>
+      <p>Versão da análise ${escapeHtml(analysis.versao || '0.6.4')} · conferência da versão 0.6.4.</p>
       <table>
         <thead><tr><th>Obra</th><th>Unid.</th><th>Parcela</th><th>Boleto</th><th>Vencimento</th><th>A pagar</th><th>J.FCT</th><th>Seguro</th><th>Moras</th><th>Desconto</th><th>Resíduo</th><th>Total</th><th>Recebimento</th><th>Pago</th><th>Diferença</th><th>LarmHub</th><th>Situação</th><th>Ação</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="18">Nenhuma parcela relacionada.</td></tr>'}</tbody>
@@ -304,19 +330,44 @@ function buildPrintHtml(files: StratoAnalysisFile[]) {
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Conferência inteligente Strato</title><style>
     @page{size:A3 landscape;margin:8mm}*{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#172033;margin:0}h1{font-size:20px;margin:0 0 4px}h2{font-size:14px;margin:18px 0 3px}p{font-size:9px;color:#64748b;margin:0 0 8px}table{width:100%;border-collapse:collapse;font-size:7px;margin-bottom:14px}th{background:#0f172a;color:#fff;padding:4px;border:1px solid #334155;text-align:left}td{padding:4px;border:1px solid #cbd5e1;vertical-align:top}.num{text-align:right;white-space:nowrap}.note{border:1px solid #f59e0b;background:#fffbeb;padding:8px;font-size:9px;margin:8px 0}</style></head><body>
     <h1>Conferência inteligente Strato × Retorno Bradesco × LarmHub</h1>
-    <div class="note">Relatório de conferência somente leitura. A aplicação dos ajustes e baixas será liberada na etapa 0.6.4.</div>
+    <div class="note">Relatório de conferência da análise inteligente. A aplicação exige seleção e validação transacional no LarmHub.</div>
     ${sections}
   </body></html>`
 }
 
-export default function StratoIntelligentReview({ files, onClose }: Props) {
+export default function StratoIntelligentReview({ files, onClose, onApply, applying = false }: Props) {
   const initialKeys = useMemo(() => files.flatMap(file => (file.analise_inteligente.itens || [])
     .map((item, index) => ({ item, key: groupKey(file, item, index) }))
     .filter(({ item }) => item.multiparcelas || item.execucao_automatica_bloqueada)
     .map(({ key }) => key)), [files])
   const [expanded, setExpanded] = useState<Set<string>>(new Set(initialKeys))
+  const eligibleSelections = useMemo<StratoApplySelection[]>(() => files.flatMap((file, fileIndex) =>
+    (file.analise_inteligente.itens || []).flatMap((item, itemIndex) =>
+      (item.parcelas || []).flatMap((parcel, parcelIndex) => (
+        isParcelEligible(item, parcel)
+          ? [{
+              key: parcelSelectionKey(fileIndex, itemIndex, parcelIndex),
+              arquivo: file.arquivo,
+              item: itemIndex,
+              parcela: parcelIndex,
+            }]
+          : []
+      )),
+    ),
+  ), [files])
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(eligibleSelections.map(entry => entry.key)),
+  )
 
   useEffect(() => setExpanded(new Set(initialKeys)), [initialKeys])
+  useEffect(() => setSelected(new Set(eligibleSelections.map(entry => entry.key))), [eligibleSelections])
+
+  const selectedSelections = useMemo(
+    () => eligibleSelections.filter(entry => selected.has(entry.key)),
+    [eligibleSelections, selected],
+  )
+  const allEligibleSelected = eligibleSelections.length > 0
+    && selectedSelections.length === eligibleSelections.length
 
   const totals = useMemo(() => files.reduce((acc, file) => {
     const summary = file.analise_inteligente.resumo || {}
@@ -349,6 +400,28 @@ export default function StratoIntelligentReview({ files, onClose }: Props) {
     })
   }
 
+  function toggleSelection(key: string) {
+    setSelected(current => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  function toggleAllSelections() {
+    setSelected(allEligibleSelected ? new Set<string>() : new Set(eligibleSelections.map(entry => entry.key)))
+  }
+
+  function applySelected() {
+    if (!onApply || applying || selectedSelections.length === 0) return
+    const confirmed = window.confirm(
+      `Confirma a aplicação de ${selectedSelections.length} ajuste(s) e baixa(s)? Cada parcela terá um Movimento Bancário individual.`,
+    )
+    if (!confirmed) return
+    void onApply(selectedSelections)
+  }
+
   function printReview() {
     const printWindow = window.open('', '_blank', 'width=1500,height=900')
     if (!printWindow) return
@@ -366,10 +439,10 @@ export default function StratoIntelligentReview({ files, onClose }: Props) {
           <div className="flex items-center gap-2">
             <FileSearch className="h-5 w-5 text-amber-700" />
             <h2 className="text-sm font-semibold text-slate-900">Conferência inteligente Strato</h2>
-            <span className="rounded-full border border-amber-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-amber-800">Somente análise</span>
+            <span className="rounded-full border border-emerald-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Revisão e aplicação</span>
           </div>
           <p className="mt-1 max-w-4xl text-xs text-slate-600">
-            O relatório Strato foi relacionado ao retorno Bradesco e aos cadastros do LarmHub. Casos com múltiplas parcelas, descontos, divergências ou cadastros ausentes permanecem bloqueados até a aprovação na etapa 0.6.4.
+            Revise as parcelas relacionadas pelo relatório Strato. As ações elegíveis podem ser selecionadas e aplicadas em uma transação única, com um Movimento Bancário individual por parcela.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -413,21 +486,21 @@ export default function StratoIntelligentReview({ files, onClose }: Props) {
           ))}
         </div>
 
-        <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+        <div className="mt-3 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
           <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
-            <p className="font-semibold">Nenhum cliente, contrato, parcela, baixa ou movimento foi alterado por esta tela.</p>
-            <p className="mt-0.5">A etapa 0.6.3 é exclusivamente de conferência visual. A seleção e o botão de aplicação transacional serão entregues na 0.6.4.</p>
+            <p className="font-semibold">O backend recalcula e valida todos os valores antes de gravar.</p>
+            <p className="mt-0.5">Parcelas localizadas e parcelas ausentes em contratos existentes podem ser aplicadas. Cliente ou contrato ausente/ambíguo permanece bloqueado para evitar cadastro incompleto.</p>
           </div>
         </div>
 
         <div className="mt-4 space-y-3">
-          {files.map(file => (
+          {files.map((file, fileIndex) => (
             <div key={file.arquivo} className="rounded-lg border border-slate-200">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
                 <div>
                   <p className="text-xs font-semibold text-slate-800">{file.arquivo}</p>
-                  <p className="text-[10px] text-slate-500">{file.analise_inteligente.empresa || 'Empresa não identificada'} · análise {file.analise_inteligente.versao || '0.6.2'}</p>
+                  <p className="text-[10px] text-slate-500">{file.analise_inteligente.empresa || 'Empresa não identificada'} · análise {file.analise_inteligente.versao || '0.6.4'}</p>
                 </div>
                 <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-semibold', file.analise_inteligente.requer_fluxo_inteligente ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>
                   {file.analise_inteligente.requer_fluxo_inteligente ? 'Revisão necessária' : 'Sem bloqueios complexos'}
@@ -447,7 +520,7 @@ export default function StratoIntelligentReview({ files, onClose }: Props) {
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="font-semibold text-slate-800">Boleto {item.boleto || 'não identificado'}</p>
-                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[9px] text-slate-600">linha {item.linha ?? '—'}</span>
+                            <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[9px] text-slate-600">item {itemIndex + 1}</span>
                             {item.multiparcelas && <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[9px] font-semibold text-violet-700">{item.quantidade_parcelas || item.parcelas?.length || 0} parcelas</span>}
                             {item.execucao_automatica_bloqueada
                               ? <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[9px] font-semibold text-amber-800"><AlertTriangle className="h-3 w-3" />Aguarda revisão</span>
@@ -474,9 +547,12 @@ export default function StratoIntelligentReview({ files, onClose }: Props) {
                             <div className="mb-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-600">Nenhuma linha correspondente foi encontrada no relatório Strato anexado.</div>
                           )}
                           <div className="overflow-x-auto rounded-lg border border-slate-200">
-                            <table className="min-w-[1900px] w-full text-[10px]">
+                            <table className="min-w-[1950px] w-full text-[10px]">
                               <thead className="bg-[#0d1b2a] text-white">
                                 <tr>
+                                  <th className="w-9 px-2 py-2 text-center">
+                                    <input type="checkbox" checked={allEligibleSelected} onChange={toggleAllSelections} aria-label="Selecionar todas as parcelas elegíveis" />
+                                  </th>
                                   {['Obra','Unid.','Parcela','Boleto','Vencimento','A pagar','J.FCT','Seguro','Moras','Desconto','Resíduo','Total','Recebimento','Pago','Diferença','LarmHub','Situação','Ação'].map(label => <th key={label} className={cn('px-2 py-2 text-left font-semibold', ['A pagar','J.FCT','Seguro','Moras','Desconto','Resíduo','Total','Pago','Diferença'].includes(label) && 'text-right')}>{label}</th>)}
                                 </tr>
                               </thead>
@@ -484,8 +560,19 @@ export default function StratoIntelligentReview({ files, onClose }: Props) {
                                 {(item.parcelas || []).length ? item.parcelas!.map((parcel, parcelIndex) => {
                                   const row = parcel.relatorio || {}
                                   const matched = parcel.parcela
+                                  const selectionKey = parcelSelectionKey(fileIndex, itemIndex, parcelIndex)
+                                  const eligible = isParcelEligible(item, parcel)
                                   return (
                                     <tr key={`${key}-${row.parcela || parcelIndex}`} className={parcel.bloqueado ? 'bg-amber-50/40' : ''}>
+                                      <td className="px-2 py-2 text-center">
+                                        <input
+                                          type="checkbox"
+                                          checked={selected.has(selectionKey)}
+                                          disabled={!eligible || applying}
+                                          onChange={() => toggleSelection(selectionKey)}
+                                          aria-label={`Selecionar parcela ${row.parcela || parcelIndex + 1}`}
+                                        />
+                                      </td>
                                       <td className="px-2 py-2">{row.obra || '—'}</td>
                                       <td className="px-2 py-2">{row.unidade || '—'}</td>
                                       <td className="px-2 py-2 font-semibold text-slate-800">{row.parcela || '—'}</td>
@@ -518,12 +605,12 @@ export default function StratoIntelligentReview({ files, onClose }: Props) {
                                       </td>
                                       <td className="px-2 py-2">
                                         <p className="max-w-[190px] font-medium text-slate-700">{actionLabel(parcel.acao_proposta)}</p>
-                                        {parcel.bloqueado && <p className="mt-1 text-[9px] text-amber-700">Bloqueada até aprovação</p>}
+                                        {!eligible && parcel.acao_proposta !== 'NENHUMA' && <p className="mt-1 text-[9px] text-amber-700">Requer cadastro/revisão manual</p>}
                                       </td>
                                     </tr>
                                   )
                                 }) : (
-                                  <tr><td colSpan={18} className="px-3 py-5 text-center text-slate-400">Nenhuma parcela relacionada a este título.</td></tr>
+                                  <tr><td colSpan={19} className="px-3 py-5 text-center text-slate-400">Nenhuma parcela relacionada a este título.</td></tr>
                                 )}
                               </tbody>
                             </table>
@@ -543,8 +630,27 @@ export default function StratoIntelligentReview({ files, onClose }: Props) {
           ))}
         </div>
 
-        <div className="mt-4 flex justify-end">
-          <button type="button" disabled className="rounded-lg bg-slate-200 px-4 py-2 text-xs font-semibold text-slate-500">Aplicar ajustes e baixas — disponível na 0.6.4</button>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-4">
+          <div className="text-xs text-slate-500">
+            <p><strong>{selectedSelections.length}</strong> de {eligibleSelections.length} parcela(s) elegível(is) selecionada(s).</p>
+            {totals.clientesAusentes > 0 || totals.contratosAusentes > 0 ? (
+              <p className="mt-1 text-amber-700">Cadastros ausentes não serão criados com dados incompletos; permanecem destacados para sincronização cadastral.</p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            disabled={!onApply || applying || selectedSelections.length === 0}
+            onClick={applySelected}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition',
+              !onApply || applying || selectedSelections.length === 0
+                ? 'cursor-not-allowed bg-slate-200 text-slate-500'
+                : 'bg-emerald-700 text-white hover:bg-emerald-800',
+            )}
+          >
+            {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            {applying ? 'Aplicando...' : `Aplicar ${selectedSelections.length} ajuste(s) e baixa(s)`}
+          </button>
         </div>
       </div>
     </section>

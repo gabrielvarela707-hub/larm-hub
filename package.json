@@ -1,6 +1,6 @@
 {
   "name": "larmhub-web",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -11,7 +11,8 @@
     "test:rateio-cp-frontend": "node scripts/test_rateio_cp_frontend.js",
     "test:pagamento-fornecedor-cp-frontend": "node scripts/test_pagamento_fornecedor_cp_frontend.js",
     "test:cr-discount-display": "node scripts/test_cr_discount_display.js",
-    "test:strato-review": "node scripts/test_strato_review_frontend.js"
+    "test:strato-review": "node scripts/test_strato_review_frontend.js",
+    "test:strato-apply-frontend": "node scripts/test_strato_apply_frontend.js"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
