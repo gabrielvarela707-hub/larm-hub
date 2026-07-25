@@ -1,10 +1,14 @@
-# Frontend 0.7.5
+# Frontend 0.7.7
 
-Copie `src/` sobre a raiz do frontend e publique na Vercel.
+Arquivo alterado:
 
-Inclui:
+- `src/components/financeiro/StratoIntelligentReview.tsx`
 
-- botão **Criar recebimento** para `PARCELA_AUSENTE` com cliente e contrato localizados;
-- título/nome obrigatório antes da baixa;
-- criação da receita, baixa e Movimento Bancário por chamada ao backend 0.7.5;
-- manutenção da busca e da coluna **Valor recebido** da versão 0.7.4.
+Alterações:
+
+- habilita o checkbox para `ATUALIZAR_RECEBIMENTO_EXISTENTE`;
+- exibe a ação **Corrigir recebimento e movimento**;
+- informa divergência de valor recebido e resíduo;
+- mantém indisponíveis parcelas já baixadas que possuem apenas divergência de vencimento/fração e nenhuma diferença financeira.
+
+Extraia sobre o frontend e publique novamente na Vercel.

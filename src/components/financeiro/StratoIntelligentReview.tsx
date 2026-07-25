@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Download,
   FileSearch,
+  Link2,
   LockKeyhole,
   Loader2,
   ReceiptText,
@@ -196,6 +197,54 @@ export type StratoApplySelection = {
   parcela: number
 }
 
+
+export type StratoCompositionCandidate = {
+  id: string
+  titulo?: string | null
+  numero_documento?: string | null
+  documento_legado?: string | null
+  parcela_numero_legado?: number | null
+  parcela_total_legado?: number | null
+  vencimento?: string | null
+  valor_total: number
+  status?: string | null
+  tipo?: string | null
+}
+
+export type StratoCompositionPreview = {
+  contrato?: { id?: string | null; numero?: string | null; titulo?: string | null; cliente_nome?: string | null } | null
+  parcela_base?: StratoAnalysisMatchedParcel | null
+  valor_retorno: number
+  valor_ja_relacionado: number
+  valor_restante: number
+  candidatos: StratoCompositionCandidate[]
+  ids_sugeridos: string[]
+  valor_sugerido: number
+  sugestao_confere: boolean
+}
+
+export type StratoCompositionLoadRequest = {
+  contrato_id: string
+  parcela_base_id?: string | null
+  valor_retorno: number
+}
+
+export type StratoCompositionApplyRequest = {
+  arquivo: string
+  item: number
+  parcela: number
+  contrato_id: string
+  parcela_base_id?: string | null
+  parcela_ids: string[]
+  empresa: string
+  arquivo_retorno: string
+  linha_retorno?: number | null
+  boleto?: string | null
+  data_recebimento?: string | null
+  data_credito?: string | null
+  valor_retorno: number
+}
+
 export type StratoManualReceiptRequest = {
   arquivo: string
   item: number
@@ -227,11 +276,22 @@ type ManualReceiptDraft = {
   parcelIndex: number
 }
 
+type CompositionDraft = {
+  file: StratoAnalysisFile
+  fileIndex: number
+  item: StratoAnalysisItem
+  itemIndex: number
+  parcel: StratoAnalysisParcel
+  parcelIndex: number
+}
+
 type Props = {
   files: StratoAnalysisFile[]
   onClose: () => void
   onApply?: (selections: StratoApplySelection[]) => Promise<void>
   onCreateReceipt?: (request: StratoManualReceiptRequest) => Promise<void>
+  onLoadComposition?: (request: StratoCompositionLoadRequest) => Promise<StratoCompositionPreview>
+  onApplyComposition?: (request: StratoCompositionApplyRequest) => Promise<void>
   applying?: boolean
 }
 
@@ -277,6 +337,7 @@ function actionLabel(value?: string | null) {
     NENHUMA: 'Nenhuma ação',
     BAIXAR_PARCELA: 'Baixar parcela',
     ATUALIZAR_E_BAIXAR: 'Atualizar e baixar',
+    ATUALIZAR_RECEBIMENTO_EXISTENTE: 'Corrigir recebimento e movimento',
     CRIAR_PARCELA_E_BAIXAR: 'Criar parcela e baixar',
     CRIAR_CONTRATO_PARCELA_E_BAIXAR: 'Criar contrato, parcela e baixar',
     CRIAR_CLIENTE_CONTRATO_PARCELA_E_BAIXAR: 'Criar cliente, contrato, parcela e baixar',
@@ -301,6 +362,8 @@ function divergenceLabel(value: string) {
     DESCONTO_DIVERGENTE: 'Desconto divergente',
     JUROS_OU_MORAS_DIVERGENTES: 'Juros ou moras divergentes',
     SEGURO_DIVERGENTE: 'Seguro divergente',
+    RESIDUO_DIVERGENTE: 'Resíduo divergente',
+    VALOR_PAGO_DIVERGENTE: 'Valor recebido divergente',
   }
   return labels[value] || text(value)
 }
@@ -360,13 +423,28 @@ function parcelSelectionKey(
 function isParcelEligible(item: StratoAnalysisItem, parcel: StratoAnalysisParcel) {
   const action = String(parcel.acao_proposta || '')
   const classification = String(parcel.classificacao || '')
-  const allowedAction = ['BAIXAR_PARCELA', 'ATUALIZAR_E_BAIXAR', 'CRIAR_PARCELA_E_BAIXAR'].includes(action)
+  const allowedAction = [
+    'BAIXAR_PARCELA',
+    'ATUALIZAR_E_BAIXAR',
+    'CRIAR_PARCELA_E_BAIXAR',
+    'ATUALIZAR_RECEBIMENTO_EXISTENTE',
+  ].includes(action)
   const hardBlocked = [
     'CLIENTE_AUSENTE', 'CLIENTE_AMBIGUO',
     'CONTRATO_AUSENTE', 'CONTRATO_AMBIGUO',
     'PARCELA_AMBIGUA',
   ].includes(classification)
   return allowedAction && !hardBlocked && item.soma_confere_com_retorno !== false
+}
+
+
+function canComposeReceipt(item: StratoAnalysisItem, parcel: StratoAnalysisParcel) {
+  const valorRetorno = Number(item.valor_retorno || 0)
+  const valorRelacionado = Number(parcel.valor_pago || parcel.valor_total || 0)
+  return Boolean(parcel.contrato?.id)
+    && Boolean(parcel.parcela?.id)
+    && valorRetorno > 0
+    && valorRetorno - valorRelacionado > 0.02
 }
 
 function canCreateManualReceipt(parcel: StratoAnalysisParcel) {
@@ -430,7 +508,7 @@ function buildPrintHtml(files: StratoAnalysisFile[]) {
   </body></html>`
 }
 
-export default function StratoIntelligentReview({ files, onClose, onApply, onCreateReceipt, applying = false }: Props) {
+export default function StratoIntelligentReview({ files, onClose, onApply, onCreateReceipt, onLoadComposition, onApplyComposition, applying = false }: Props) {
   const initialKeys = useMemo(() => files.flatMap(file => (file.analise_inteligente.itens || [])
     .map((item, index) => ({ item, key: groupKey(file, item, index) }))
     .filter(({ item }) => item.multiparcelas || item.execucao_automatica_bloqueada)
@@ -458,6 +536,12 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
   const [manualTitle, setManualTitle] = useState('')
   const [manualSaving, setManualSaving] = useState(false)
   const [manualError, setManualError] = useState('')
+  const [compositionReceipt, setCompositionReceipt] = useState<CompositionDraft | null>(null)
+  const [compositionPreview, setCompositionPreview] = useState<StratoCompositionPreview | null>(null)
+  const [compositionSelected, setCompositionSelected] = useState<Set<string>>(new Set())
+  const [compositionLoading, setCompositionLoading] = useState(false)
+  const [compositionSaving, setCompositionSaving] = useState(false)
+  const [compositionError, setCompositionError] = useState('')
 
   useEffect(() => setExpanded(new Set(initialKeys)), [initialKeys])
   useEffect(() => setSelected(new Set(eligibleSelections.map(entry => entry.key))), [eligibleSelections])
@@ -516,7 +600,7 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
   function applySelected() {
     if (!onApply || applying || selectedSelections.length === 0) return
     const confirmed = window.confirm(
-      `Confirma a aplicação de ${selectedSelections.length} ajuste(s) e baixa(s)? Cada parcela terá um Movimento Bancário individual.`,
+      `Confirma a aplicação de ${selectedSelections.length} ajuste(s)? Novas baixas criarão Movimento Bancário; baixas existentes serão corrigidas no movimento já vinculado.`,
     )
     if (!confirmed) return
     void onApply(selectedSelections)
@@ -593,6 +677,100 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
     }
   }
 
+  async function openCompositionReceipt(
+    file: StratoAnalysisFile,
+    fileIndex: number,
+    item: StratoAnalysisItem,
+    itemIndex: number,
+    parcel: StratoAnalysisParcel,
+    parcelIndex: number,
+  ) {
+    if (!onLoadComposition || compositionLoading) return
+    const contratoId = String(parcel.contrato?.id || '')
+    const valorRetorno = Number(item.valor_retorno || 0)
+    if (!contratoId || valorRetorno <= 0) return
+
+    setCompositionReceipt({ file, fileIndex, item, itemIndex, parcel, parcelIndex })
+    setCompositionPreview(null)
+    setCompositionSelected(new Set())
+    setCompositionError('')
+    setCompositionLoading(true)
+    try {
+      const preview = await onLoadComposition({
+        contrato_id: contratoId,
+        parcela_base_id: parcel.parcela?.id || null,
+        valor_retorno: valorRetorno,
+      })
+      setCompositionPreview(preview)
+      setCompositionSelected(new Set(preview.ids_sugeridos || []))
+    } catch (error) {
+      setCompositionError(error instanceof Error ? error.message : 'Não foi possível localizar os títulos do contrato.')
+    } finally {
+      setCompositionLoading(false)
+    }
+  }
+
+  function closeCompositionReceipt() {
+    if (compositionSaving) return
+    setCompositionReceipt(null)
+    setCompositionPreview(null)
+    setCompositionSelected(new Set())
+    setCompositionError('')
+  }
+
+  function toggleCompositionCandidate(id: string) {
+    setCompositionSelected(current => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    if (compositionError) setCompositionError('')
+  }
+
+  async function submitCompositionReceipt() {
+    if (!compositionReceipt || !compositionPreview || !onApplyComposition || compositionSaving) return
+    const selectedIds = Array.from(compositionSelected)
+    const selectedTotal = compositionPreview.candidatos.reduce(
+      (sum, candidate) => sum + (compositionSelected.has(candidate.id) ? Number(candidate.valor_total || 0) : 0),
+      0,
+    )
+    if (!selectedIds.length) {
+      setCompositionError('Selecione ao menos um título em aberto.')
+      return
+    }
+    if (Math.abs(selectedTotal - Number(compositionPreview.valor_restante || 0)) > 0.02) {
+      setCompositionError(`Os títulos selecionados somam ${money(selectedTotal)}, mas falta relacionar ${money(compositionPreview.valor_restante)}.`)
+      return
+    }
+
+    const { file, item, itemIndex, parcel, parcelIndex } = compositionReceipt
+    setCompositionSaving(true)
+    setCompositionError('')
+    try {
+      await onApplyComposition({
+        arquivo: file.arquivo,
+        item: itemIndex,
+        parcela: parcelIndex,
+        contrato_id: String(parcel.contrato?.id || ''),
+        parcela_base_id: parcel.parcela?.id || null,
+        parcela_ids: selectedIds,
+        empresa: String(file.analise_inteligente.empresa || ''),
+        arquivo_retorno: file.arquivo,
+        linha_retorno: item.linha,
+        boleto: item.boleto || parcel.relatorio?.boleto || null,
+        data_recebimento: item.data_recebimento || parcel.relatorio?.data_pagamento || item.data_ocorrencia || null,
+        data_credito: item.data_credito || null,
+        valor_retorno: Number(item.valor_retorno || 0),
+      })
+      closeCompositionReceipt()
+    } catch (error) {
+      setCompositionError(error instanceof Error ? error.message : 'Não foi possível relacionar os títulos.')
+    } finally {
+      setCompositionSaving(false)
+    }
+  }
+
   function printReview() {
     const printWindow = window.open('', '_blank', 'width=1500,height=900')
     if (!printWindow) return
@@ -661,7 +839,7 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
           <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
             <p className="font-semibold">O backend recalcula e valida todos os valores antes de gravar.</p>
-            <p className="mt-0.5">Parcelas localizadas e parcelas ausentes em contratos existentes podem ser aplicadas. Cliente ou contrato ausente/ambíguo permanece bloqueado para evitar cadastro incompleto.</p>
+            <p className="mt-0.5">Parcelas localizadas e parcelas ausentes em contratos existentes podem ser aplicadas. Recebimentos já baixados pelo retorno também podem ser corrigidos quando juros, desconto ou valor recebido estiverem divergentes. Cliente ou contrato ausente/ambíguo permanece bloqueado.</p>
           </div>
         </div>
 
@@ -783,7 +961,7 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
                                       </td>
                                       <td className="px-2 py-2">
                                         <p className="max-w-[190px] font-medium text-slate-700">{actionLabel(parcel.acao_proposta)}</p>
-                                        {eligible && parcel.confirmacao_recomendada && <p className="mt-1 text-[9px] font-medium text-blue-700">Marque a parcela para confirmar a correspondência e os valores.</p>}
+                                        {eligible && parcel.confirmacao_recomendada && <p className="mt-1 text-[9px] font-medium text-blue-700">Marque para confirmar os valores. Se já estiver recebida, o sistema corrigirá a parcela e o Movimento Bancário existente.</p>}
                                         {canCreateManualReceipt(parcel) && onCreateReceipt ? (
                                           <button
                                             type="button"
@@ -795,7 +973,18 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
                                             Criar recebimento
                                           </button>
                                         ) : null}
-                                        {!eligible && !canCreateManualReceipt(parcel) && parcel.acao_proposta !== 'NENHUMA' && <p className="mt-1 text-[9px] text-amber-700">Requer cadastro/revisão manual</p>}
+                                        {canComposeReceipt(item, parcel) && onLoadComposition && onApplyComposition ? (
+                                          <button
+                                            type="button"
+                                            disabled={applying || compositionLoading || compositionSaving}
+                                            onClick={() => void openCompositionReceipt(file, fileIndex, item, itemIndex, parcel, parcelIndex)}
+                                            className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-[9px] font-semibold text-blue-800 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                          >
+                                            <Link2 className="h-3.5 w-3.5" />
+                                            Relacionar saldo do retorno
+                                          </button>
+                                        ) : null}
+                                        {!eligible && !canCreateManualReceipt(parcel) && !canComposeReceipt(item, parcel) && parcel.acao_proposta !== 'NENHUMA' && <p className="mt-1 text-[9px] text-amber-700">Requer cadastro/revisão manual</p>}
                                       </td>
                                     </tr>
                                   )
@@ -843,6 +1032,90 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
           </button>
         </div>
       </div>
+
+      {compositionReceipt ? (
+        <div className="fixed inset-0 z-[125] flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true">
+          <div className="flex max-h-[92vh] w-full max-w-3xl flex-col rounded-xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Link2 className="h-5 w-5 text-blue-700" />
+                  <h3 className="text-sm font-semibold text-slate-900">Relacionar títulos ao recebimento</h3>
+                </div>
+                <p className="mt-1 text-xs text-slate-500">
+                  Um único crédito bancário pode quitar aluguel, condomínio, taxa e reembolsos do mesmo contrato.
+                </p>
+              </div>
+              <button type="button" onClick={closeCompositionReceipt} disabled={compositionSaving} className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50" aria-label="Fechar">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-4">
+              {compositionLoading ? (
+                <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-500"><Loader2 className="h-5 w-5 animate-spin" /> Localizando títulos em aberto...</div>
+              ) : compositionPreview ? (
+                <>
+                  {(() => {
+                    const selectedTotal = compositionPreview.candidatos.reduce((sum, candidate) => sum + (compositionSelected.has(candidate.id) ? Number(candidate.valor_total || 0) : 0), 0)
+                    const difference = Number(compositionPreview.valor_restante || 0) - selectedTotal
+                    return (
+                      <>
+                        <div className="grid gap-2 sm:grid-cols-4">
+                          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="text-[9px] uppercase tracking-wide text-slate-400">Valor no RET</p><p className="mt-1 font-semibold text-slate-900">{money(compositionPreview.valor_retorno)}</p></div>
+                          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="text-[9px] uppercase tracking-wide text-slate-400">Já relacionado</p><p className="mt-1 font-semibold text-slate-900">{money(compositionPreview.valor_ja_relacionado)}</p></div>
+                          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3"><p className="text-[9px] uppercase tracking-wide text-blue-500">Selecionado agora</p><p className="mt-1 font-semibold text-blue-900">{money(selectedTotal)}</p></div>
+                          <div className={cn('rounded-lg border p-3', Math.abs(difference) <= 0.02 ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50')}><p className="text-[9px] uppercase tracking-wide text-slate-500">Diferença</p><p className={cn('mt-1 font-semibold', Math.abs(difference) <= 0.02 ? 'text-emerald-800' : 'text-amber-800')}>{money(difference)}</p></div>
+                        </div>
+
+                        {compositionPreview.sugestao_confere ? (
+                          <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">O sistema encontrou automaticamente uma combinação exata. Revise os títulos e confirme.</div>
+                        ) : (
+                          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">Selecione os títulos que formam o saldo de {money(compositionPreview.valor_restante)}.</div>
+                        )}
+
+                        <div className="mt-3 overflow-hidden rounded-lg border border-slate-200">
+                          <table className="w-full text-xs">
+                            <thead className="bg-slate-900 text-white"><tr><th className="w-10 px-3 py-2"></th><th className="px-3 py-2 text-left">Título</th><th className="px-3 py-2 text-left">Parcela</th><th className="px-3 py-2 text-left">Vencimento</th><th className="px-3 py-2 text-right">Valor</th></tr></thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {compositionPreview.candidatos.map(candidate => {
+                                const fraction = candidate.parcela_numero_legado || candidate.parcela_total_legado
+                                  ? `${candidate.parcela_numero_legado || '—'}/${candidate.parcela_total_legado || '—'}`
+                                  : candidate.documento_legado || '—'
+                                return (
+                                  <tr key={candidate.id} className={compositionSelected.has(candidate.id) ? 'bg-blue-50/70' : 'bg-white'}>
+                                    <td className="px-3 py-2 text-center"><input type="checkbox" checked={compositionSelected.has(candidate.id)} onChange={() => toggleCompositionCandidate(candidate.id)} /></td>
+                                    <td className="px-3 py-2"><p className="font-semibold text-slate-800">{candidate.titulo || candidate.tipo || 'Conta a receber'}</p><p className="mt-0.5 text-[10px] text-slate-400">{candidate.numero_documento || candidate.documento_legado || '—'}</p></td>
+                                    <td className="px-3 py-2 text-slate-600">{fraction}</td>
+                                    <td className="px-3 py-2 whitespace-nowrap text-slate-600">{date(candidate.vencimento)}</td>
+                                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-slate-800">{money(candidate.valor_total)}</td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {compositionError ? <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{compositionError}</div> : null}
+
+                        <div className="mt-4 flex items-center justify-end gap-2">
+                          <button type="button" onClick={closeCompositionReceipt} disabled={compositionSaving} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">Cancelar</button>
+                          <button type="button" onClick={() => void submitCompositionReceipt()} disabled={compositionSaving || !compositionSelected.size || Math.abs(difference) > 0.02} className="inline-flex h-9 items-center gap-2 rounded-lg bg-blue-700 px-4 text-xs font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:bg-slate-300">
+                            {compositionSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+                            {compositionSaving ? 'Relacionando...' : 'Confirmar composição e baixas'}
+                          </button>
+                        </div>
+                      </>
+                    )
+                  })()}
+                </>
+              ) : compositionError ? (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700">{compositionError}</div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {manualReceipt ? (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/50 p-4" role="dialog" aria-modal="true">
