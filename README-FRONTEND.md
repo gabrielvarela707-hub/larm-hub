@@ -1,14 +1,9 @@
-# Frontend 0.7.7
+# Frontend 0.7.8 — confirmação de correções financeiras
 
-Arquivo alterado:
-
-- `src/components/financeiro/StratoIntelligentReview.tsx`
-
-Alterações:
+Alteração única em `StratoIntelligentReview.tsx`:
 
 - habilita o checkbox para `ATUALIZAR_RECEBIMENTO_EXISTENTE`;
-- exibe a ação **Corrigir recebimento e movimento**;
-- informa divergência de valor recebido e resíduo;
-- mantém indisponíveis parcelas já baixadas que possuem apenas divergência de vencimento/fração e nenhuma diferença financeira.
+- mostra a ação como **Corrigir recebimento e movimento**;
+- esclarece que baixas existentes corrigem o Movimento Bancário já vinculado.
 
-Extraia sobre o frontend e publique novamente na Vercel.
+Extraia sobre o frontend e publique na Vercel. Não execute `npm install`.

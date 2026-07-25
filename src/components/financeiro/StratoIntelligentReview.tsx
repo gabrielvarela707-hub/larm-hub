@@ -423,12 +423,7 @@ function parcelSelectionKey(
 function isParcelEligible(item: StratoAnalysisItem, parcel: StratoAnalysisParcel) {
   const action = String(parcel.acao_proposta || '')
   const classification = String(parcel.classificacao || '')
-  const allowedAction = [
-    'BAIXAR_PARCELA',
-    'ATUALIZAR_E_BAIXAR',
-    'CRIAR_PARCELA_E_BAIXAR',
-    'ATUALIZAR_RECEBIMENTO_EXISTENTE',
-  ].includes(action)
+  const allowedAction = ['BAIXAR_PARCELA', 'ATUALIZAR_E_BAIXAR', 'CRIAR_PARCELA_E_BAIXAR', 'ATUALIZAR_RECEBIMENTO_EXISTENTE'].includes(action)
   const hardBlocked = [
     'CLIENTE_AUSENTE', 'CLIENTE_AMBIGUO',
     'CONTRATO_AUSENTE', 'CONTRATO_AMBIGUO',
@@ -600,7 +595,7 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
   function applySelected() {
     if (!onApply || applying || selectedSelections.length === 0) return
     const confirmed = window.confirm(
-      `Confirma a aplicação de ${selectedSelections.length} ajuste(s)? Novas baixas criarão Movimento Bancário; baixas existentes serão corrigidas no movimento já vinculado.`,
+      `Confirma a aplicação de ${selectedSelections.length} ajuste(s) e baixa(s)? Parcelas novas terão Movimento individual; baixas existentes terão o Movimento já vinculado corrigido.`,
     )
     if (!confirmed) return
     void onApply(selectedSelections)
@@ -839,7 +834,7 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
           <LockKeyhole className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
             <p className="font-semibold">O backend recalcula e valida todos os valores antes de gravar.</p>
-            <p className="mt-0.5">Parcelas localizadas e parcelas ausentes em contratos existentes podem ser aplicadas. Recebimentos já baixados pelo retorno também podem ser corrigidos quando juros, desconto ou valor recebido estiverem divergentes. Cliente ou contrato ausente/ambíguo permanece bloqueado.</p>
+            <p className="mt-0.5">Parcelas localizadas e parcelas ausentes em contratos existentes podem ser aplicadas. Cliente ou contrato ausente/ambíguo permanece bloqueado para evitar cadastro incompleto.</p>
           </div>
         </div>
 
@@ -961,7 +956,7 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
                                       </td>
                                       <td className="px-2 py-2">
                                         <p className="max-w-[190px] font-medium text-slate-700">{actionLabel(parcel.acao_proposta)}</p>
-                                        {eligible && parcel.confirmacao_recomendada && <p className="mt-1 text-[9px] font-medium text-blue-700">Marque para confirmar os valores. Se já estiver recebida, o sistema corrigirá a parcela e o Movimento Bancário existente.</p>}
+                                        {eligible && parcel.confirmacao_recomendada && <p className="mt-1 text-[9px] font-medium text-blue-700">Marque a parcela para confirmar a correspondência e os valores.</p>}
                                         {canCreateManualReceipt(parcel) && onCreateReceipt ? (
                                           <button
                                             type="button"
