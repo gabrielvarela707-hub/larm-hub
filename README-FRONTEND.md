@@ -1,9 +1,9 @@
-# Frontend 0.7.8 — confirmação de correções financeiras
+# LarmHub Frontend 0.8.0
 
-Alteração única em `StratoIntelligentReview.tsx`:
+Atualiza apenas `StratoIntelligentReview.tsx`.
 
-- habilita o checkbox para `ATUALIZAR_RECEBIMENTO_EXISTENTE`;
-- mostra a ação como **Corrigir recebimento e movimento**;
-- esclarece que baixas existentes corrigem o Movimento Bancário já vinculado.
+- gera uma chave única para cada linha do boleto multiparcelas;
+- envia explicitamente `parcela_id` para o backend;
+- impede que um checkbox repetido selecione várias linhas com a mesma chave.
 
-Extraia sobre o frontend e publique na Vercel. Não execute `npm install`.
+Extraia sobre o frontend e publique novamente na Vercel.

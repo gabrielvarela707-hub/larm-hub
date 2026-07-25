@@ -195,6 +195,7 @@ export type StratoApplySelection = {
   arquivo: string
   item: number
   parcela: number
+  parcela_id?: string
 }
 
 
@@ -403,14 +404,18 @@ function parcelSelectionKey(
   file: StratoAnalysisFile,
   item: StratoAnalysisItem,
   parcel: StratoAnalysisParcel,
+  parcelIndex: number,
 ) {
   const row = parcel.relatorio || {}
-  const parcelIdentity = parcel.parcela?.id || [
-    row.obra || '',
-    row.unidade || '',
-    row.parcela || '',
+  // A chave visual precisa ser única por linha. Em boleto consolidado, uma
+  // análise antiga podia repetir o UUID da primeira parcela nas demais linhas,
+  // fazendo um checkbox selecionar três parcelas com a mesma chave.
+  const parcelIdentity = [
+    parcel.parcela?.id || 'sem-id',
+    row.indice_relatorio ?? parcelIndex,
+    row.parcela || parcelIndex,
     row.boleto || item.boleto || '',
-  ].join('|')
+  ].join('#')
 
   return [
     'v2',
@@ -514,10 +519,11 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
       (item.parcelas || []).flatMap((parcel, parcelIndex) => (
         isParcelEligible(item, parcel)
           ? [{
-              key: parcelSelectionKey(file, item, parcel),
+              key: parcelSelectionKey(file, item, parcel, parcelIndex),
               arquivo: file.arquivo,
               item: itemIndex,
               parcela: parcelIndex,
+              parcela_id: parcel.parcela?.id || undefined,
             }]
           : []
       )),
@@ -904,7 +910,7 @@ export default function StratoIntelligentReview({ files, onClose, onApply, onCre
                                 {(item.parcelas || []).length ? item.parcelas!.map((parcel, parcelIndex) => {
                                   const row = parcel.relatorio || {}
                                   const matched = parcel.parcela
-                                  const selectionKey = parcelSelectionKey(file, item, parcel)
+                                  const selectionKey = parcelSelectionKey(file, item, parcel, parcelIndex)
                                   const eligible = isParcelEligible(item, parcel)
                                   return (
                                     <tr key={`${key}-${row.parcela || parcelIndex}`} className={parcel.bloqueado ? 'bg-amber-50/40' : ''}>
