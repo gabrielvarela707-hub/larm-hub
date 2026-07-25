@@ -1,0 +1,1 @@
+1ef7f3698a470bd21b83954fce0b95be3bc4a414914577ead48b91cceab9ec82  src/components/financeiro/StratoIntelligentReview.tsx

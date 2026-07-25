@@ -17,6 +17,7 @@ import {
 import { cn } from '@/lib/utils'
 
 export type StratoReportRow = {
+  indice_relatorio?: number | null
   obra?: string | null
   unidade?: string | null
   parcela?: string | null
