@@ -4,6 +4,7 @@
  */
 
 const express = require('express')
+const crypto = require('crypto')
 const { query, transaction } = require('../config/database')
 const { authenticate } = require('../middleware/authenticate')
 const logger = require('../config/logger')
@@ -14,8 +15,11 @@ const {
   buildRemittance,
   nossoNumeroDv,
   onlyDigits,
+  parseReturn,
 } = require('../services/bradescoCnab400')
 const { processBradescoReturn } = require('../services/bradescoReturnProcessor')
+const { analyzeStratoMultiParcelReturn } = require('../services/stratoMultiParcelAnalysisService')
+const { applyStratoIntelligentReturn } = require('../services/stratoIntelligentApplyService')
 const {
   analyzeStratoReturnReport,
   analyzePdfLocally,
@@ -1057,6 +1061,1099 @@ async function persistRecalculation(client, calculation, tenantId, userId) {
   )
   return updated
 }
+
+
+
+function findExactReceivableSubset(rows, targetValue) {
+  const target = Math.round(Number(targetValue || 0) * 100)
+  if (target <= 0) return []
+
+  const candidates = (rows || [])
+    .map(row => ({ ...row, cents: Math.round(Number(row.valor_total || 0) * 100) }))
+    .filter(row => row.cents > 0 && row.cents <= target)
+    .slice(0, 60)
+
+  const states = new Map([[0, []]])
+  for (const candidate of candidates) {
+    const snapshot = Array.from(states.entries())
+    for (const [sum, ids] of snapshot) {
+      const next = sum + candidate.cents
+      if (next > target || states.has(next)) continue
+      const nextIds = [...ids, candidate.id]
+      if (next === target) return nextIds
+      states.set(next, nextIds)
+      if (states.size > 120000) break
+    }
+    if (states.size > 120000) break
+  }
+  return []
+}
+
+// GET /financeiro/contas-receber/composicao-strato/candidatos
+// Lista os títulos em aberto do mesmo contrato e sugere a combinação exata para
+// completar o valor total recebido no RET. Não grava dados.
+router.get('/financeiro/contas-receber/composicao-strato/candidatos', async (req, res) => {
+  const contratoId = String(req.query?.contrato_id || '').trim()
+  const parcelaBaseId = String(req.query?.parcela_base_id || '').trim()
+  const valorRetorno = roundMoney(req.query?.valor_retorno)
+
+  if (!contratoId) return res.status(400).json({ ok: false, message: 'Contrato inválido.' })
+  if (!Number.isFinite(valorRetorno) || valorRetorno <= 0) {
+    return res.status(400).json({ ok: false, message: 'O valor total do retorno precisa ser maior que zero.' })
+  }
+
+  try {
+    const { rows: [contrato] } = await query(
+      `SELECT c.id, c.numero, c.titulo, c.cliente_id,
+              COALESCE(cp.nome, cp.razao_social, c.comprador_nome) AS cliente_nome
+         FROM com_contratos c
+         LEFT JOIN cad_clientes cl ON cl.id = c.cliente_id
+         LEFT JOIN cad_pessoas cp ON cp.id = cl.pessoa_id
+        WHERE c.id = $1::uuid AND c.tenant_id = $2
+        LIMIT 1`,
+      [contratoId, req.user.tenant_id],
+    )
+    if (!contrato) return res.status(404).json({ ok: false, message: 'Contrato não encontrado.' })
+
+    let parcelaBase = null
+    if (parcelaBaseId) {
+      const { rows: [base] } = await query(
+        `SELECT p.id, p.status, p.movimento_id, p.valor_pago,
+                ${contasReceberValorSql('p')}::float AS valor_total,
+                p.documento_legado, p.parcela_numero_legado, p.parcela_total_legado,
+                COALESCE(r.titulo, p.tipo, 'Recebimento') AS titulo
+           FROM com_parcelas p
+           LEFT JOIN fin_receitas r ON r.id = p.receita_id
+          WHERE p.id = $1::uuid
+            AND p.tenant_id = $2
+            AND p.contrato_id = $3::uuid
+          LIMIT 1`,
+        [parcelaBaseId, req.user.tenant_id, contratoId],
+      )
+      parcelaBase = base || null
+    }
+
+    const valorBase = parcelaBase && String(parcelaBase.status || '').toLowerCase() === 'paga'
+      ? roundMoney(parcelaBase.valor_pago || parcelaBase.valor_total)
+      : 0
+    const valorRestante = roundMoney(valorRetorno - valorBase)
+
+    const { rows: candidatos } = await query(
+      `SELECT
+          p.id,
+          p.status,
+          p.vencimento,
+          p.numero,
+          p.tipo,
+          p.documento_legado,
+          p.parcela_numero_legado,
+          p.parcela_total_legado,
+          p.receita_id,
+          COALESCE(r.titulo, INITCAP(REPLACE(p.tipo, '_', ' ')), 'Conta a receber') AS titulo,
+          COALESCE(r.numero_documento, p.documento_legado) AS numero_documento,
+          ${contasReceberValorSql('p')}::float AS valor_total
+         FROM com_parcelas p
+         LEFT JOIN fin_receitas r ON r.id = p.receita_id
+        WHERE p.tenant_id = $1
+          AND p.contrato_id = $2::uuid
+          AND LOWER(p.status) IN ('aberta', 'atrasada')
+          AND p.movimento_id IS NULL
+          AND p.id <> COALESCE(NULLIF($3, '')::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+        ORDER BY p.vencimento, p.numero, p.id
+        LIMIT 80`,
+      [req.user.tenant_id, contratoId, parcelaBaseId],
+    )
+
+    const idsSugeridos = findExactReceivableSubset(candidatos, valorRestante)
+    const suggestionSet = new Set(idsSugeridos)
+    const valorSugerido = roundMoney(candidatos.reduce(
+      (sum, row) => sum + (suggestionSet.has(row.id) ? Number(row.valor_total || 0) : 0),
+      0,
+    ))
+
+    return res.json({
+      ok: true,
+      data: {
+        contrato,
+        parcela_base: parcelaBase,
+        valor_retorno: valorRetorno,
+        valor_ja_relacionado: valorBase,
+        valor_restante: valorRestante,
+        candidatos: candidatos.map(row => ({
+          ...row,
+          valor_total: Number(row.valor_total || 0),
+        })),
+        ids_sugeridos: idsSugeridos,
+        valor_sugerido: valorSugerido,
+        sugestao_confere: Math.abs(valorSugerido - valorRestante) <= 0.02,
+      },
+    })
+  } catch (error) {
+    logger.error(`Erro ao listar candidatos da composição Strato: ${error.message}`)
+    return res.status(400).json({ ok: false, message: 'Não foi possível localizar os títulos do contrato.' })
+  }
+})
+
+// POST /financeiro/contas-receber/composicao-strato
+// Relaciona um único crédito do RET a várias contas a receber existentes. Todas
+// as parcelas recebem o mesmo movimento bancário, mas cada uma mantém seu valor.
+router.post('/financeiro/contas-receber/composicao-strato', async (req, res) => {
+  if (!canWriteFinance(req.user)) {
+    return res.status(403).json({ ok: false, message: 'Somente usuários autorizados do grupo financeiro podem compor um recebimento.' })
+  }
+
+  const contratoId = String(req.body?.contrato_id || '').trim()
+  const parcelaBaseId = String(req.body?.parcela_base_id || '').trim()
+  const parcelaIds = Array.from(new Set(
+    (Array.isArray(req.body?.parcela_ids) ? req.body.parcela_ids : [])
+      .map(value => String(value || '').trim())
+      .filter(Boolean),
+  ))
+  const empresaInformada = String(req.body?.empresa || '').trim().toUpperCase()
+  const arquivoRetorno = String(req.body?.arquivo_retorno || '').trim().slice(0, 255)
+  const linhaRetorno = Number(req.body?.linha_retorno)
+  const boleto = String(req.body?.boleto || '').replace(/\D/g, '').slice(0, 20)
+  const valorRetorno = roundMoney(req.body?.valor_retorno)
+  let dataRecebimento
+  let dataMovimento
+
+  try {
+    dataRecebimento = normalizeDateOnly(req.body?.data_recebimento || isoToday(), 'Data do recebimento')
+    dataMovimento = normalizeDateOnly(req.body?.data_credito || dataRecebimento, 'Data do crédito bancário')
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message })
+  }
+
+  if (!contratoId) return res.status(400).json({ ok: false, message: 'Contrato inválido.' })
+  if (!parcelaIds.length) return res.status(400).json({ ok: false, message: 'Selecione ao menos um título em aberto.' })
+  if (!Number.isFinite(valorRetorno) || valorRetorno <= 0) {
+    return res.status(400).json({ ok: false, message: 'O valor do retorno precisa ser maior que zero.' })
+  }
+  if (!['LARM', 'LUCKY'].includes(empresaInformada)) {
+    return res.status(400).json({ ok: false, message: 'A empresa do retorno precisa ser LARM ou LUCKY.' })
+  }
+
+  try {
+    const result = await transaction(async client => {
+      const returnKey = crypto.createHash('sha256')
+        .update([
+          req.user.tenant_id,
+          empresaInformada,
+          contratoId,
+          arquivoRetorno.toLowerCase(),
+          Number.isInteger(linhaRetorno) ? linhaRetorno : '',
+          boleto,
+          valorRetorno.toFixed(2),
+        ].join('|'))
+        .digest('hex')
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`STR-COMP-${returnKey}`])
+
+      const { rows: [contrato] } = await client.query(
+        `SELECT c.id, c.numero, c.titulo, c.cliente_id, c.obra_codigo_legado, c.unidade_codigo_legado,
+                COALESCE(cp.nome, cp.razao_social, c.comprador_nome, 'Cliente não identificado') AS cliente_nome
+           FROM com_contratos c
+           LEFT JOIN cad_clientes cl ON cl.id = c.cliente_id
+           LEFT JOIN cad_pessoas cp ON cp.id = cl.pessoa_id
+          WHERE c.id = $1::uuid AND c.tenant_id = $2
+          FOR UPDATE OF c`,
+        [contratoId, req.user.tenant_id],
+      )
+      if (!contrato) {
+        const error = new Error('Contrato não encontrado.')
+        error.statusCode = 404
+        throw error
+      }
+
+      const empresaContrato = RECEIVABLE_COMPANY_BY_OBRA[String(contrato.obra_codigo_legado || '')] || null
+      const empresa = empresaContrato || empresaInformada
+      if (empresaContrato && empresaContrato !== empresaInformada) {
+        const error = new Error(`O contrato pertence à empresa ${empresaContrato}, mas o retorno foi identificado como ${empresaInformada}.`)
+        error.statusCode = 409
+        throw error
+      }
+
+      let parcelaBase = null
+      if (parcelaBaseId) {
+        const { rows: [base] } = await client.query(
+          `SELECT p.*, ${contasReceberValorSql('p')}::float AS valor_total_calculado,
+                  COALESCE(r.titulo, p.tipo, 'Recebimento') AS receita_titulo
+             FROM com_parcelas p
+             LEFT JOIN fin_receitas r ON r.id = p.receita_id
+            WHERE p.id = $1::uuid
+              AND p.tenant_id = $2
+              AND p.contrato_id = $3::uuid
+            FOR UPDATE OF p`,
+          [parcelaBaseId, req.user.tenant_id, contratoId],
+        )
+        parcelaBase = base || null
+      }
+
+      const { rows: parcelas } = await client.query(
+        `SELECT p.*, ${contasReceberValorSql('p')}::float AS valor_total_calculado,
+                COALESCE(r.titulo, INITCAP(REPLACE(p.tipo, '_', ' ')), 'Conta a receber') AS receita_titulo,
+                r.numero_documento AS receita_documento,
+                pc.codigo AS plano_codigo,
+                pc.descricao AS plano_descricao
+           FROM com_parcelas p
+           LEFT JOIN fin_receitas r ON r.id = p.receita_id
+           LEFT JOIN fin_plano_contas pc ON pc.id = r.plano_conta_id
+          WHERE p.tenant_id = $1
+            AND p.contrato_id = $2::uuid
+            AND p.id = ANY($3::uuid[])
+          ORDER BY p.vencimento, p.numero
+          FOR UPDATE OF p`,
+        [req.user.tenant_id, contratoId, parcelaIds],
+      )
+      if (parcelas.length !== parcelaIds.length) {
+        const error = new Error('Uma ou mais parcelas selecionadas não pertencem ao contrato ou não foram encontradas.')
+        error.statusCode = 409
+        throw error
+      }
+      const indisponiveis = parcelas.filter(row => !['aberta', 'atrasada'].includes(String(row.status || '').toLowerCase()) || row.movimento_id)
+      if (indisponiveis.length) {
+        const error = new Error('Uma ou mais parcelas selecionadas já foram baixadas ou possuem Movimento Bancário.')
+        error.statusCode = 409
+        throw error
+      }
+
+      const valorBase = parcelaBase && String(parcelaBase.status || '').toLowerCase() === 'paga'
+        ? roundMoney(parcelaBase.valor_pago || parcelaBase.valor_total_calculado)
+        : 0
+      const valorParcelas = roundMoney(parcelas.reduce((sum, row) => sum + Number(row.valor_total_calculado || 0), 0))
+      const valorComposto = roundMoney(valorBase + valorParcelas)
+      if (Math.abs(valorComposto - valorRetorno) > 0.02) {
+        const error = new Error(`A composição soma ${valorComposto.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}, mas o RET recebeu ${valorRetorno.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`)
+        error.statusCode = 409
+        throw error
+      }
+
+      const { rows: contasBanco } = await client.query(
+        `SELECT id, empresa, banco_nome, codigo_banco, agencia, conta, digito
+           FROM fin_bancos_contas
+          WHERE ativo = TRUE
+            AND UPPER(BTRIM(empresa)) = $1
+            AND (codigo_banco = '237' OR banco_nome ILIKE '%bradesco%')
+          ORDER BY CASE WHEN codigo_banco = '237' THEN 0 ELSE 1 END, id`,
+        [empresa],
+      )
+      if (!contasBanco.length) {
+        const error = new Error(`Nenhuma conta Bradesco ativa foi encontrada para a empresa ${empresa}.`)
+        error.statusCode = 409
+        throw error
+      }
+      if (contasBanco.length > 1) {
+        const error = new Error(`Existe mais de uma conta Bradesco ativa para a empresa ${empresa}; ajuste o cadastro bancário antes de continuar.`)
+        error.statusCode = 409
+        throw error
+      }
+      const banco = contasBanco[0]
+
+      let movimentoBase = null
+      if (parcelaBase?.movimento_id) {
+        const { rows: [existing] } = await client.query(
+          `SELECT * FROM fin_movimento WHERE id = $1 FOR UPDATE`,
+          [parcelaBase.movimento_id],
+        )
+        movimentoBase = existing || null
+      }
+
+      const { rows: [movimentoCompleto] } = await client.query(
+        `SELECT fm.*
+           FROM fin_movimento fm
+          WHERE UPPER(BTRIM(COALESCE(fm.empresa, ''))) = $1
+            AND ABS(COALESCE(fm.entradas, 0) - $2) <= 0.02
+            AND (
+              fm.hash_importacao = $3
+              OR (
+                LOWER(BTRIM(COALESCE(fm.arquivo_origem, ''))) = LOWER(BTRIM($4))
+                AND fm.linha_origem = $5
+              )
+            )
+          ORDER BY CASE WHEN fm.hash_importacao = $3 THEN 0 ELSE 1 END, fm.id DESC
+          LIMIT 1
+          FOR UPDATE OF fm`,
+        [empresa, valorRetorno, returnKey, arquivoRetorno, Number.isInteger(linhaRetorno) ? linhaRetorno : null],
+      )
+
+      const titulos = parcelas.map(row => String(row.receita_titulo || row.documento_legado || row.tipo || 'Receita').trim())
+      const historico = `Recebimento composto Strato — ${contrato.cliente_nome} — ${titulos.join(' + ')}`.slice(0, 2000)
+      const [anoMov, mesMov, diaMov] = dataMovimento.split('-').map(Number)
+      const planos = Array.from(new Set(parcelas.map(row => String(row.plano_codigo || '')).filter(Boolean)))
+      const descricoesPlano = Array.from(new Set(parcelas.map(row => String(row.plano_descricao || '')).filter(Boolean)))
+      const natureza = planos.length === 1 ? planos[0] : '1.4'
+      const contaContabil = descricoesPlano.length === 1 ? descricoesPlano[0] : 'RECEBIMENTO COMPOSTO'
+      const referenciaMovimento = `STR-COMP-${returnKey.slice(0, 48)}`
+
+      let movimento = movimentoCompleto || movimentoBase
+      if (movimento) {
+        const { rows: [updated] } = await client.query(
+          `UPDATE fin_movimento
+              SET data = $1,
+                  empresa = $2,
+                  banco = $3,
+                  entradas = $4,
+                  saidas = 0,
+                  fornecedor = $5,
+                  historico = $6,
+                  nf_doc = $7,
+                  conta_contabil = $8,
+                  centro_custo = $9,
+                  obra = $9,
+                  natureza_financeira = $10,
+                  dia = $11,
+                  mes = $12,
+                  ano = $13,
+                  banco_conta_id = $14,
+                  lote_importacao = $15,
+                  arquivo_origem = $16,
+                  linha_origem = $17,
+                  hash_importacao = COALESCE(hash_importacao, $18),
+                  importado_em = COALESCE(importado_em, NOW())
+            WHERE id = $19
+            RETURNING *`,
+          [
+            dataMovimento,
+            empresa,
+            String(banco.banco_nome || 'Banco Bradesco S.A.').trim().slice(0, 60),
+            valorRetorno,
+            contrato.cliente_nome,
+            historico,
+            boleto || contrato.numero || null,
+            contaContabil,
+            contrato.titulo || contrato.numero || null,
+            natureza,
+            diaMov,
+            mesMov,
+            anoMov,
+            banco.id,
+            `CR-STRATO-COMPOSTO-${dataMovimento.replace(/-/g, '')}`,
+            arquivoRetorno || 'conferencia-strato',
+            Number.isInteger(linhaRetorno) ? linhaRetorno : null,
+            returnKey,
+            movimento.id,
+          ],
+        )
+        movimento = updated
+      } else {
+        const { rows: [created] } = await client.query(
+          `INSERT INTO fin_movimento (
+             data, empresa, banco, entradas, saidas, fornecedor, historico, nf_doc,
+             conta_contabil, centro_custo, obra, natureza_financeira,
+             dia, mes, ano, tipo_lancamento, vencimento, banco_conta_id,
+             lote_importacao, arquivo_origem, linha_origem, hash_importacao, importado_em
+           ) VALUES (
+             $1,$2,$3,$4,0,$5,$6,$7,
+             $8,$9,$9,$10,
+             $11,$12,$13,'financeiro',$14,$15,
+             $16,$17,$18,$19,NOW()
+           ) RETURNING *`,
+          [
+            dataMovimento,
+            empresa,
+            String(banco.banco_nome || 'Banco Bradesco S.A.').trim().slice(0, 60),
+            valorRetorno,
+            contrato.cliente_nome,
+            historico,
+            boleto || contrato.numero || null,
+            contaContabil,
+            contrato.titulo || contrato.numero || null,
+            natureza,
+            diaMov,
+            mesMov,
+            anoMov,
+            dataRecebimento,
+            banco.id,
+            `CR-STRATO-COMPOSTO-${dataMovimento.replace(/-/g, '')}`,
+            arquivoRetorno || 'conferencia-strato',
+            Number.isInteger(linhaRetorno) ? linhaRetorno : null,
+            returnKey,
+          ],
+        )
+        movimento = created
+      }
+
+      const composicao = parcelas.map(row => ({
+        parcela_id: row.id,
+        titulo: row.receita_titulo || row.tipo || null,
+        documento: row.receita_documento || row.documento_legado || null,
+        valor: roundMoney(row.valor_total_calculado),
+      }))
+      if (parcelaBase) {
+        composicao.unshift({
+          parcela_id: parcelaBase.id,
+          titulo: parcelaBase.receita_titulo || parcelaBase.tipo || null,
+          documento: parcelaBase.documento_legado || null,
+          valor: valorBase,
+        })
+      }
+      const conciliacaoBase = {
+        origem: 'strato_composicao',
+        arquivo_retorno: arquivoRetorno || null,
+        linha_retorno: Number.isInteger(linhaRetorno) ? linhaRetorno : null,
+        boleto: boleto || null,
+        valor_total_retorno: valorRetorno,
+        valor_relacionado: valorComposto,
+        movimento_id: movimento.id,
+        data_recebimento: dataRecebimento,
+        data_credito: dataMovimento,
+        composicao,
+        usuario_id: req.user.id,
+        usuario_nome: req.user.name || null,
+      }
+
+      if (parcelaBase) {
+        await client.query(
+          `UPDATE com_parcelas
+              SET movimento_id = $1,
+                  origem_baixa = 'strato_composicao',
+                  conciliado_em = NOW(),
+                  conciliacao_dados = COALESCE(conciliacao_dados, '{}'::jsonb) || $2::jsonb,
+                  observacoes_baixa = CONCAT_WS(' ', NULLIF(observacoes_baixa, ''), $3),
+                  updated_at = NOW()
+            WHERE id = $4 AND tenant_id = $5`,
+          [
+            movimento.id,
+            JSON.stringify({ ...conciliacaoBase, valor_alocado_parcela: valorBase }),
+            `Recebimento relacionado à composição total de ${valorRetorno.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
+            parcelaBase.id,
+            req.user.tenant_id,
+          ],
+        )
+      }
+
+      const { rows: parcelasAtualizadas } = await client.query(
+        `UPDATE com_parcelas p
+            SET status = 'paga',
+                pago_em = $1::date,
+                valor_pago = ${contasReceberValorSql('p')},
+                forma_pagamento = 'Boleto',
+                movimento_id = $2,
+                origem_baixa = 'strato_composicao',
+                conciliado_em = NOW(),
+                observacoes_baixa = CONCAT_WS(' ', NULLIF(p.observacoes_baixa, ''), $3),
+                conciliacao_dados = COALESCE(p.conciliacao_dados, '{}'::jsonb) || jsonb_build_object(
+                  'origem', 'strato_composicao',
+                  'arquivo_retorno', $4,
+                  'linha_retorno', $5,
+                  'boleto', $6,
+                  'valor_total_retorno', $7,
+                  'valor_alocado_parcela', ${contasReceberValorSql('p')},
+                  'movimento_id', $2,
+                  'data_recebimento', $1,
+                  'data_credito', $8,
+                  'composicao', $9::jsonb,
+                  'usuario_id', $10,
+                  'usuario_nome', $11
+                ),
+                updated_at = NOW()
+          WHERE p.tenant_id = $12
+            AND p.id = ANY($13::uuid[])
+          RETURNING p.id, p.status, p.pago_em, p.valor_pago, p.movimento_id, p.documento_legado`,
+        [
+          dataRecebimento,
+          movimento.id,
+          `Baixa vinculada ao recebimento composto de ${valorRetorno.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
+          arquivoRetorno || null,
+          Number.isInteger(linhaRetorno) ? linhaRetorno : null,
+          boleto || null,
+          valorRetorno,
+          dataMovimento,
+          JSON.stringify(composicao),
+          req.user.id,
+          req.user.name || null,
+          req.user.tenant_id,
+          parcelaIds,
+        ],
+      )
+
+      // Se a versão 0.7.5 já criou uma parcela avulsa para o valor integral do
+      // mesmo RET, ela é neutralizada e o movimento é reaproveitado. Isso evita
+      // duplicar o Contas a Receber e o Movimento Bancário.
+      const { rows: avulsasCanceladas } = await client.query(
+        `UPDATE com_parcelas p
+            SET status = 'cancelada',
+                pago_em = NULL,
+                valor_pago = NULL,
+                movimento_id = NULL,
+                origem_baixa = 'substituido_composicao',
+                conciliado_em = NOW(),
+                observacoes_baixa = CONCAT_WS(' ', NULLIF(p.observacoes_baixa, ''), 'Substituído pela composição de títulos existentes do mesmo retorno Strato.'),
+                conciliacao_dados = COALESCE(p.conciliacao_dados, '{}'::jsonb) || jsonb_build_object(
+                  'substituido_por_composicao', true,
+                  'movimento_id_composicao', $1,
+                  'substituido_em', NOW()
+                ),
+                updated_at = NOW()
+          WHERE p.tenant_id = $2
+            AND p.origem = 'strato_avulso'
+            AND p.movimento_id = $1
+            AND p.id <> ALL($3::uuid[])
+            AND ($4 = '' OR COALESCE(p.dados_adicionais->>'arquivo_retorno', '') = $4)
+          RETURNING p.id, p.receita_id`,
+        [movimento.id, req.user.tenant_id, [parcelaBase?.id, ...parcelaIds].filter(Boolean), arquivoRetorno],
+      )
+      const receitasAvulsas = avulsasCanceladas.map(row => row.receita_id).filter(Boolean)
+      if (receitasAvulsas.length) {
+        await client.query(
+          `UPDATE fin_receitas
+              SET status = 'cancelada',
+                  descricao = CONCAT_WS(' ', NULLIF(descricao, ''), 'Substituída pela composição de títulos existentes do retorno Strato.'),
+                  updated_at = NOW()
+            WHERE tenant_id = $1 AND id = ANY($2::uuid[])`,
+          [req.user.tenant_id, receitasAvulsas],
+        )
+      }
+
+      if (movimentoBase && movimentoBase.id !== movimento.id) {
+        const { rows: [refs] } = await client.query(
+          `SELECT COUNT(*)::int AS quantidade FROM com_parcelas WHERE movimento_id = $1`,
+          [movimentoBase.id],
+        )
+        if (Number(refs?.quantidade || 0) === 0) {
+          await client.query('DELETE FROM fin_movimento WHERE id = $1', [movimentoBase.id])
+        }
+      }
+
+      return {
+        contrato,
+        movimento,
+        parcela_base: parcelaBase,
+        parcelas: parcelasAtualizadas,
+        composicao,
+        valor_retorno: valorRetorno,
+        valor_ja_relacionado: valorBase,
+        valor_relacionado_agora: valorParcelas,
+        avulsas_canceladas: avulsasCanceladas.length,
+      }
+    })
+
+    await logAudit({
+      userId: req.user.id,
+      tenantId: req.user.tenant_id,
+      action: 'conta_receber_composicao_strato',
+      module: 'financeiro',
+      entityType: 'fin_movimento',
+      entityId: String(result.movimento.id),
+      meta: {
+        contrato_id: contratoId,
+        parcela_base_id: parcelaBaseId || null,
+        parcela_ids: parcelaIds,
+        arquivo_retorno: arquivoRetorno || null,
+        linha_retorno: Number.isInteger(linhaRetorno) ? linhaRetorno : null,
+        boleto: boleto || null,
+        valor_retorno: valorRetorno,
+        valor_ja_relacionado: result.valor_ja_relacionado,
+        valor_relacionado_agora: result.valor_relacionado_agora,
+        movimento_id: result.movimento.id,
+        avulsas_canceladas: result.avulsas_canceladas,
+      },
+    }).catch(() => {})
+
+    return res.json({
+      ok: true,
+      message: `${result.parcelas.length} título(s) relacionado(s) ao recebimento de ${valorRetorno.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
+      data: result,
+    })
+  } catch (error) {
+    logger.error(`Erro ao compor recebimento Strato: ${error.message}`)
+    return res.status(error.statusCode || 400).json({
+      ok: false,
+      message: error.statusCode ? error.message : 'Não foi possível relacionar os títulos ao recebimento.',
+    })
+  }
+})
+
+// POST /financeiro/contas-receber/recebimento-avulso-strato
+// Cria uma receita/parcela avulsa a partir de um título não cadastrado no
+// relatório Strato e já registra a baixa e a entrada no Movimento Bancário.
+// O título informado pelo operador é obrigatório e identifica a natureza do
+// recebimento (ex.: reembolso de água, energia, IPTU ou aluguel).
+router.post('/financeiro/contas-receber/recebimento-avulso-strato', async (req, res) => {
+  if (!canWriteFinance(req.user)) {
+    return res.status(403).json({
+      ok: false,
+      message: 'Somente usuários autorizados do grupo financeiro podem criar e baixar um recebimento avulso.',
+    })
+  }
+
+  const titulo = String(req.body?.titulo || '').trim().replace(/\s+/g, ' ').slice(0, 180)
+  const contratoId = String(req.body?.contrato_id || '').trim()
+  const clienteIdInformado = Number(req.body?.cliente_id)
+  const empresaInformada = String(req.body?.empresa || '').trim().toUpperCase()
+  const arquivoRetorno = String(req.body?.arquivo_retorno || '').trim().slice(0, 255)
+  const linhaRetorno = Number(req.body?.linha_retorno)
+  const boletoCompleto = String(req.body?.boleto || '').replace(/\D/g, '').slice(0, 20)
+  const documento = String(req.body?.documento || '').trim().slice(0, 80)
+  const parcelaReferencia = String(req.body?.parcela || '').trim().slice(0, 30)
+  const obraInformada = String(req.body?.obra || '').trim().slice(0, 80)
+  const unidadeInformada = String(req.body?.unidade || '').trim().slice(0, 80)
+  const valorRecebido = roundMoney(req.body?.valor_recebido)
+  const valorNominalInformado = roundMoney(req.body?.valor_nominal)
+  const valorNominal = valorNominalInformado > 0 ? valorNominalInformado : valorRecebido
+  let dataRecebimento
+  let vencimento
+
+  try {
+    dataRecebimento = normalizeDateOnly(
+      req.body?.data_recebimento || req.body?.data_pagamento || isoToday(),
+      'Data do recebimento',
+    )
+    vencimento = normalizeDateOnly(
+      req.body?.vencimento || dataRecebimento,
+      'Vencimento',
+    )
+  } catch (error) {
+    return res.status(400).json({ ok: false, message: error.message })
+  }
+
+  if (titulo.length < 3) {
+    return res.status(400).json({
+      ok: false,
+      message: 'Informe o título/nome da despesa ou receita para registrar a baixa.',
+    })
+  }
+  if (!contratoId) {
+    return res.status(400).json({
+      ok: false,
+      message: 'O contrato do cliente precisa estar localizado para criar o recebimento.',
+    })
+  }
+  if (!Number.isFinite(valorRecebido) || valorRecebido <= 0) {
+    return res.status(400).json({
+      ok: false,
+      message: 'O valor recebido do retorno bancário precisa ser maior que zero.',
+    })
+  }
+  if (!['LARM', 'LUCKY'].includes(empresaInformada)) {
+    return res.status(400).json({
+      ok: false,
+      message: 'A empresa do retorno precisa ser LARM ou LUCKY.',
+    })
+  }
+
+  try {
+    const result = await transaction(async client => {
+      const { rows: [contrato] } = await client.query(
+        `SELECT
+            c.id,
+            c.tenant_id,
+            c.numero,
+            c.titulo,
+            c.cliente_id,
+            c.comprador_nome,
+            c.obra_codigo_legado,
+            c.unidade_codigo_legado,
+            COALESCE(cp.nome, cp.razao_social, c.comprador_nome, 'Cliente não identificado') AS cliente_nome
+           FROM com_contratos c
+           LEFT JOIN cad_clientes cl ON cl.id = c.cliente_id
+           LEFT JOIN cad_pessoas cp ON cp.id = cl.pessoa_id
+          WHERE c.id = $1::uuid
+            AND c.tenant_id = $2
+          FOR UPDATE OF c`,
+        [contratoId, req.user.tenant_id],
+      )
+
+      if (!contrato) {
+        const error = new Error('Contrato não encontrado no LarmHub.')
+        error.statusCode = 404
+        throw error
+      }
+      if (!contrato.cliente_id) {
+        const error = new Error('O contrato localizado não possui cliente vinculado no cadastro unificado.')
+        error.statusCode = 409
+        throw error
+      }
+      if (
+        Number.isInteger(clienteIdInformado)
+        && clienteIdInformado > 0
+        && Number(contrato.cliente_id) !== clienteIdInformado
+      ) {
+        const error = new Error('O cliente informado não corresponde ao cliente do contrato localizado.')
+        error.statusCode = 409
+        throw error
+      }
+
+      const empresaContrato = RECEIVABLE_COMPANY_BY_OBRA[String(contrato.obra_codigo_legado || '')] || null
+      const empresa = empresaContrato || empresaInformada
+      if (empresaContrato && empresaContrato !== empresaInformada) {
+        const error = new Error(`O contrato pertence à empresa ${empresaContrato}, mas o retorno foi identificado como ${empresaInformada}.`)
+        error.statusCode = 409
+        throw error
+      }
+
+      const { rows: contasBanco } = await client.query(
+        `SELECT id, empresa, banco_nome, codigo_banco, agencia, conta, digito
+           FROM fin_bancos_contas
+          WHERE ativo = TRUE
+            AND UPPER(BTRIM(empresa)) = $1
+            AND (
+              codigo_banco = '237'
+              OR banco_nome ILIKE '%bradesco%'
+            )
+          ORDER BY
+            CASE WHEN codigo_banco = '237' THEN 0 ELSE 1 END,
+            id`,
+        [empresa],
+      )
+      if (!contasBanco.length) {
+        const error = new Error(`Nenhuma conta Bradesco ativa foi encontrada para a empresa ${empresa}.`)
+        error.statusCode = 409
+        throw error
+      }
+      if (contasBanco.length > 1) {
+        const error = new Error(`Existe mais de uma conta Bradesco ativa para a empresa ${empresa}; ajuste o cadastro bancário antes de continuar.`)
+        error.statusCode = 409
+        throw error
+      }
+      const banco = contasBanco[0]
+
+      const tituloNormalizado = titulo
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase()
+      const codigoPlano = /\b(ALUGUEL|LOCACAO|LOCAÇÃO)\b/.test(tituloNormalizado) ? '1.2' : '1.4'
+      const { rows: [plano] } = await client.query(
+        `SELECT id, codigo, descricao
+           FROM fin_plano_contas
+          WHERE codigo = $1
+            AND ativo = TRUE
+          LIMIT 1`,
+        [codigoPlano],
+      )
+      const planoCodigo = String(plano?.codigo || codigoPlano)
+      const planoDescricao = String(
+        plano?.descricao || (codigoPlano === '1.2' ? 'ALUGUÉIS' : 'OUTRAS RECEITAS OPERACIONAIS'),
+      )
+
+      const referenciaHash = crypto.createHash('sha256')
+        .update([
+          req.user.tenant_id,
+          empresa,
+          contrato.id,
+          arquivoRetorno.toLowerCase(),
+          Number.isInteger(linhaRetorno) ? linhaRetorno : '',
+          boletoCompleto,
+          documento.toLowerCase(),
+          valorRecebido.toFixed(2),
+        ].join('|'))
+        .digest('hex')
+      const codigoLegado = `STR-AVULSO-${referenciaHash.slice(0, 64)}`
+      const hashMovimento = crypto.createHash('sha256')
+        .update(`${codigoLegado}|movimento`)
+        .digest('hex')
+
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [codigoLegado])
+
+      const { rows: [existente] } = await client.query(
+        `SELECT
+            p.id,
+            p.receita_id,
+            p.movimento_id,
+            p.status,
+            p.valor_nominal,
+            p.valor_pago,
+            p.pago_em,
+            r.titulo AS receita_titulo
+           FROM com_parcelas p
+           LEFT JOIN fin_receitas r ON r.id = p.receita_id
+          WHERE p.tenant_id = $1
+            AND p.origem = 'strato_avulso'
+            AND p.codigo_legado = $2
+          LIMIT 1
+          FOR UPDATE OF p`,
+        [req.user.tenant_id, codigoLegado],
+      )
+      if (existente) {
+        return {
+          duplicated: true,
+          parcela: existente,
+          receita: { id: existente.receita_id, titulo: existente.receita_titulo },
+          movimento: existente.movimento_id ? { id: existente.movimento_id } : null,
+          empresa,
+          banco,
+          plano: { codigo: planoCodigo, descricao: planoDescricao },
+        }
+      }
+
+      const descricao = [
+        'Recebimento avulso criado durante a conferência do retorno Strato.',
+        arquivoRetorno ? `Arquivo: ${arquivoRetorno}.` : null,
+        Number.isInteger(linhaRetorno) ? `Linha do retorno: ${linhaRetorno}.` : null,
+        boletoCompleto ? `Boleto: ${boletoCompleto}.` : null,
+        parcelaReferencia ? `Referência Strato: ${parcelaReferencia}.` : null,
+      ].filter(Boolean).join(' ')
+
+      const { rows: [receita] } = await client.query(
+        `INSERT INTO fin_receitas (
+           tenant_id, cliente_id, contrato_id, plano_conta_id,
+           titulo, descricao, numero_documento, valor_total,
+           competencia_inicio, competencia_fim, periodicidade,
+           dia_vencimento, status, origem, codigo_legado,
+           dados_adicionais, created_by
+         ) VALUES (
+           $1,$2,$3::uuid,$4,$5,$6,$7,$8,
+           $9,$9,'unica',$10,'ativa','strato_avulso',$11,
+           $12::jsonb,$13
+         )
+         RETURNING *`,
+        [
+          req.user.tenant_id,
+          contrato.cliente_id,
+          contrato.id,
+          plano?.id || null,
+          titulo,
+          descricao,
+          documento || boletoCompleto || null,
+          valorNominal,
+          vencimento,
+          Number(vencimento.slice(8, 10)),
+          codigoLegado,
+          JSON.stringify({
+            origem: 'conferencia_strato',
+            empresa,
+            arquivo_retorno: arquivoRetorno || null,
+            linha_retorno: Number.isInteger(linhaRetorno) ? linhaRetorno : null,
+            boleto: boletoCompleto || null,
+            parcela_referencia: parcelaReferencia || null,
+            valor_recebido: valorRecebido,
+            criado_em: new Date().toISOString(),
+          }),
+          req.user.id,
+        ],
+      )
+
+      const { rows: [contador] } = await client.query(
+        `SELECT COALESCE(MAX(numero), 0) + 1 AS numero
+           FROM com_parcelas
+          WHERE tenant_id = $1
+            AND contrato_id = $2::uuid`,
+        [req.user.tenant_id, contrato.id],
+      )
+
+      const fracao = String(parcelaReferencia || '').match(/(\d{1,4})\s*\/\s*(\d{1,4})/)
+      const nossoNumero = boletoCompleto.length >= 12
+        ? boletoCompleto.slice(0, -1).slice(-11)
+        : boletoCompleto.slice(0, 11) || null
+      const nossoNumeroDv = boletoCompleto.length >= 12
+        ? boletoCompleto.slice(-1)
+        : null
+      const obraCodigo = Number(obraInformada || contrato.obra_codigo_legado || 0) || null
+      const unidadeCodigo = unidadeInformada || contrato.unidade_codigo_legado || null
+      const documentoParcela = documento
+        || parcelaReferencia
+        || `AVULSO ${dataRecebimento}`
+      const clienteNome = String(contrato.cliente_nome || contrato.comprador_nome || 'Cliente não identificado').trim()
+      const referenciaContrato = String(contrato.titulo || contrato.numero || 'Contrato').trim()
+      const projeto = unidadeCodigo
+        ? `${referenciaContrato} / ${unidadeCodigo}`
+        : referenciaContrato
+      const historico = [
+        titulo,
+        clienteNome,
+        boletoCompleto ? `boleto ${boletoCompleto}` : null,
+      ].filter(Boolean).join(' - ')
+      const [ano, mes, dia] = dataRecebimento.split('-').map(Number)
+
+      const { rows: [movimentoExistente] } = await client.query(
+        `SELECT id, data, empresa, banco, entradas, historico, banco_conta_id
+           FROM fin_movimento
+          WHERE hash_importacao = $1
+          LIMIT 1
+          FOR UPDATE`,
+        [hashMovimento],
+      )
+
+      let movimento = movimentoExistente
+      if (!movimento) {
+        const { rows: [movimentoCriado] } = await client.query(
+          `INSERT INTO fin_movimento (
+             data, empresa, banco, entradas, saidas, fornecedor, historico, nf_doc,
+             conta_contabil, centro_custo, obra, natureza_financeira,
+             dia, mes, ano, tipo_lancamento, vencimento, banco_conta_id,
+             lote_importacao, arquivo_origem, linha_origem, hash_importacao, importado_em
+           ) VALUES (
+             $1,$2,$3,$4,0,$5,$6,$7,
+             $8,$9,$10,$11,
+             $12,$13,$14,'financeiro',$15,$16,
+             $17,$18,$19,$20,NOW()
+           )
+           RETURNING id, data, empresa, banco, entradas, historico, banco_conta_id`,
+          [
+            dataRecebimento,
+            empresa,
+            String(banco.banco_nome || 'Banco Bradesco S.A.').trim().slice(0, 60),
+            valorRecebido,
+            clienteNome,
+            historico,
+            documento || boletoCompleto || null,
+            planoDescricao,
+            projeto || null,
+            projeto || null,
+            planoCodigo,
+            dia,
+            mes,
+            ano,
+            vencimento,
+            banco.id,
+            `CR-STRATO-AVULSO-${dataRecebimento.replace(/-/g, '')}`,
+            arquivoRetorno || 'conferencia-strato',
+            Number.isInteger(linhaRetorno) ? linhaRetorno : null,
+            hashMovimento,
+          ],
+        )
+        movimento = movimentoCriado
+      }
+
+      const conciliacaoDados = {
+        origem: 'strato_avulso',
+        titulo,
+        empresa,
+        arquivo_retorno: arquivoRetorno || null,
+        linha_retorno: Number.isInteger(linhaRetorno) ? linhaRetorno : null,
+        boleto: boletoCompleto || null,
+        valor_nominal: valorNominal,
+        valor_recebido: valorRecebido,
+        data_recebimento: dataRecebimento,
+        movimento_id: Number(movimento.id),
+        banco_conta_id: banco.id,
+        usuario_id: req.user.id,
+        usuario_nome: req.user.name || null,
+      }
+
+      const { rows: [parcela] } = await client.query(
+        `INSERT INTO com_parcelas (
+           tenant_id, contrato_id, numero, tipo, vencimento,
+           valor_nominal, valor_correcao, valor_multa, valor_juros_mora,
+           valor_desconto, status, pago_em, valor_pago, forma_pagamento,
+           observacoes_baixa, receita_id, documento_legado,
+           parcela_numero_legado, parcela_total_legado,
+           obra_codigo_legado, unidade_codigo_legado,
+           valor_convertido, valor_total_relatorio,
+           origem, codigo_legado, dados_adicionais,
+           movimento_id, origem_baixa, conciliado_em,
+           conciliacao_dados, nosso_numero, nosso_numero_dv,
+           boleto_status
+         ) VALUES (
+           $1,$2::uuid,$3,'parcela',$4,
+           $5,0,0,0,0,'paga',$6,$7,'Boleto',
+           $8,$9::uuid,$10,
+           $11,$12,$13,$14,
+           $5,$7,
+           'strato_avulso',$15,$16::jsonb,
+           $17,'strato_avulso',NOW(),
+           $18::jsonb,$19,$20,'liquidado'
+         )
+         RETURNING *`,
+        [
+          req.user.tenant_id,
+          contrato.id,
+          Number(contador?.numero || 1),
+          vencimento,
+          valorNominal,
+          dataRecebimento,
+          valorRecebido,
+          `Recebimento avulso: ${titulo}. Criado e baixado pela conferência Strato.`,
+          receita.id,
+          documentoParcela,
+          fracao ? Number(fracao[1]) : null,
+          fracao ? Number(fracao[2]) : null,
+          obraCodigo,
+          unidadeCodigo,
+          codigoLegado,
+          JSON.stringify({
+            origem: 'conferencia_strato',
+            titulo,
+            arquivo_retorno: arquivoRetorno || null,
+            linha_retorno: Number.isInteger(linhaRetorno) ? linhaRetorno : null,
+            boleto: boletoCompleto || null,
+            criado_em: new Date().toISOString(),
+          }),
+          movimento.id,
+          JSON.stringify(conciliacaoDados),
+          nossoNumero,
+          nossoNumeroDv,
+        ],
+      )
+
+      return {
+        duplicated: false,
+        parcela,
+        receita,
+        movimento,
+        empresa,
+        banco,
+        plano: { codigo: planoCodigo, descricao: planoDescricao },
+      }
+    })
+
+    await logAudit({
+      userId: req.user.id,
+      tenantId: req.user.tenant_id,
+      action: result.duplicated
+        ? 'conta_receber_avulsa_strato_reutilizada'
+        : 'conta_receber_avulsa_strato_criada_e_baixada',
+      module: 'financeiro',
+      entityType: 'com_parcelas',
+      entityId: result.parcela?.id || null,
+      meta: {
+        titulo,
+        contrato_id: contratoId,
+        cliente_id: clienteIdInformado || null,
+        empresa: result.empresa,
+        arquivo_retorno: arquivoRetorno || null,
+        linha_retorno: Number.isInteger(linhaRetorno) ? linhaRetorno : null,
+        boleto: boletoCompleto || null,
+        valor_nominal: valorNominal,
+        valor_recebido: valorRecebido,
+        data_recebimento: dataRecebimento,
+        receita_id: result.receita?.id || null,
+        movimento_id: result.movimento?.id || null,
+        duplicado: result.duplicated,
+      },
+    }).catch(() => {})
+
+    return res.status(result.duplicated ? 200 : 201).json({
+      ok: true,
+      duplicated: result.duplicated,
+      message: result.duplicated
+        ? 'Este recebimento avulso já havia sido criado e baixado. Nenhum lançamento foi duplicado.'
+        : `Recebimento “${titulo}” criado no Contas a Receber, baixado e enviado ao Movimento Bancário.`,
+      data: {
+        parcela: {
+          id: result.parcela?.id,
+          status: result.parcela?.status,
+          valor_nominal: Number(result.parcela?.valor_nominal || valorNominal),
+          valor_pago: Number(result.parcela?.valor_pago || valorRecebido),
+          pago_em: result.parcela?.pago_em || dataRecebimento,
+          movimento_id: result.parcela?.movimento_id || result.movimento?.id || null,
+          documento_legado: result.parcela?.documento_legado || documento || parcelaReferencia || null,
+          parcela_numero_legado: result.parcela?.parcela_numero_legado || null,
+          parcela_total_legado: result.parcela?.parcela_total_legado || null,
+          contrato_numero: null,
+        },
+        receita: {
+          id: result.receita?.id || result.parcela?.receita_id || null,
+          titulo: result.receita?.titulo || titulo,
+        },
+        movimento: result.movimento
+          ? {
+              id: result.movimento.id,
+              data: result.movimento.data || dataRecebimento,
+              entradas: Number(result.movimento.entradas || valorRecebido),
+              banco_conta_id: result.movimento.banco_conta_id || result.banco?.id || null,
+            }
+          : null,
+        plano_conta: result.plano,
+      },
+    })
+  } catch (error) {
+    logger.error(`Erro ao criar recebimento avulso Strato: ${error.message}`)
+    return res.status(error.statusCode || 400).json({
+      ok: false,
+      message: error.statusCode ? error.message : 'Não foi possível criar e baixar o recebimento avulso.',
+    })
+  }
+})
 
 // PATCH /financeiro/contas-receber/:id/baixar-manual
 // Registra a baixa definitiva da parcela e cria a entrada correspondente no Movimento Bancário.
@@ -2193,6 +3290,10 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
   }
 
   const applyPayment = req.body?.baixar_liquidacoes !== false
+  const applyIntelligent = req.body?.aplicar_analise_inteligente === true
+  const intelligentSelections = Array.isArray(req.body?.selecoes_inteligentes)
+    ? req.body.selecoes_inteligentes.filter(value => typeof value === 'string' || (value && typeof value === 'object'))
+    : []
   const receiptDate = isoToday()
   const defaultCompany = normalizeBillingCompany(req.body?.empresa)
   const submittedFiles = Array.isArray(req.body?.files)
@@ -2363,6 +3464,163 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
       throw new Error(`Não foi possível associar o relatório Strato ao arquivo de retorno enviado: ${details}. Envie o relatório e o RET correspondentes na mesma operação.`)
     }
 
+    // v0.6.2: pré-análise genérica e somente leitura. O fluxo atual continua
+    // responsável pelos casos simples de uma linha para uma parcela. Quando o
+    // relatório aponta múltiplas parcelas, descontos, cadastros ausentes ou
+    // divergências, a gravação é bloqueada até a aprovação do fluxo 0.6.4.
+    const intelligentAnalyses = await transaction(async client => {
+      const analyses = []
+      for (let index = 0; index < files.length; index += 1) {
+        if (!reportAssignments[index]?.length) {
+          analyses.push(null)
+          continue
+        }
+        const parsed = parseReturn(files[index].content)
+        parsed.filename = files[index].filename
+        analyses.push(await analyzeStratoMultiParcelReturn({
+          client,
+          tenantId: req.user.tenant_id,
+          parsed,
+          stratoReports: reportAssignments[index],
+          explicitCompany: files[index].explicitCompany,
+        }))
+      }
+      return analyses
+    })
+
+    const blockedAnalyses = intelligentAnalyses
+      .map((analysis, index) => ({ analysis, index }))
+      .filter(entry => entry.analysis?.requer_fluxo_inteligente)
+
+    if (applyPayment && blockedAnalyses.length && !applyIntelligent) {
+      return res.status(409).json({
+        ok: false,
+        preview: true,
+        requires_review: true,
+        message: 'O relatório Strato identificou múltiplas parcelas, descontos, divergências ou cadastros ausentes. Nenhuma baixa foi executada. Revise a análise detalhada e selecione as parcelas elegíveis para aplicar.',
+        data: {
+          arquivos: files.map((file, index) => ({
+            arquivo: file.filename,
+            analise_inteligente: intelligentAnalyses[index],
+          })),
+        },
+      })
+    }
+
+    if (applyPayment && applyIntelligent) {
+      if (!intelligentSelections.length) {
+        return res.status(422).json({
+          ok: false,
+          message: 'Selecione ao menos uma parcela elegível na conferência inteligente.',
+        })
+      }
+
+      const intelligentResults = await transaction(async client => {
+        const processed = []
+        for (let index = 0; index < files.length; index += 1) {
+          const analysis = intelligentAnalyses[index]
+          if (!analysis) {
+            const normalResult = await processBradescoReturn({
+              client,
+              tenantId: req.user.tenant_id,
+              userId: req.user.id,
+              filename: files[index].filename,
+              content: files[index].content,
+              applyPayment: true,
+              persist: true,
+              explicitCompany: files[index].explicitCompany,
+              stratoReports: reportAssignments[index],
+              receiptDate,
+            })
+            processed.push({
+              ...normalResult,
+              arquivo: files[index].filename,
+              parcelas_aplicadas: Number(normalResult.liquidacoes_baixadas || 0),
+            })
+            continue
+          }
+          const parsed = parseReturn(files[index].content)
+          parsed.filename = files[index].filename
+          const appliedResult = await applyStratoIntelligentReturn({
+            client,
+            tenantId: req.user.tenant_id,
+            userId: req.user.id,
+            filename: files[index].filename,
+            content: files[index].content,
+            parsed,
+            analysis,
+            stratoReports: reportAssignments[index],
+            explicitCompany: files[index].explicitCompany,
+            selections: intelligentSelections,
+            fileIndex: index,
+          })
+          const refreshedAnalysis = await analyzeStratoMultiParcelReturn({
+            client,
+            tenantId: req.user.tenant_id,
+            parsed,
+            stratoReports: reportAssignments[index],
+            explicitCompany: files[index].explicitCompany,
+          })
+          processed.push({
+            ...appliedResult,
+            arquivo: files[index].filename,
+            analise_inteligente: refreshedAnalysis,
+          })
+        }
+        return processed
+      })
+
+      const appliedSummary = intelligentResults.reduce((total, result) => {
+        total.parcelas += Number(result.parcelas_aplicadas || 0)
+        total.movimentos += Number(result.movimentos_criados || 0)
+        total.valor += Number(result.valor_baixado || 0)
+        total.avisos += Array.isArray(result.avisos_aplicacao) ? result.avisos_aplicacao.length : 0
+        for (const application of result.aplicacoes || []) {
+          total.juros += Number(application.juros_ajustados || 0)
+          total.desconto += Number(application.desconto_ajustado || 0)
+        }
+        return total
+      }, { parcelas: 0, movimentos: 0, valor: 0, juros: 0, desconto: 0, avisos: 0 })
+
+      await logAudit({
+        userId: req.user.id,
+        tenantId: req.user.tenant_id,
+        action: 'contas_receber_retorno_strato_aplicacao_inteligente',
+        module: 'financeiro',
+        entityType: 'fin_retornos_cobranca',
+        entityId: intelligentResults[0]?.id || null,
+        meta: {
+          arquivos: files.map(file => file.filename),
+          parcelas_aplicadas: appliedSummary.parcelas,
+          movimentos_criados: appliedSummary.movimentos,
+          valor_baixado: roundMoney(appliedSummary.valor),
+          avisos: appliedSummary.avisos,
+          juros_ajustados: roundMoney(appliedSummary.juros),
+          desconto_ajustado: roundMoney(appliedSummary.desconto),
+          versao: '0.7.0',
+        },
+      }).catch(() => {})
+
+      return res.json({
+        ok: true,
+        applied_intelligent: true,
+        message: appliedSummary.parcelas
+          ? `${appliedSummary.parcelas} parcela(s) atualizada(s) e baixada(s). Juros ajustados: R$ ${roundMoney(appliedSummary.juros).toFixed(2).replace('.', ',')}. Desconto ajustado: R$ ${roundMoney(appliedSummary.desconto).toFixed(2).replace('.', ',')}.`
+          : 'Nenhuma nova baixa foi necessária; as parcelas selecionadas já estavam conciliadas.',
+        data: {
+          arquivos: intelligentResults,
+          resumo: {
+            parcelas_aplicadas: appliedSummary.parcelas,
+            movimentos_criados: appliedSummary.movimentos,
+            valor_baixado: roundMoney(appliedSummary.valor),
+            avisos: appliedSummary.avisos,
+            juros_ajustados: roundMoney(appliedSummary.juros),
+            desconto_ajustado: roundMoney(appliedSummary.desconto),
+          },
+        },
+      })
+    }
+
     const results = await transaction(async client => {
       const processed = []
       for (let index = 0; index < files.length; index += 1) {
@@ -2382,6 +3640,10 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
       }
       return processed
     })
+
+    for (let index = 0; index < results.length; index += 1) {
+      if (intelligentAnalyses[index]) results[index].analise_inteligente = intelligentAnalyses[index]
+    }
 
     if (applyPayment) {
       for (let index = 0; index < results.length; index += 1) {
@@ -2475,7 +3737,11 @@ router.post('/financeiro/contas-receber/bradesco/retorno', async (req, res) => {
     })
   } catch (error) {
     logger.error(`Erro ao processar retorno(s) Bradesco ${requestLabel}: ${error.message}`)
-    return res.status(400).json({ ok: false, message: error.message })
+    return res.status(error.statusCode || 400).json({
+      ok: false,
+      message: error.message,
+      details: error.details || undefined,
+    })
   }
 })
 

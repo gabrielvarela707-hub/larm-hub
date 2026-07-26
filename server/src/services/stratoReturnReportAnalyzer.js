@@ -68,11 +68,22 @@ Formato obrigatorio:
       "boleto": string | null,
       "vencimento": "YYYY-MM-DD" | null,
       "valor_titulo": number | null,
+      "juros_financeiro": number | null,
+      "seguro": number | null,
+      "moras": number | null,
+      "valor_desconto": number | null,
+      "valor_residuo": number | null,
+      "valor_total_original": number | null,
       "conta": string | null,
       "cliente_codigo": string | null,
       "cliente_nome": string | null,
       "data_pagamento": "YYYY-MM-DD" | null,
+      "valor_pago_base": number | null,
+      "juros_financeiro_pago": number | null,
+      "seguro_pago": number | null,
+      "moras_pago": number | null,
       "valor_pago": number | null,
+      "valor_diferenca": number | null,
       "ocorrencia": string | null,
       "motivo": string | null
     }
@@ -83,7 +94,7 @@ Regras de leitura:
 - "BOLETO" deve manter todos os digitos, inclusive o digito verificador final.
 - Em linhas como "1253-ALINE PEREIRA DA SILVA", cliente_codigo e 1253 e cliente_nome e ALINE PEREIRA DA SILVA.
 - "PARCELA" deve preservar a fracao, por exemplo 073/120.
-- Valores devem ser numeros em reais com ponto decimal.
+- Valores devem ser numeros em reais com ponto decimal. Preserve nominal, juros, seguro, moras, desconto, resíduo, total pago e diferença em campos separados.
 - Datas devem estar em ISO YYYY-MM-DD.
 - O nome do arquivo de retorno normalmente aparece no caminho ao lado de CRITICA COBRANCA.
 - Cada titulo do corpo do relatorio deve gerar um item em titulos.
@@ -185,6 +196,8 @@ function normalizeStratoReport(raw, metadata = {}) {
     .map((item, index) => {
       const fraction = parseParcelFraction(item?.parcela);
       const boleto = onlyDigits(item?.boleto) || null;
+      const valorTitulo = normalizeMoney(item?.valor_a_pagar ?? item?.valor_titulo);
+      const valorPagoTotal = normalizeMoney(item?.valor_pago_total ?? item?.valor_pago);
       return {
         indice_relatorio: index + 1,
         obra: cleanText(item?.obra, 30),
@@ -194,12 +207,27 @@ function normalizeStratoReport(raw, metadata = {}) {
         parcela_total: fraction.parcela_total,
         boleto,
         vencimento: normalizeDate(item?.vencimento),
-        valor_titulo: normalizeMoney(item?.valor_titulo),
+        valor_titulo: valorTitulo,
+        valor_a_pagar: valorTitulo,
+        juros_financeiro: normalizeMoney(item?.juros_financeiro),
+        seguro: normalizeMoney(item?.seguro),
+        moras: normalizeMoney(item?.moras),
+        valor_desconto_previsto: normalizeMoney(item?.valor_desconto_previsto),
+        valor_residuo_previsto: normalizeMoney(item?.valor_residuo_previsto),
+        valor_total_original: normalizeMoney(item?.valor_total_original ?? item?.valor_total),
         conta: cleanText(item?.conta, 40),
         cliente_codigo: cleanText(item?.cliente_codigo, 40),
         cliente_nome: cleanText(item?.cliente_nome, 180),
         data_pagamento: normalizeDate(item?.data_pagamento),
-        valor_pago: normalizeMoney(item?.valor_pago),
+        valor_pago_base: normalizeMoney(item?.valor_pago_base),
+        juros_financeiro_pago: normalizeMoney(item?.juros_financeiro_pago),
+        seguro_pago: normalizeMoney(item?.seguro_pago),
+        moras_pago: normalizeMoney(item?.moras_pago),
+        valor_desconto: normalizeMoney(item?.valor_desconto),
+        valor_residuo: normalizeMoney(item?.valor_residuo),
+        valor_pago_total: valorPagoTotal,
+        valor_pago: valorPagoTotal,
+        valor_diferenca: normalizeMoney(item?.valor_diferenca),
         ocorrencia: normalizeOccurrence(item?.ocorrencia),
         motivo: cleanText(item?.motivo, 180),
       };
@@ -217,14 +245,58 @@ function normalizeStratoReport(raw, metadata = {}) {
   };
 }
 
+function moneyMatchesWithPositions(line) {
+  const regex = /-?(?:\d{1,3}(?:\.\d{3})*|\d+),\d{2}/g;
+  const values = [];
+  let match;
+  while ((match = regex.exec(String(line || ''))) !== null) {
+    values.push({ value: normalizeMoney(match[0]), start: match.index, end: regex.lastIndex });
+  }
+  return values;
+}
+
+function detectFinancialColumns(lines) {
+  const header = lines.find(line => /A\s+PAGAR/.test(line) && /J\.FCT/.test(line) && /VL\.DESC/.test(line));
+  if (!header) return null;
+  const labels = ['A PAGAR', 'J.FCT', 'SEGURO', 'MORAS', 'VL.DESC', 'RESIDUO', 'TOTAL'];
+  const centers = labels.map(label => {
+    const index = header.indexOf(label);
+    return index >= 0 ? index + label.length / 2 : null;
+  });
+  return centers.every(value => value !== null) ? { labels, centers } : null;
+}
+
+function mapLineMoneyByColumns(line, columns) {
+  const mapped = {};
+  if (!columns) return mapped;
+  for (const item of moneyMatchesWithPositions(line)) {
+    const center = (item.start + item.end) / 2;
+    let closest = 0;
+    let distance = Number.POSITIVE_INFINITY;
+    columns.centers.forEach((columnCenter, index) => {
+      const current = Math.abs(columnCenter - center);
+      if (current < distance) {
+        distance = current;
+        closest = index;
+      }
+    });
+    mapped[columns.labels[closest]] = item.value;
+  }
+  return mapped;
+}
+
 function parseStratoPdfText(text) {
   const source = String(text || '').replace(/\r/g, '');
   if (!/CR[IÍ]TICA\s+COBRAN[CÇ]A/i.test(source)) return null;
 
-  const lines = source
+  // Mantemos os espaços do pdftotext -layout para reconhecer corretamente
+  // quando MORAS ou VL.DESC está vazio. Uma lista simples de números não
+  // consegue distinguir o desconto da mora nesses casos.
+  const rawLines = source
     .split('\n')
-    .map(line => line.replace(/\u00a0/g, ' ').trim())
-    .filter(Boolean);
+    .map(line => line.replace(/\u00a0/g, ' ').replace(/\s+$/, ''));
+  const lines = rawLines.map(line => line.trim()).filter(Boolean);
+  const columns = detectFinancialColumns(rawLines);
 
   const arquivoRetorno = source.match(/([A-Z0-9_-]+\.RET)\b/i)?.[1] || null;
   const bancoCodigo = source.match(/Banco:\s*(\d+)/i)?.[1] || null;
@@ -233,14 +305,16 @@ function parseStratoPdfText(text) {
   const empresa = cleanText(lines.find(line => /Pag\s*\d+/i.test(line))?.replace(/Pag\s*\d+.*$/i, ''), 180);
 
   const titulos = [];
-  const titlePattern = /^(\d{4})\s*([A-Z0-9]+(?:-[A-Z0-9]+)?)\s+(\d{1,3}\s*\/\s*\d{1,3})\s+(\d{10,20})\s*(\d{2}\/\d{2}\/\d{4})(.*)$/i;
+  const titlePattern = /^\s*(\d{4})\s+([A-Z0-9]+(?:-[A-Z0-9]+)?)\s+(\d{1,3}\s*\/\s*\d{1,3})\s+(\d{10,20})\s+(\d{2}\/\d{2}\/\d{4})(.*)$/i;
 
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
+  for (let index = 0; index < rawLines.length; index += 1) {
+    const rawLine = rawLines[index];
+    const line = rawLine.trim();
     if (/^TOTAL\s+A\s+PAGAR/i.test(line)) break;
 
-    const match = line.match(titlePattern);
+    const match = rawLine.match(titlePattern);
     if (!match) continue;
+    const original = mapLineMoneyByColumns(rawLine, columns);
 
     const item = {
       obra: match[1],
@@ -248,19 +322,36 @@ function parseStratoPdfText(text) {
       parcela: match[3].replace(/\s+/g, ''),
       boleto: match[4],
       vencimento: match[5],
-      valor_titulo: firstBrazilianMoney(match[6]),
+      valor_titulo: original['A PAGAR'] ?? firstBrazilianMoney(match[6]),
+      valor_a_pagar: original['A PAGAR'] ?? firstBrazilianMoney(match[6]),
+      juros_financeiro: original['J.FCT'] ?? 0,
+      seguro: original.SEGURO ?? 0,
+      moras: original.MORAS ?? 0,
+      valor_desconto_previsto: original['VL.DESC'] ?? 0,
+      valor_residuo_previsto: original.RESIDUO ?? 0,
+      valor_total_original: original.TOTAL ?? null,
       conta: contaBancaria,
       cliente_codigo: null,
       cliente_nome: null,
       data_pagamento: null,
+      valor_pago_base: null,
+      juros_financeiro_pago: 0,
+      seguro_pago: 0,
+      moras_pago: 0,
+      valor_desconto: 0,
+      valor_residuo: 0,
+      valor_pago_total: null,
       valor_pago: null,
+      valor_diferenca: 0,
       ocorrencia: null,
       motivo: null,
     };
 
-    for (let offset = 1; offset <= 3 && index + offset < lines.length; offset += 1) {
-      const detailLine = lines[index + offset];
-      if (titlePattern.test(detailLine) || /^TOTAL\s+A\s+PAGAR/i.test(detailLine)) break;
+    for (let offset = 1; offset <= 5 && index + offset < rawLines.length; offset += 1) {
+      const detailRaw = rawLines[index + offset];
+      const detailLine = detailRaw.trim();
+      if (!detailLine) continue;
+      if (titlePattern.test(detailRaw) || /^TOTAL\s+A\s+PAGAR/i.test(detailLine)) break;
 
       const occurrenceMatch = detailLine.match(/(?:^|\s)(\d{2})-Motivo\s+(.+)$/i);
       if (occurrenceMatch) {
@@ -269,25 +360,49 @@ function parseStratoPdfText(text) {
         continue;
       }
 
-      const withoutAccount = contaDigits && detailLine.startsWith(contaDigits)
-        ? detailLine.slice(contaDigits.length).trim()
-        : detailLine;
-      const paymentMatch = withoutAccount.match(/^(\d+)-(.+?)\s+(\d{2}\/\d{2}\/\d{4})\s+(.+)$/);
-      if (paymentMatch) {
-        item.cliente_codigo = paymentMatch[1];
-        item.cliente_nome = paymentMatch[2].trim();
-        item.data_pagamento = paymentMatch[3];
-        item.valor_pago = firstBrazilianMoney(paymentMatch[4]);
+      const dateMatch = detailLine.match(/(\d{2}\/\d{2}\/\d{4})/);
+      if (dateMatch) {
+        const beforeDate = detailLine.slice(0, dateMatch.index).trim();
+        const clientMatch = beforeDate.match(/^(?:\d+\s+)?(\d+)-(.+)$/);
+        if (clientMatch) {
+          item.cliente_codigo = clientMatch[1];
+          item.cliente_nome = clientMatch[2].trim();
+        } else {
+          const withoutAccount = contaDigits && beforeDate.startsWith(contaDigits)
+            ? beforeDate.slice(contaDigits.length).trim()
+            : beforeDate;
+          const fallback = withoutAccount.match(/^(\d+)-(.+)$/);
+          if (fallback) {
+            item.cliente_codigo = fallback[1];
+            item.cliente_nome = fallback[2].trim();
+          }
+        }
+
+        const paid = mapLineMoneyByColumns(detailRaw, columns);
+        item.data_pagamento = dateMatch[1];
+        item.valor_pago_base = paid['A PAGAR'] ?? null;
+        item.juros_financeiro_pago = paid['J.FCT'] ?? 0;
+        item.seguro_pago = paid.SEGURO ?? 0;
+        item.moras_pago = paid.MORAS ?? 0;
+        item.valor_desconto = paid['VL.DESC'] ?? 0;
+        // Na segunda linha do cabeçalho, a coluna RESIDUO é rotulada TOTAL e
+        // contém o valor efetivamente recebido; a coluna TOTAL vira VL.DIF.
+        item.valor_pago_total = paid.RESIDUO ?? null;
+        item.valor_pago = item.valor_pago_total;
+        item.valor_diferenca = paid.TOTAL ?? 0;
         continue;
       }
 
-      const paymentWithoutClient = detailLine.match(/^(\d{2}\/\d{2}\/\d{4})\s+(.+)$/);
-      if (paymentWithoutClient && !item.data_pagamento) {
-        item.data_pagamento = paymentWithoutClient[1];
-        item.valor_pago = firstBrazilianMoney(paymentWithoutClient[2]);
+      // Nomes longos podem continuar na linha seguinte, como "DOS SANTOS".
+      if (item.cliente_nome && !/^(?:-|\d+)\s*$/.test(detailLine) && !moneyMatchesWithPositions(detailRaw).length) {
+        item.cliente_nome = `${item.cliente_nome} ${detailLine}`.replace(/\s+/g, ' ').trim();
       }
     }
 
+    if (item.valor_pago_total === null) {
+      item.valor_pago_total = normalizeMoney(item.valor_pago_base);
+      item.valor_pago = item.valor_pago_total;
+    }
     titulos.push(item);
   }
 
@@ -323,29 +438,41 @@ async function analyzePdfLocally({ filename, base64 }) {
   const buffer = Buffer.from(String(base64 || ''), 'base64');
   if (!buffer.length) return null;
 
-  let text = '';
+  // O relatório Crítica Cobrança depende da posição horizontal das colunas.
+  // pdf-parse normalmente desmonta esse layout e pode deslocar casas/valores
+  // entre A PAGAR, MORAS, PAGO e VL.DIF. Por isso, a leitura com
+  // `pdftotext -layout` é sempre a fonte principal.
+  try {
+    const layoutText = await extractPdfTextWithoutDependency(buffer);
+    const rawLayout = parseStratoPdfText(layoutText);
+    if (rawLayout?.titulos?.length) {
+      return normalizeStratoReport(rawLayout, {
+        filename,
+        provider: 'strato_pdf_local_layout',
+      });
+    }
+  } catch (error) {
+    // Ambientes sem pdftotext continuam com fallback abaixo.
+  }
 
+  // Fallback compatível para instalações sem o binário. Se o texto perder o
+  // formato tabular, o parser retorna null e o fluxo existente usa a IA.
   if (pdfParse) {
     try {
       const parsed = await pdfParse(buffer);
-      text = String(parsed?.text || '');
+      const rawParsed = parseStratoPdfText(String(parsed?.text || ''));
+      if (rawParsed?.titulos?.length) {
+        return normalizeStratoReport(rawParsed, {
+          filename,
+          provider: 'strato_pdf_local_fallback',
+        });
+      }
     } catch (error) {
-      text = '';
+      // Segue para a IA no chamador.
     }
   }
 
-  if (!text.trim()) {
-    try {
-      text = await extractPdfTextWithoutDependency(buffer);
-    } catch (error) {
-      // Se pdftotext não estiver disponível ou o PDF não possuir texto,
-      // retorna null e o fluxo existente poderá usar a IA como fallback.
-      return null;
-    }
-  }
-
-  const raw = parseStratoPdfText(text);
-  return raw ? normalizeStratoReport(raw, { filename, provider: 'strato_pdf_local' }) : null;
+  return null;
 }
 
 async function analyzeWithOpenAI({ apiKey, model, filename, mimeType, base64 }) {

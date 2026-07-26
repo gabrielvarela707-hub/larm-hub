@@ -109,8 +109,9 @@ interface AiContaPagarResult {
 }
 
 interface RateioFormItem {
-  empresa: string
-  banco_conta_id: string
+  plano_contas_id: string
+  centro_custo: string
+  historico: string
   percentual: string
   valor: string
 }
@@ -118,6 +119,8 @@ interface RateioFormItem {
 interface Lancamento {
   id: number; empresa: string; historico: string; produto_servico: string | null
   rateio_id?: number | string | null
+  rateio_contabil_id?: number | string | null
+  rateio_contabil_total_itens?: number | null
   banco_conta_id?: number | null; banco_agencia?: string | null; banco_conta?: string | null
   tipo_documento_id?: number | null; tipo_documento_nome?: string | null
   nf_doc: string | null; documento_nome?: string | null; dt_emissao: string | null; valor_total: number
@@ -686,53 +689,60 @@ export default function PagarPage() {
       return next
     })
     if (!ativo) {
-      const primeiraConta = rateios[0]
-      if (primeiraConta) {
-        setFEmp(primeiraConta.empresa || fEmp)
-        setFBanco(primeiraConta.banco_conta_id || fBanco)
+      const primeiroPlano = rateios[0]
+      if (primeiroPlano) {
+        const planoSelecionado = plano.find(
+          conta => String(conta.id) === String(primeiroPlano.plano_contas_id),
+        )
+        if (planoSelecionado) setFConta(planoSelecionado.codigo)
+        if (primeiroPlano.centro_custo) setFCC(primeiroPlano.centro_custo)
       }
       setRateios([])
       return
     }
+
+    const planoAtual = plano.find(conta => conta.codigo === fConta)
     setRateios(distribuirRateiosIgualmente([
-      { empresa: fEmp, banco_conta_id: fBanco, percentual: '', valor: '' },
-      { empresa: '', banco_conta_id: '', percentual: '', valor: '' },
+      {
+        plano_contas_id: planoAtual ? String(planoAtual.id) : '',
+        centro_custo: fCC,
+        historico: '',
+        percentual: '',
+        valor: '',
+      },
+      {
+        plano_contas_id: '',
+        centro_custo: fCC,
+        historico: '',
+        percentual: '',
+        valor: '',
+      },
     ]))
   }
 
-  function adicionarContaRateio() {
+  function adicionarItemRateio() {
     if (rateios.length >= 20) return
-    setRateios(prev => [...prev, { empresa: '', banco_conta_id: '', percentual: '', valor: '' }])
+    setRateios(prev => [...prev, {
+      plano_contas_id: '',
+      centro_custo: fCC,
+      historico: '',
+      percentual: '',
+      valor: '',
+    }])
   }
 
-  function removerContaRateio(index: number) {
+  function removerItemRateio(index: number) {
     if (rateios.length <= 2) return
     setRateios(prev => prev.filter((_, itemIndex) => itemIndex !== index))
   }
 
-  function atualizarEmpresaRateio(index: number, empresa: string) {
-    setRateios(prev => prev.map((item, itemIndex) => {
-      if (itemIndex !== index) return item
-      const contaAtual = bancos.find(banco => String(banco.id) === String(item.banco_conta_id))
-      const bancoContaId = contaAtual && contaAtual.empresa !== empresa ? '' : item.banco_conta_id
-      return { ...item, empresa, banco_conta_id: bancoContaId }
-    }))
-    if (index === 0) {
-      const contaAtual = bancos.find(banco => String(banco.id) === String(rateios[index]?.banco_conta_id))
-      setFEmp(empresa)
-      if (contaAtual && contaAtual.empresa !== empresa) setFBanco('')
-    }
-  }
-
-  function atualizarBancoRateio(index: number, bancoContaId: string) {
-    const conta = bancos.find(banco => String(banco.id) === String(bancoContaId))
-    setRateios(prev => prev.map((item, itemIndex) => itemIndex === index
-      ? { ...item, banco_conta_id: bancoContaId, empresa: conta?.empresa || item.empresa }
-      : item))
-    if (index === 0) {
-      setFBanco(bancoContaId)
-      if (conta?.empresa) setFEmp(conta.empresa)
-    }
+  function atualizarCampoRateio(
+    index: number,
+    campo: 'plano_contas_id' | 'centro_custo' | 'historico',
+    valor: string,
+  ) {
+    setRateios(prev => prev.map((item, itemIndex) =>
+      itemIndex === index ? { ...item, [campo]: valor } : item))
   }
 
   function atualizarPercentualRateio(index: number, percentual: string) {
@@ -765,8 +775,11 @@ export default function PagarPage() {
     const vlr = moneyToNumber(fValor) || 0
     const n   = fNParc || 1
     if (vlr <= 0) { setParcelas([]); return }
+    const totalParcelasCentavos = Math.round((vlr + Number.EPSILON) * 100)
+    const parcelaBaseCentavos = Math.floor(totalParcelasCentavos / n)
+    const parcelaRestoCentavos = totalParcelasCentavos - (parcelaBaseCentavos * n)
     const ps: Parcela[] = Array.from({ length: n }, (_, i) => {
-      const valor = parseFloat((vlr / n).toFixed(2))
+      const valor = (parcelaBaseCentavos + (i < parcelaRestoCentavos ? 1 : 0)) / 100
       return {
         numero: i + 1,
         valor,
@@ -1037,12 +1050,17 @@ export default function PagarPage() {
       e.modalidade_pagamento = 'Digite a linha do boleto ou anexe ao menos um PDF/imagem.'
 
     if (fRateioAtivo) {
-      const contasSelecionadas = rateios.map(item => String(item.banco_conta_id || '')).filter(Boolean)
+      const planosSelecionados = rateios
+        .map(item => String(item.plano_contas_id || ''))
+        .filter(Boolean)
       const totalDocumentoCentavos = rateioMoneyToCents(fValor)
       const itemIncompleto = rateios.find(item => {
-        const conta = bancos.find(banco => String(banco.id) === String(item.banco_conta_id))
-        return !item.empresa || !item.banco_conta_id || !conta || conta.empresa !== item.empresa
-          || rateioPercentToScaled(item.percentual) <= 0 || rateioMoneyToCents(item.valor) <= 0
+        const planoSelecionado = plano.find(
+          conta => String(conta.id) === String(item.plano_contas_id),
+        )
+        return !item.plano_contas_id || !planoSelecionado
+          || rateioPercentToScaled(item.percentual) <= 0
+          || rateioMoneyToCents(item.valor) <= 0
       })
       const itemIncompativel = rateios.find(item => {
         const percentual = rateioPercentToScaled(item.percentual)
@@ -1051,11 +1069,11 @@ export default function PagarPage() {
         return Math.abs(valorCentavos - valorEsperado) > 1
       })
 
-      if (editingId) e.rateio = 'O rateio só pode ser definido na criação do documento.'
-      else if (rateios.length < 2) e.rateio = 'Adicione pelo menos duas contas ao rateio.'
-      else if (rateios.length > 20) e.rateio = 'O rateio aceita no máximo 20 contas.'
-      else if (itemIncompleto) e.rateio = 'Preencha empresa, conta, percentual e valor em todas as linhas do rateio.'
-      else if (new Set(contasSelecionadas).size !== contasSelecionadas.length) e.rateio = 'A mesma conta bancária não pode aparecer mais de uma vez no rateio.'
+      if (editingId) e.rateio = 'O rateio contábil só pode ser definido na criação do documento.'
+      else if (rateios.length < 2) e.rateio = 'Adicione pelo menos dois planos de contas ao rateio.'
+      else if (rateios.length > 20) e.rateio = 'O rateio aceita no máximo 20 planos de contas.'
+      else if (itemIncompleto) e.rateio = 'Preencha plano de contas, percentual e valor em todas as linhas do rateio.'
+      else if (new Set(planosSelecionados).size !== planosSelecionados.length) e.rateio = 'O mesmo plano de contas não pode aparecer mais de uma vez no rateio.'
       else if (totalRateioPercentualScaled !== RATEIO_HUNDRED_PERCENT) e.rateio = 'A soma dos percentuais deve ser exatamente 100%.'
       else if (totalRateioCentavos !== totalDocumentoCentavos) e.rateio = 'A soma dos valores deve ser igual ao valor total do documento.'
       else if (itemIncompativel) e.rateio = 'Existe uma linha em que o percentual não corresponde ao valor informado.'
@@ -1287,8 +1305,8 @@ export default function PagarPage() {
   }
 
   async function handleEdit(l: Lancamento) {
-    if (l.rateio_id) {
-      alert('Este lançamento pertence a um rateio e não pode ser editado individualmente. O rastreamento completo será liberado na próxima etapa.')
+    if (l.rateio_id || l.rateio_contabil_id) {
+      alert('Este lançamento possui rateio e não pode ser editado sem preservar sua composição contábil.')
       return
     }
 
@@ -1375,11 +1393,11 @@ export default function PagarPage() {
     try {
       const contaObj = plano.find(p => p.codigo === fConta)
       const payload: Record<string, unknown> = {
-        empresa:         fRateioAtivo ? (rateios[0]?.empresa || fEmp) : fEmp,
+        empresa:         fEmp,
         fornecedor_id:   fForn   || null,
-        banco_conta_id:  fRateioAtivo ? (rateios[0]?.banco_conta_id || fBanco || null) : (fBanco || null),
-        conta_contabil:  fConta  || null,
-        descricao_conta: contaObj?.descricao || null,
+        banco_conta_id:  fBanco  || null,
+        conta_contabil:  fRateioAtivo ? null : (fConta || null),
+        descricao_conta: fRateioAtivo ? null : (contaObj?.descricao || null),
         historico:       fHistorico,
         tipo_documento_id: fTipoDoc || null,
         produto_servico: null,
@@ -1409,8 +1427,9 @@ export default function PagarPage() {
       }
       if (!editingId && fRateioAtivo) {
         payload.rateios = rateios.map(item => ({
-          empresa: item.empresa,
-          banco_conta_id: Number(item.banco_conta_id),
+          plano_contas_id: Number(item.plano_contas_id),
+          centro_custo: item.centro_custo || null,
+          historico: item.historico || null,
           percentual: moneyToNumber(item.percentual),
           valor: moneyToNumber(item.valor),
         }))
@@ -1772,6 +1791,11 @@ export default function PagarPage() {
                     <td className="px-3 py-2">
                       <p className="font-medium text-slate-700 truncate" title={fornecedorDisplay}>{fornecedorDisplay}</p>
                       {fornecedorSubtitulo && <p className="text-slate-400 text-[10px] truncate" title={fornecedorSubtitulo}>{fornecedorSubtitulo}</p>}
+                      {l.rateio_contabil_id && (
+                        <p className="mt-0.5 text-[10px] font-semibold text-blue-600">
+                          Rateio contábil · {l.rateio_contabil_total_itens || 0} planos
+                        </p>
+                      )}
                     </td>
                     <td className="px-3 py-2 max-w-[150px] text-slate-600 truncate">{l.parcela_tipo_documento_nome || l.tipo_documento_nome || '—'}</td>
                     <td className="px-3 py-2 max-w-[130px] text-slate-600 truncate">
@@ -1878,7 +1902,7 @@ export default function PagarPage() {
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Dados do Lançamento</p>
                 <div className="grid grid-cols-2 gap-3">
                   <F label="Empresa" name="empresa" required>
-                    <select className={cn(inp, fRateioAtivo && 'bg-slate-100 text-slate-500')} value={fEmp} disabled={fRateioAtivo} onChange={e => setFEmp(e.target.value)}>
+                    <select className={inp} value={fEmp} onChange={e => setFEmp(e.target.value)}>
                       <option value="">Selecione</option>
                       {EMPRESAS.map(e => <option key={e} value={e}>{e}</option>)}
                     </select>
@@ -1948,7 +1972,13 @@ export default function PagarPage() {
                     {fDocumentoErro && <p className="text-[10px] text-red-500">{fDocumentoErro}</p>}
                   </F>
                   <F label="Plano de Contas" name="conta_contabil">
-                    <PlanoContasSelect value={fConta} onChange={setFConta} contas={plano} inp={inp} />
+                    {fRateioAtivo ? (
+                      <div className="flex min-h-9 items-center rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs text-blue-700">
+                        Definido individualmente no rateio contábil abaixo
+                      </div>
+                    ) : (
+                      <PlanoContasSelect value={fConta} onChange={setFConta} contas={plano} inp={inp} />
+                    )}
                   </F>
                   <F label="Data de Emissão" name="dt_emissao">
                     <input className={inp} type="date" value={fEmissao} onChange={e => setFEmissao(e.target.value)} />
@@ -1967,60 +1997,135 @@ export default function PagarPage() {
                         <Percent className="h-4 w-4" />
                       </div>
                       <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">Rateio por contas bancárias</p>
-                        <p className="mt-0.5 max-w-2xl text-[10px] leading-4 text-slate-500">O documento será dividido em lançamentos individuais no Contas a Pagar, todos ligados ao mesmo rateio.</p>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">Rateio contábil</p>
+                        <p className="mt-0.5 max-w-2xl text-[10px] leading-4 text-slate-500">
+                          Será criado um único título e uma única baixa bancária. No Movimento Bancário e no Cashflow, o valor será detalhado entre os planos de contas informados.
+                        </p>
                       </div>
                     </div>
                     <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-blue-700">
-                      <input type="checkbox" checked={fRateioAtivo} onChange={e => alternarRateio(e.target.checked)} className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-500" />
-                      Dividir entre várias contas
+                      <input
+                        type="checkbox"
+                        checked={fRateioAtivo}
+                        onChange={e => alternarRateio(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-500"
+                      />
+                      Dividir entre vários planos de contas
                     </label>
                   </div>
 
                   {fRateioAtivo && (
                     <div className="mt-4 space-y-3">
                       <div className="overflow-x-auto rounded-lg border border-blue-100 bg-white">
-                        <div className="min-w-[760px]">
-                          <div className="grid grid-cols-[42px_110px_minmax(245px,1fr)_120px_145px_38px] gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                            <span>Item</span><span>Empresa</span><span>Conta bancária</span><span className="text-right">Percentual</span><span className="text-right">Valor</span><span />
+                        <div className="min-w-[1120px]">
+                          <div className="grid grid-cols-[42px_minmax(250px,1.5fr)_170px_minmax(230px,1.3fr)_120px_145px_38px] gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                            <span>Item</span>
+                            <span>Plano de contas</span>
+                            <span>Centro de custo</span>
+                            <span>Histórico complementar</span>
+                            <span className="text-right">Percentual</span>
+                            <span className="text-right">Valor</span>
+                            <span />
                           </div>
                           <div className="divide-y divide-slate-100">
-                            {rateios.map((item, index) => {
-                              const contasDaEmpresa = bancos.filter(banco => !item.empresa || banco.empresa === item.empresa)
-                              return (
-                                <div key={`rateio-${index}`} className="grid grid-cols-[42px_110px_minmax(245px,1fr)_120px_145px_38px] items-center gap-2 px-3 py-2.5">
-                                  <div className="text-center"><span className={cn('inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-[10px] font-bold', index === 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500')}>{index + 1}</span></div>
-                                  <select value={item.empresa} onChange={e => atualizarEmpresaRateio(index, e.target.value)} className={cn(inp, 'text-[11px]', errors.rateio && !item.empresa && 'border-red-300')}>
-                                    <option value="">Selecione</option>{EMPRESAS.map(empresa => <option key={empresa} value={empresa}>{empresa}</option>)}
-                                  </select>
-                                  <select value={item.banco_conta_id} onChange={e => atualizarBancoRateio(index, e.target.value)} className={cn(inp, 'text-[11px]', errors.rateio && !item.banco_conta_id && 'border-red-300')}>
-                                    <option value="">Selecione uma conta cadastrada</option>
-                                    {contasDaEmpresa.map(banco => <option key={banco.id} value={banco.id}>{banco.empresa} · {banco.banco_nome}{banco.agencia ? ` · Ag. ${banco.agencia}` : ''}{banco.conta ? ` · Cc. ${banco.conta}${banco.digito ? `-${banco.digito}` : ''}` : ''}</option>)}
-                                  </select>
-                                  <div className="relative">
-                                    <input type="text" inputMode="decimal" value={item.percentual} onChange={e => atualizarPercentualRateio(index, e.target.value)} className={cn(inp, 'pr-7 text-right text-[11px] tabular-nums', errors.rateio && rateioPercentToScaled(item.percentual) <= 0 && 'border-red-300')} placeholder="0,00" />
-                                    <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">%</span>
-                                  </div>
-                                  <div className="relative">
-                                    <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">R$</span>
-                                    <input type="text" inputMode="decimal" value={item.valor} onChange={e => atualizarValorRateio(index, e.target.value)} className={cn(inp, 'pl-7 text-right text-[11px] tabular-nums', errors.rateio && rateioMoneyToCents(item.valor) <= 0 && 'border-red-300')} placeholder="0,00" />
-                                  </div>
-                                  <button type="button" title={rateios.length <= 2 ? 'O rateio precisa ter pelo menos duas contas' : 'Remover conta'} disabled={rateios.length <= 2} onClick={() => removerContaRateio(index)} className="rounded p-1.5 text-red-400 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"><Trash2 className="h-3.5 w-3.5" /></button>
+                            {rateios.map((item, index) => (
+                              <div
+                                key={`rateio-contabil-${index}`}
+                                className="grid grid-cols-[42px_minmax(250px,1.5fr)_170px_minmax(230px,1.3fr)_120px_145px_38px] items-center gap-2 px-3 py-2.5"
+                              >
+                                <div className="text-center">
+                                  <span className={cn('inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-[10px] font-bold', index === 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500')}>
+                                    {index + 1}
+                                  </span>
                                 </div>
-                              )
-                            })}
+                                <select
+                                  value={item.plano_contas_id}
+                                  onChange={e => atualizarCampoRateio(index, 'plano_contas_id', e.target.value)}
+                                  className={cn(inp, 'text-[11px]', errors.rateio && !item.plano_contas_id && 'border-red-300')}
+                                >
+                                  <option value="">Selecione um plano analítico</option>
+                                  {plano.map(conta => (
+                                    <option key={conta.id} value={conta.id}>
+                                      {conta.codigo} — {conta.descricao}
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="text"
+                                  value={item.centro_custo}
+                                  onChange={e => atualizarCampoRateio(index, 'centro_custo', e.target.value)}
+                                  className={cn(inp, 'text-[11px]')}
+                                  placeholder="Opcional"
+                                />
+                                <input
+                                  type="text"
+                                  value={item.historico}
+                                  onChange={e => atualizarCampoRateio(index, 'historico', e.target.value)}
+                                  className={cn(inp, 'text-[11px]')}
+                                  placeholder="Ex.: reembolso combustível"
+                                />
+                                <div className="relative">
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={item.percentual}
+                                    onChange={e => atualizarPercentualRateio(index, e.target.value)}
+                                    className={cn(inp, 'pr-7 text-right text-[11px] tabular-nums', errors.rateio && rateioPercentToScaled(item.percentual) <= 0 && 'border-red-300')}
+                                    placeholder="0,00"
+                                  />
+                                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">%</span>
+                                </div>
+                                <div className="relative">
+                                  <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">R$</span>
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={item.valor}
+                                    onChange={e => atualizarValorRateio(index, e.target.value)}
+                                    className={cn(inp, 'pl-7 text-right text-[11px] tabular-nums', errors.rateio && rateioMoneyToCents(item.valor) <= 0 && 'border-red-300')}
+                                    placeholder="0,00"
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  title={rateios.length <= 2 ? 'O rateio precisa ter pelo menos dois planos' : 'Remover plano'}
+                                  disabled={rateios.length <= 2}
+                                  onClick={() => removerItemRateio(index)}
+                                  className="rounded p-1.5 text-red-400 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-30"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ))}
                           </div>
                         </div>
                       </div>
 
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="flex flex-wrap gap-2">
-                          <button type="button" disabled={rateios.length >= 20} onClick={adicionarContaRateio} className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"><Plus className="h-3.5 w-3.5" /> Adicionar conta</button>
-                          <button type="button" onClick={() => setRateios(prev => distribuirRateiosIgualmente(prev))} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">Distribuir igualmente</button>
+                          <button
+                            type="button"
+                            disabled={rateios.length >= 20}
+                            onClick={adicionarItemRateio}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                          >
+                            <Plus className="h-3.5 w-3.5" /> Adicionar plano
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setRateios(prev => distribuirRateiosIgualmente(prev))}
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 hover:bg-slate-50"
+                          >
+                            Distribuir igualmente
+                          </button>
                         </div>
                         <div className="flex flex-wrap items-center gap-3 text-[11px]">
-                          <span className={cn('font-semibold', totalRateioPercentualScaled === RATEIO_HUNDRED_PERCENT ? 'text-emerald-700' : 'text-red-600')}>Percentual: {(totalRateioPercentualScaled / RATEIO_PERCENT_SCALE).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}%</span>
-                          <span className={cn('font-semibold', totalRateioCentavos === rateioMoneyToCents(fValor) ? 'text-emerald-700' : 'text-red-600')}>Rateado: {R$(totalRateioCentavos / 100)} de {R$(rateioMoneyToCents(fValor) / 100)}</span>
+                          <span className={cn('font-semibold', totalRateioPercentualScaled === RATEIO_HUNDRED_PERCENT ? 'text-emerald-700' : 'text-red-600')}>
+                            Percentual: {(totalRateioPercentualScaled / RATEIO_PERCENT_SCALE).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}%
+                          </span>
+                          <span className={cn('font-semibold', totalRateioCentavos === rateioMoneyToCents(fValor) ? 'text-emerald-700' : 'text-red-600')}>
+                            Rateado: {R$(totalRateioCentavos / 100)} de {R$(rateioMoneyToCents(fValor) / 100)}
+                          </span>
                         </div>
                       </div>
                       {errors.rateio && <p className="text-[10px] font-medium text-red-500">{errors.rateio}</p>}

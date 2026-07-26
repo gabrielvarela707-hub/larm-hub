@@ -1,0 +1,9 @@
+package.json
+package-lock.json
+data/system_releases_seed.js
+scripts/migrate_retorno_multiparcelas.js
+scripts/check_retorno_multiparcelas.js
+scripts/rollback_retorno_multiparcelas.js
+scripts/test_retorno_multiparcelas.js
+docs/auditorias/analise-strato-larmhub-2026-07-23.md
+README-ATUALIZACAO-0.6.1-BACKEND.txt

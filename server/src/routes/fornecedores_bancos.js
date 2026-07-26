@@ -23,6 +23,10 @@ const {
   normalizeModelId,
   isUnavailableModelError,
 } = require("../services/aiModelService");
+const {
+  preparePaymentSnapshot,
+  persistFornecedorPaymentDefaults,
+} = require("../services/contasPagarPagamentoService");
 
 const router = express.Router();
 router.use(authenticate);
@@ -1878,23 +1882,6 @@ router.get("/lancamentos-cp/exportar", async (req, res) => {
 });
 
 
-const CP_MODALIDADES_PAGAMENTO = new Set([
-  "PIX",
-  "BOLETO",
-  "TED",
-  "DOC",
-  "TRANSFERENCIA",
-  "DEBITO_AUTOMATICO",
-  "DINHEIRO",
-  "CARTAO",
-  "OUTRO",
-]);
-
-function normalizeModalidadePagamento(value) {
-  const normalized = String(value || "").trim().toUpperCase();
-  return CP_MODALIDADES_PAGAMENTO.has(normalized) ? normalized : null;
-}
-
 function normalizeBoletoArquivo(file) {
   if (!file || typeof file !== "object") return null;
   const nome = String(file.nome || file.name || "").trim().slice(0, 255);
@@ -1916,57 +1903,6 @@ function normalizeBoletoArquivo(file) {
   }
 
   return { nome, mime, arquivo_base64: arquivoBase64, tamanho_bytes: tamanhoBytes };
-}
-
-async function preparePaymentSnapshot(client, body) {
-  const modalidade = normalizeModalidadePagamento(body.modalidade_pagamento);
-  let fornecedor = {};
-
-  if (body.fornecedor_id) {
-    const { rows } = await client.query(
-      `SELECT chave_pix, banco_nome, codigo_banco, agencia, conta, digito, tipo_conta
-         FROM fin_fornecedores
-        WHERE id = $1`,
-      [body.fornecedor_id],
-    );
-    fornecedor = rows[0] || {};
-  }
-
-  return {
-    modalidade_pagamento: modalidade,
-    chave_pix_pagamento:
-      modalidade === "PIX"
-        ? String(body.chave_pix_pagamento || fornecedor.chave_pix || "").trim() || null
-        : null,
-    banco_pagamento_nome:
-      modalidade === "TED" || modalidade === "DOC"
-        ? String(body.banco_pagamento_nome || fornecedor.banco_nome || "").trim() || null
-        : null,
-    banco_pagamento_codigo:
-      modalidade === "TED" || modalidade === "DOC"
-        ? String(body.banco_pagamento_codigo || fornecedor.codigo_banco || "").trim() || null
-        : null,
-    agencia_pagamento:
-      modalidade === "TED" || modalidade === "DOC"
-        ? String(body.agencia_pagamento || fornecedor.agencia || "").trim() || null
-        : null,
-    conta_pagamento:
-      modalidade === "TED" || modalidade === "DOC"
-        ? String(body.conta_pagamento || fornecedor.conta || "").trim() || null
-        : null,
-    digito_pagamento:
-      modalidade === "TED" || modalidade === "DOC"
-        ? String(body.digito_pagamento || fornecedor.digito || "").trim() || null
-        : null,
-    tipo_conta_pagamento:
-      modalidade === "TED" || modalidade === "DOC"
-        ? String(body.tipo_conta_pagamento || fornecedor.tipo_conta || "").trim() || null
-        : null,
-    linha_digitavel_boleto:
-      modalidade === "BOLETO"
-        ? String(body.linha_digitavel_boleto || "").trim() || null
-        : null,
-  };
 }
 
 async function insertBoletos(client, lancamentoId, files) {
@@ -2516,18 +2452,8 @@ router.post("/lancamentos-cp", async (req, res) => {
       });
     }
 
-    const payment = await preparePaymentSnapshot(client, {
-      fornecedor_id,
-      modalidade_pagamento,
-      chave_pix_pagamento,
-      banco_pagamento_nome,
-      banco_pagamento_codigo,
-      agencia_pagamento,
-      conta_pagamento,
-      digito_pagamento,
-      tipo_conta_pagamento,
-      linha_digitavel_boleto,
-    });
+    const payment = await preparePaymentSnapshot(client, req.body);
+    await persistFornecedorPaymentDefaults(client, fornecedor_id, payment);
 
     const normalizedRateios = normalizeRateioItems(rateios, valor_total);
     if (normalizedRateios.length > 0) {
@@ -2769,18 +2695,8 @@ router.put("/lancamentos-cp/:id", async (req, res) => {
       });
     }
 
-    const payment = await preparePaymentSnapshot(client, {
-      fornecedor_id,
-      modalidade_pagamento,
-      chave_pix_pagamento,
-      banco_pagamento_nome,
-      banco_pagamento_codigo,
-      agencia_pagamento,
-      conta_pagamento,
-      digito_pagamento,
-      tipo_conta_pagamento,
-      linha_digitavel_boleto,
-    });
+    const payment = await preparePaymentSnapshot(client, req.body);
+    await persistFornecedorPaymentDefaults(client, fornecedor_id, payment);
 
     const { rows: paidRows } = await client.query(
       `SELECT COUNT(*)::int AS total

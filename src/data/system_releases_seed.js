@@ -6,6 +6,30 @@
 
 const SYSTEM_RELEASES = [
 {
+  "version": "0.8.4",
+  "title": "Contas a Pagar — rateio contábil por plano de contas",
+  "description": "Substitui o rateio incorreto por contas bancárias por um rateio contábil real, mantendo um único título e uma única baixa bancária, com detalhamento por plano no Movimento Bancário e no Cashflow.",
+  "frontend_version": "0.8.4",
+  "backend_version": "0.8.4",
+  "released_at": "2026-07-26T12:00:00.000Z",
+  "changes": [
+    "O formulário de Contas a Pagar passa a dividir o documento entre vários planos de contas analíticos, por valor monetário ou percentual.",
+    "Cada item do rateio aceita centro de custo e histórico complementar próprios.",
+    "A soma dos valores deve corresponder exatamente ao valor do título e a soma dos percentuais deve ser 100%.",
+    "O Contas a Pagar mantém um único título e as parcelas originais, sem duplicar documentos por conta bancária.",
+    "Na baixa, o total é distribuído em linhas contábeis no Movimento Bancário, todas vinculadas à mesma parcela e à mesma conta bancária.",
+    "O Cashflow previsto e realizado utiliza o plano de contas de cada item do rateio.",
+    "O cancelamento da baixa remove todas as linhas do Movimento Bancário geradas para a parcela, preservando a consistência do total.",
+    "Criadas tabelas próprias de cabeçalho, itens, parcelas e movimentos do rateio contábil, sem alterar os rateios bancários legados já existentes."
+  ],
+  "architecture": {
+    "frontend": ["Editor de rateio por plano analítico", "Percentual e valor sincronizados", "Validação exata do total"],
+    "backend": ["Um título por documento", "Baixa idempotente com múltiplas linhas contábeis", "Rastreamento por parcela e movimento"],
+    "database": ["fin_cp_rateios_contabeis", "fin_cp_rateios_contabeis_itens", "fin_cp_rateios_contabeis_parcelas", "fin_cp_rateios_contabeis_movimentos"],
+    "regras": ["Uma única conta bancária por pagamento", "Vários planos contábeis", "Soma das linhas igual ao pagamento"]
+  }
+},
+{
   "version": "0.6.7",
   "title": "Contas a Receber — aplicação por identidade da parcela",
   "description": "Corrige a validação final da conferência Strato quando a linha física do retorno varia entre a prévia e a reanálise. A parcela existente passa a ser reconhecida pelo seu ID único dentro do mesmo arquivo, mantendo a linha CNAB apenas como evidência de auditoria.",

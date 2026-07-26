@@ -6,6 +6,762 @@
 
 const SYSTEM_RELEASES = [
 {
+  "version": "0.8.3",
+  "title": "Sincronização cadastral segura do snapshot Strato",
+  "description": "Adiciona uma rotina idempotente para atualizar clientes e criar somente contratos novos do SQL Server Strato, sem importar parcelas indexadas, baixas ou movimentos bancários.",
+  "frontend_version": "0.8.1",
+  "backend_version": "0.8.3",
+  "released_at": "2026-07-25T23:30:00.000Z",
+  "changes": [
+    "Criado importador do snapshot SQL Server Strato em CSV, com prévia obrigatória por padrão e execução somente com --execute.",
+    "A sincronização preenche apenas campos cadastrais vazios em cad_pessoas e cad_clientes, sem sobrescrever dados já corrigidos no LarmHub.",
+    "Foram identificados no snapshot atual 2 clientes novos: Fernando Rodrigues da Silva, código 1501, e Enzo Toth Bittencourt Cezarino, código 1502.",
+    "Foram identificados 3 contratos novos desde 01/06/2026: 1394/J-4, 1395/M-11 e 1396/X-15.",
+    "Contratos históricos ausentes anteriores à data de corte permanecem apenas no relatório e não são criados automaticamente.",
+    "Nenhuma parcela é importada nesta etapa porque core1_val_par pode representar valor indexado e não valor monetário em reais.",
+    "A rotina não cria baixas, não cria Movimento Bancário, não remove registros e não exige migration."
+  ],
+  "architecture": {
+    "frontend": ["Mantido em 0.8.1"],
+    "backend": ["Script sync_strato_snapshot_cadastros.js", "Parser CSV sem dependência adicional", "Prévia e execução transacional"],
+    "database": ["Upsert conservador em cad_pessoas e cad_clientes", "Criação controlada em com_contratos", "Sem migration"],
+    "regras": ["Não sobrescrever cadastro preenchido", "Importar somente contratos posteriores à data de corte", "Não importar parcelas indexadas"]
+  }
+},
+{
+  "version": "0.8.2",
+  "title": "Retorno Strato — fechamento idempotente e data correta",
+  "description": "Fecha corretamente boletos multiparcelas após a correção, impede que divergências cadastrais imutáveis sejam reapresentadas como ajustes financeiros e elimina ambiguidade causada por conversão de data do PostgreSQL.",
+  "frontend_version": "0.8.1",
+  "backend_version": "0.8.2",
+  "released_at": "2026-07-25T03:30:00.000Z",
+  "changes": [
+    "Corrigida a leitura de campos DATE do PostgreSQL sem deslocar o vencimento para o dia anterior por causa do fuso horário do servidor.",
+    "A parcela 008/009 passa a ser diferenciada de parcelas futuras com a mesma fração pelo vencimento comercial exato.",
+    "Valor nominal, fração e vencimento divergentes permanecem informativos e não reabrem uma baixa já corrigida.",
+    "Somente juros/moras, desconto, seguro, resíduo e valor pago podem gerar nova correção de recebimento.",
+    "O status liquidado_corrigido passa a contar como concluído no fechamento do item, evitando parcialmente_liquidado após uma correção bem-sucedida.",
+    "Sem migration, sem npm install e sem alteração do frontend 0.8.1."
+  ],
+  "architecture": {
+    "frontend": ["Mantido em 0.8.1"],
+    "backend": ["Datas comerciais sem deslocamento de fuso", "Correções financeiras idempotentes", "Fechamento correto de item multiparcelas"],
+    "database": ["Sem migration", "Consulta expõe vencimento_data com to_char"],
+    "regras": ["Divergência cadastral não reabre baixa", "Somente campos mutáveis geram ajuste", "liquidado_corrigido encerra o item"]
+  }
+},
+{
+  "version": "0.8.0",
+  "title": "Retorno Strato — vínculo individual correto em boletos multiparcelas",
+  "description": "Corrige o caso em que várias linhas do mesmo boleto consolidado reutilizavam o UUID da primeira parcela, gerando conflito no vínculo do retorno e impedindo a baixa das demais parcelas.",
+  "frontend_version": "0.8.0",
+  "backend_version": "0.8.0",
+  "released_at": "2026-07-25T02:10:00.000Z",
+  "changes": [
+    "O nosso número do boleto consolidado deixa de ser usado como identificador de uma parcela individual durante a análise.",
+    "Cada linha do relatório Strato passa a excluir as parcelas já utilizadas no mesmo grupo e localizar um UUID distinto por fração, vencimento e valor.",
+    "O frontend passa a gerar uma chave única por linha e envia explicitamente o parcela_id aprovado pelo operador.",
+    "O backend prioriza o UUID recalculado da posição item/parcela quando uma análise antiga repetir o UUID da primeira linha.",
+    "A gravação de fin_retornos_cobranca_item_parcelas limpa somente conflitos antigos do mesmo item, ordem ou parcela antes de recriar o vínculo aprovado.",
+    "Corrigido o erro duplicate key value violates unique constraint uq_fin_retorno_item_parcela_vinculo.",
+    "Sem migration e sem alteração das regras financeiras, valores, juros ou Movimento Bancário já funcionando."
+  ],
+  "architecture": {
+    "frontend": ["Chave única por linha multiparcelas", "Envio explícito de parcela_id"],
+    "backend": ["Casamento individual sem pontuação do nosso número em grupos", "Exclusão de UUID já usado no mesmo boleto", "Vínculo idempotente"],
+    "database": ["Sem migration", "Reutiliza fin_retornos_cobranca_item_parcelas"],
+    "regras": ["Um UUID por linha do relatório", "Nosso número identifica o grupo, não cada parcela", "Aplicação transacional"]
+  }
+},
+{
+  "version": "0.7.9",
+  "title": "Retorno Strato — boleto consolidado sem duplicar nosso número",
+  "description": "Corrige a aplicação de boletos multiparcelas que compartilham o mesmo nosso número, respeitando o índice único de com_parcelas e mantendo os vínculos adicionais pela relação do retorno.",
+  "frontend_version": "0.7.8",
+  "backend_version": "0.7.9",
+  "released_at": "2026-07-25T01:45:00.000Z",
+  "changes": [
+    "Corrigido o erro duplicate key value violates unique constraint uq_com_parcelas_nosso_numero ao aplicar duas ou mais parcelas do mesmo boleto.",
+    "O nosso número passa a ser gravado somente na primeira parcela do boleto consolidado que ainda não possua um titular para esse identificador.",
+    "As demais parcelas continuam relacionadas ao mesmo item do retorno pela tabela fin_retornos_cobranca_item_parcelas, sem perder rastreabilidade.",
+    "Adicionada trava transacional por tenant e nosso número para impedir colisão em duas aplicações simultâneas.",
+    "Nenhuma parcela alternativa é utilizada e nenhum valor financeiro foi alterado nesta correção.",
+    "Sem migration, sem npm install e sem atualização de frontend."
+  ],
+  "architecture": {
+    "frontend": ["Mantido em 0.7.8"],
+    "backend": ["Persistência segura do nosso número em boleto multiparcelas", "Advisory lock transacional"],
+    "database": ["Reutiliza o índice uq_com_parcelas_nosso_numero", "Sem migration"],
+    "regras": ["Um nosso número por parcela principal", "Demais vínculos pela relação do retorno", "Aplicação atômica"]
+  }
+},
+{
+  "version": "0.7.8",
+  "title": "Retorno Strato — multiparcelas completas e confirmação de correções",
+  "description": "Agrupa todas as parcelas impressas para o mesmo boleto liquidado, mesmo quando o Strato exibe a ocorrência apenas em uma das linhas, e libera no frontend a confirmação de correções de baixas existentes.",
+  "frontend_version": "0.7.8",
+  "backend_version": "0.7.8",
+  "released_at": "2026-07-25T01:10:00.000Z",
+  "changes": [
+    "Linhas sem ocorrência passam a herdar a ocorrência explícita do mesmo boleto e da mesma data de pagamento.",
+    "O boleto 260000389743 passa a ser apresentado com as três parcelas 008/009, 054/116 e 014/015, e não somente com a última parcela de R$ 267,83.",
+    "A soma nominal de R$ 2.213,17 e os juros/moras pagos fecham o recebimento bancário de R$ 2.277,41, com ajuste controlado de R$ 0,01 de arredondamento.",
+    "Boletos com ocorrência 02 e 06 explícitas continuam separados e não são misturados.",
+    "O frontend passa a permitir selecionar a ação ATUALIZAR_RECEBIMENTO_EXISTENTE.",
+    "A ação é exibida como Corrigir recebimento e movimento e atualiza o Movimento Bancário já vinculado, sem duplicar entrada.",
+    "Sem migration e sem alteração dos fluxos individuais que já estavam funcionando."
+  ],
+  "architecture": {
+    "frontend": ["Checkbox para correção de baixa existente", "Rótulo Corrigir recebimento e movimento"],
+    "backend": ["Agrupamento por boleto, data e ocorrência efetiva", "Propagação segura da ocorrência impressa uma única vez"],
+    "database": ["Sem migration"],
+    "regras": ["Não misturar ocorrências 02 e 06", "Soma do grupo deve conferir com o RET", "Não duplicar Movimento Bancário"]
+  }
+},
+{
+  "version": "0.7.7",
+  "title": "Retorno Strato — leitura fiel das colunas e correção de baixas existentes",
+  "description": "Corrige valores reduzidos exibidos na crítica Strato ao priorizar a extração tabular do PDF e permite ajustar parcelas já recebidas pelo retorno sem criar outro Movimento Bancário.",
+  "frontend_version": "0.7.7",
+  "backend_version": "0.7.7",
+  "released_at": "2026-07-25T00:10:00.000Z",
+  "changes": [
+    "O PDF Crítica Cobrança passa a ser lido primeiro com pdftotext -layout, preservando as colunas A PAGAR, MORAS, PAGO e VL.DIF.",
+    "A presença do módulo pdf-parse não pode mais desmontar o layout e produzir valores como R$ 260,28 ou R$ 187,33 quando o relatório possui valores maiores.",
+    "A análise passa a comparar também valor recebido e resíduo com o que já está gravado no LarmHub.",
+    "Parcelas já baixadas por retorno Bradesco com divergência financeira recebem a ação Corrigir recebimento e movimento.",
+    "A correção atualiza a parcela e o Movimento Bancário já vinculado na mesma transação, sem criar uma segunda entrada.",
+    "Movimentos compartilhados por mais de um título continuam protegidos e devem ser tratados pelo fluxo de composição.",
+    "Parcelas já recebidas com apenas divergência de vencimento ou fração permanecem sem ação financeira.",
+    "Versão técnica restaurada para 0.7.7 no package.json e no changelog."
+  ],
+  "architecture": {
+    "frontend": ["Checkbox habilitado para correção financeira de baixa existente", "Ação Corrigir recebimento e movimento"],
+    "backend": ["Extração PDF com layout", "Correção transacional de parcela e movimento existente"],
+    "database": ["Sem migration"],
+    "regras": ["Não duplicar Movimento Bancário", "Não corrigir movimento compartilhado individualmente", "Preservar dados estruturais da parcela"]
+  }
+},
+{
+  "version": "0.7.6",
+  "title": "Contas a Receber — composição de um recebimento em vários títulos",
+  "description": "Permite relacionar um único crédito bancário consolidado do Strato a vários títulos existentes do mesmo contrato, mantendo uma única entrada no Movimento Bancário.",
+  "frontend_version": "0.7.6",
+  "backend_version": "0.7.6",
+  "released_at": "2026-07-24T23:40:00.000Z",
+  "changes": [
+    "A conferência Strato passa a oferecer Relacionar saldo do retorno quando o valor bancário é maior que a parcela já reconhecida.",
+    "O sistema lista somente títulos abertos ou atrasados do mesmo contrato e sugere automaticamente a combinação exata do saldo restante.",
+    "No caso IWER, R$ 187,33 já reconhecidos podem ser relacionados aos títulos de R$ 100,00, R$ 10.155,16, R$ 1.418,67 e R$ 4.953,00, totalizando o recebimento bancário de R$ 16.814,16.",
+    "Cada título mantém seu valor e sua descrição, enquanto todos ficam vinculados ao mesmo Movimento Bancário de R$ 16.814,16.",
+    "Se a versão anterior criou um recebimento avulso integral para o mesmo retorno, ele é cancelado e substituído pela composição, sem duplicar a entrada bancária.",
+    "A composição só é confirmada quando a soma dos títulos fecha com o valor do RET, com tolerância máxima de R$ 0,02.",
+    "Sem migration e sem alteração do fluxo normal de parcelas individuais já funcionando."
+  ],
+  "architecture": {
+    "frontend": ["Modal de composição", "Seleção automática da combinação exata", "Confirmação visual da diferença"],
+    "backend": ["GET /financeiro/contas-receber/composicao-strato/candidatos", "POST /financeiro/contas-receber/composicao-strato", "Transação única"],
+    "database": ["Sem migration", "Reutiliza com_parcelas, fin_receitas e fin_movimento"],
+    "regras": ["Mesmo contrato", "Somente títulos em aberto", "Um movimento para vários títulos", "Soma precisa fechar com o RET"]
+  }
+},
+{
+  "version": "0.7.5",
+  "title": "Contas a Receber — recebimento avulso com título obrigatório",
+  "description": "Permite criar e baixar um recebimento que aparece no retorno Strato, mas ainda não existe no LarmHub. O operador precisa informar o título/nome da despesa ou receita antes da baixa.",
+  "frontend_version": "0.7.5",
+  "backend_version": "0.7.5",
+  "released_at": "2026-07-24T22:45:00.000Z",
+  "changes": [
+    "A conferência Strato exibe Criar recebimento quando cliente e contrato estão localizados, mas a parcela está ausente.",
+    "O título/nome da despesa ou receita é obrigatório antes de criar e dar baixa.",
+    "O valor recebido é obtido do RET e registrado no Movimento Bancário, sem usar a soma incompleta do relatório como valor da entrada.",
+    "A operação cria fin_receitas, cria a parcela já paga em com_parcelas e vincula a entrada em fin_movimento na mesma transação.",
+    "O boleto/nosso número, arquivo e linha do retorno ficam gravados para rastreabilidade e prevenção de duplicidade.",
+    "Aluguel é classificado na conta 1.2; reembolsos de água, energia, IPTU e outros itens são classificados em 1.4.",
+    "Sem migration e sem alteração das baixas Strato que já estavam funcionando."
+  ],
+  "architecture": {
+    "frontend": ["Modal de criação e baixa", "Título obrigatório", "Atualização imediata da conferência"],
+    "backend": ["POST /financeiro/contas-receber/recebimento-avulso-strato", "Transação única e idempotente"],
+    "database": ["Sem migration", "Usa fin_receitas, com_parcelas e fin_movimento existentes"],
+    "regras": ["Cliente e contrato precisam estar localizados", "Valor do Movimento Bancário vem do RET"]
+  }
+},
+{
+  "version": "0.7.3",
+  "title": "Contas a Receber — correção da coleção de itens da análise Strato",
+  "description": "Corrige a aplicação final da conferência Strato. O analisador entrega as linhas na propriedade itens, enquanto o aplicador procurava items e não percorria nenhuma linha selecionada.",
+  "frontend_version": "0.6.8",
+  "backend_version": "0.7.3",
+  "released_at": "2026-07-24T21:45:00.000Z",
+  "changes": [
+    "A aplicação passa a ler analysis.itens, que é o formato real retornado pelo analisador Strato.",
+    "Mantida compatibilidade com analysis.items para chamadas antigas.",
+    "As seleções das linhas 3 e 12 passam a entrar no fluxo direto pelo UUID aprovado pelo operador.",
+    "Nenhuma trava adicional foi criada; o ajuste não altera banco, frontend ou estrutura de dados.",
+    "Incluído teste específico para impedir regressão entre itens e items."
+  ],
+  "architecture": {
+    "frontend": ["Mantido em 0.6.8"],
+    "backend": ["stratoIntelligentApplyService 0.7.3", "Compatibilidade itens/items"],
+    "database": ["Sem migration"],
+    "regras": ["UUID aprovado prevalece", "FOR UPDATE somente contra concorrência"]
+  }
+},
+{
+  "version": "0.7.2",
+  "title": "Contas a Receber — aplicação pelos índices aprovados no frontend",
+  "description": "Elimina a dependência da linha física do RET na etapa final. O backend usa o UUID da parcela e os índices exatos do item e da parcela enviados pela tela já conferida pelo operador.",
+  "frontend_version": "0.6.8",
+  "backend_version": "0.7.2",
+  "released_at": "2026-07-24T23:30:00.000Z",
+  "changes": [
+    "O índice do item e o índice da parcela aprovados no frontend passam a ser a referência principal da aplicação.",
+    "A linha física do CNAB deixa de bloquear a baixa e é usada somente como dado bancário do item.",
+    "O UUID aprovado pelo operador continua sendo o único ID de parcela que pode ser alterado.",
+    "Juros, moras, desconto, seguro, resíduo e valor recebido são obtidos da mesma linha exibida na conferência.",
+    "O pacote inclui instalador que localiza o diretório real executado pelo PM2, evitando extrair o arquivo na pasta errada.",
+    "Não há migration e o frontend 0.6.8 permanece compatível."
+  ],
+  "architecture": {
+    "frontend": ["Mantido em 0.6.8", "Envia item, parcela e UUID já existentes"],
+    "backend": ["stratoIntelligentApplyService 0.7.2", "Aplicação por índices aprovados", "Sem reencontro por linha física"],
+    "database": ["Sem migration", "FOR UPDATE mantido contra concorrência"],
+    "regras": ["Não escolher parcela alternativa", "Não bloquear por numeração física do RET", "Preservar dados estruturais"]
+  }
+},
+{
+  "version": "0.7.1",
+  "title": "Contas a Receber — seleção pelo UUID e linha física do RET",
+  "description": "Corrige a aplicação da conferência Strato para que a seleção aprovada seja localizada diretamente pelo UUID da parcela e pela linha física do CNAB400, com fallback por boleto e ocorrência quando a reanálise reorganiza as linhas.",
+  "frontend_version": "0.6.8",
+  "backend_version": "0.7.1",
+  "released_at": "2026-07-24T22:30:00.000Z",
+  "changes": [
+    "Seleções contendo UUID não podem mais ser consumidas por uma parcela candidata diferente durante a reanálise.",
+    "A linha física indicada na chave v2 é lida diretamente do RET enviado.",
+    "Quando a numeração da análise muda, o vínculo é recuperado por boleto completo, ocorrência bancária e fração do documento.",
+    "Boletos duplicados no mesmo RET são separados pela ocorrência, evitando confundir entrada confirmada com liquidação normal.",
+    "A parcela selecionada continua preservando valor nominal, vencimento, documento, cliente e contrato.",
+    "Não há migration e o frontend 0.6.8 permanece compatível."
+  ],
+  "architecture": {
+    "frontend": ["Mantido em 0.6.8", "Chaves v2 permanecem compatíveis"],
+    "backend": ["stratoIntelligentApplyService 0.7.1", "UUID aprovado prevalece", "Linha física do RET com fallback por boleto e ocorrência"],
+    "database": ["Sem migration", "FOR UPDATE mantido somente contra concorrência"],
+    "regras": ["Não escolher parcela alternativa", "Aplicar juros/desconto da linha aprovada", "Preservar dados estruturais da parcela"]
+  }
+},
+{
+  "version": "0.7.0",
+  "title": "Contas a Receber — aplicação direta da parcela selecionada",
+  "description": "Remove a tentativa de reencontrar a parcela após a confirmação do operador. A aplicação usa diretamente o ID contido na seleção e a linha correspondente do RET para obter juros, desconto, seguro, resíduo e valor recebido.",
+  "frontend_version": "0.6.8",
+  "backend_version": "0.7.0",
+  "released_at": "2026-07-24T22:00:00.000Z",
+  "changes": [
+    "A seleção aprovada passa a ser aplicada diretamente pelo ID da parcela e pela linha do arquivo RET.",
+    "Foram removidas da aplicação final as exigências de reencontro por nome, nosso número, cliente e fração.",
+    "Quando a reanálise não retorna novamente a parcela candidata, os valores financeiros da linha única do RET continuam sendo aplicados à parcela selecionada.",
+    "O valor nominal, vencimento, documento, cliente, contrato, obra e unidade permanecem preservados.",
+    "São atualizados apenas juros/moras, desconto, seguro, resíduo, valor recebido, baixa e Movimento Bancário.",
+    "A trava transacional do banco permanece apenas para impedir baixa duplicada simultânea; ela não interfere na escolha do operador.",
+    "Não há migration e não é necessário atualizar o frontend."
+  ],
+  "architecture": {
+    "frontend": [
+      "Mantido em 0.6.8",
+      "Chaves v2 existentes continuam compatíveis"
+    ],
+    "backend": [
+      "stratoIntelligentApplyService 0.7.0",
+      "Aplicação direta por ID + linha do RET",
+      "Fallback financeiro para linha única mesmo sem candidato recalculado"
+    ],
+    "database": [
+      "Sem migration",
+      "Estrutura atual preservada",
+      "FOR UPDATE mantido somente contra concorrência"
+    ],
+    "regras": [
+      "A confirmação do operador é a validação final",
+      "Nenhuma parcela alternativa é escolhida automaticamente",
+      "Preservar nominal e ajustar somente a composição financeira"
+    ]
+  }
+},
+{
+  "version": "0.6.9",
+  "title": "Contas a Receber — aplicar exatamente a parcela aprovada",
+  "description": "Corrige a reaplicação da conferência Strato quando a segunda análise escolhe outra parcela equivalente. O backend passa a respeitar o ID da parcela aprovado pelo operador e usa a linha do retorno apenas para obter os valores de juros, desconto e recebimento.",
+  "frontend_version": "0.6.8",
+  "backend_version": "0.6.9",
+  "released_at": "2026-07-24T21:00:00.000Z",
+  "changes": [
+    "A parcela selecionada no frontend não é mais substituída por outra candidata durante a reanálise.",
+    "Quando a chave antiga contém somente arquivo, linha e ID, a linha do retorno é aceita como referência estável se houver uma única seleção pendente nela.",
+    "O ID enviado na seleção passa a ser usado diretamente para bloquear e atualizar a parcela aprovada.",
+    "São atualizados somente juros/moras, desconto, seguro, resíduo, valor recebido, baixa e Movimento Bancário.",
+    "Não altera cliente, contrato, documento, vencimento, valor nominal, obra, unidade ou parcelas não selecionadas.",
+    "Não há migration de banco de dados e não é necessário atualizar o frontend 0.6.8."
+  ],
+  "architecture": {
+    "frontend": [
+      "Mantido em 0.6.8",
+      "Seleção atual continua compatível"
+    ],
+    "backend": [
+      "stratoIntelligentApplyService 0.6.9",
+      "ID aprovado prevalece sobre candidato recalculado",
+      "Fallback único por arquivo e linha do retorno"
+    ],
+    "database": [
+      "Sem migration",
+      "Estrutura atual preservada"
+    ],
+    "regras": [
+      "Operador é a validação final",
+      "Aplicar apenas a parcela selecionada",
+      "Ajustar juros/desconto e concluir a baixa"
+    ]
+  }
+},
+{
+  "version": "0.6.8",
+  "title": "Contas a Receber — vínculo simples e ajuste direto de juros/desconto",
+  "description": "Simplifica a aplicação da conferência Strato: a seleção aprovada pelo operador é reencontrada por parcela, nosso número, nome do cliente e fração. A gravação preserva o nominal e atualiza somente a composição financeira necessária, a baixa e o Movimento Bancário.",
+  "frontend_version": "0.6.8",
+  "backend_version": "0.6.8",
+  "released_at": "2026-07-24T20:00:00.000Z",
+  "changes": [
+    "A seleção passa a enviar dados claros de vínculo: ID da parcela, nosso número, cliente, fração, obra e unidade.",
+    "O backend aceita a chave anterior e também reencontra a parcela por nosso número + cliente + fração equivalente.",
+    "Sufixos de arquivo duplicado, como (1) e (1)(1), deixam de impedir a aplicação.",
+    "Uma seleção não reencontrada vira aviso e não cancela as demais parcelas corretamente vinculadas.",
+    "Para parcela existente, o sistema preserva documento, vencimento e valor nominal; ajusta juros, moras, desconto, seguro, resíduo e valor recebido.",
+    "O frontend mostra antes da confirmação quanto será ajustado em juros e desconto por parcela e no total.",
+    "Cada parcela baixada continua gerando seu Movimento Bancário individual e mantendo auditoria do retorno.",
+    "Não há migration de banco de dados."
+  ],
+  "architecture": {
+    "frontend": [
+      "Seleção estruturada por dados da parcela",
+      "Exibição explícita de juros e desconto a ajustar",
+      "Confirmação final pelo operador"
+    ],
+    "backend": [
+      "stratoIntelligentApplyService 0.6.8",
+      "Vínculo por ID ou nosso número + cliente + fração",
+      "Atualização financeira direta sem sobrescrever nominal"
+    ],
+    "database": [
+      "Sem migration",
+      "Preserva estrutura atual",
+      "Auditoria em conciliacao_dados"
+    ],
+    "regras": [
+      "Operador confirma os valores exibidos",
+      "Juros e moras são somados",
+      "Desconto é gravado separadamente",
+      "Aviso isolado não cancela parcelas válidas"
+    ]
+  }
+},
+{
+  "version": "0.6.7",
+  "title": "Contas a Receber — aplicação por identidade da parcela",
+  "description": "Corrige a validação final da conferência Strato quando a linha física do retorno varia entre a prévia e a reanálise. A parcela existente passa a ser reconhecida pelo seu ID único dentro do mesmo arquivo, mantendo a linha CNAB apenas como evidência de auditoria.",
+  "frontend_version": "0.6.6",
+  "backend_version": "0.6.7",
+  "released_at": "2026-07-24T19:00:00.000Z",
+  "changes": [
+    "A aplicação aceita a seleção quando o ID único da parcela permanece igual, mesmo que a linha física CNAB seja reorganizada na reanálise.",
+    "A chave v2 enviada pelo frontend continua compatível; não é necessária atualização do frontend nesta correção.",
+    "A correspondência alternativa só é aceita quando a identidade aparece uma única vez na análise recalculada.",
+    "Seleções ambíguas, ausentes ou vinculadas a outra parcela continuam cancelando integralmente a transação.",
+    "Foram preservados nominal, juros, moras, desconto, valor recebido, boleto completo, data de recebimento e movimento individual.",
+    "Não há migration nem alteração em clientes, contratos, parcelas não selecionadas ou retornos já conciliados."
+  ],
+  "architecture": {
+    "frontend": [
+      "Mantido em 0.6.6",
+      "Chave v2 compatível"
+    ],
+    "backend": [
+      "stratoIntelligentApplyService 0.6.7",
+      "Fallback seguro por ID único da parcela",
+      "Linha CNAB mantida para auditoria"
+    ],
+    "database": [
+      "Sem migration",
+      "Transação e rollback integral preservados"
+    ],
+    "regras": [
+      "ID da parcela é a identidade principal",
+      "Fallback somente quando único",
+      "Nenhum falso sucesso com zero aplicações"
+    ]
+  }
+},
+{
+  "version": "0.6.6",
+  "title": "Contas a Receber — aplicação persistente com seleção estável",
+  "description": "Corrige a aplicação da conferência inteligente quando a análise é recalculada antes da gravação. A seleção deixa de depender da posição visual dos itens e passa a usar uma identidade estável composta pelo arquivo, linha física do retorno e parcela relacionada.",
+  "frontend_version": "0.6.6",
+  "backend_version": "0.6.6",
+  "released_at": "2026-07-24T18:00:00.000Z",
+  "changes": [
+    "A seleção da parcela deixa de usar índices temporários como 0:0:0, que podiam mudar entre a prévia e a reanálise do backend.",
+    "A nova chave estável usa arquivo do retorno, linha física CNAB e ID da parcela; quando a parcela ainda não existe, usa obra, unidade, fração e boleto.",
+    "O backend registra quais seleções foram realmente reconhecidas durante a reanálise.",
+    "Uma seleção não reconhecida não retorna mais sucesso com zero baixas; a transação é recusada com mensagem explícita para reabrir a conferência.",
+    "Frontend antigo com chave posicional é recusado de forma segura, evitando aplicar uma parcela diferente caso a ordem da análise mude.",
+    "A parcela localizada com divergência continua elegível mediante confirmação, preservando nominal, juros, moras, desconto, recebido e identificador bancário.",
+    "Não há migration nem alteração das regras de clientes, contratos, parcelas simples, retornos já conciliados ou Movimento Bancário existente.",
+    "A futura importação do snapshot CSV para novos clientes, contratos e parcelas foi mantida separada para a versão seguinte."
+  ],
+  "architecture": {
+    "frontend": [
+      "StratoIntelligentReview com seleção estável v2",
+      "Identidade independente da ordenação visual",
+      "Mantida confirmação explícita do usuário"
+    ],
+    "backend": [
+      "stratoIntelligentApplyService 0.6.6",
+      "Reconciliação das seleções após reanálise",
+      "Erro transacional para seleção não reconhecida",
+      "Compatibilidade financeira preservada"
+    ],
+    "database": [
+      "Sem migration",
+      "com_parcelas",
+      "fin_movimento",
+      "fin_retornos_cobranca_item_parcelas"
+    ],
+    "regras": [
+      "Nenhum sucesso silencioso com zero aplicações",
+      "Seleção vinculada à parcela real e não à posição da tela",
+      "Reanálise obrigatória antes da escrita",
+      "Rollback integral em divergência de seleção"
+    ]
+  }
+},
+{
+  "version": "0.6.5",
+  "title": "Contas a Receber — correspondência assistida por juros, DV e boleto reemitido",
+  "description": "Melhora a relação entre retorno Bradesco, relatório Strato e parcelas do LarmHub quando o valor recebido difere por juros, moras ou desconto, a fração é matematicamente equivalente ou o boleto foi reemitido com novo nosso número.",
+  "frontend_version": "0.6.5",
+  "backend_version": "0.6.5",
+  "released_at": "2026-07-24T15:00:00.000Z",
+  "changes": [
+    "O nosso número passa a ser exibido completo com o dígito verificador na listagem e no PDF do retorno.",
+    "Frações equivalentes passam a ser reconhecidas, como 050/120 igual a 5/12 e 042/120 igual a 7/20.",
+    "Cliente, contrato, obra, unidade, fração, vencimento, boleto e composição financeira passam a formar um conjunto de evidências para a correspondência.",
+    "Diferenças explicadas pelo relatório Strato como juros, moras, seguro, resíduo ou desconto deixam de fazer a parcela ser tratada simplesmente como não localizada.",
+    "Quando a correspondência é forte, mas exige alteração de valores, a tela mostra Correspondência provável e exige confirmação explícita antes da aplicação.",
+    "Ocorrências 02 e 06 do mesmo boleto são tratadas em grupos separados, evitando que a entrada confirmada consuma a liquidação correspondente.",
+    "O boleto reemitido pode substituir o identificador bancário antigo somente após confirmação conjunta do RET e do relatório Strato; o identificador anterior fica preservado na auditoria.",
+    "A tela mostra a natureza financeira da diferença como acréscimo por juros/moras, desconto ou ajuste provável a confirmar.",
+    "Candidatos ainda não seguros aparecem no detalhe com contrato, parcela, confiança e evidências, em vez de somente Não localizado.",
+    "A importação do snapshot CSV para novos clientes, contratos e parcelas permanece separada para a próxima etapa, sem misturar alterações cadastrais com esta correção de conciliação."
+  ],
+  "architecture": {
+    "frontend": [
+      "Nosso número completo com DV",
+      "Correspondência provável e evidências",
+      "Natureza financeira da diferença",
+      "Confirmação pelo checkbox da conferência inteligente"
+    ],
+    "backend": [
+      "Score por evidências combinadas",
+      "Frações matematicamente equivalentes",
+      "Separação por boleto, ocorrência e recebimento",
+      "Atualização auditável de boleto reemitido"
+    ],
+    "database": [
+      "Sem nova migration",
+      "Reutiliza fin_retornos_cobranca_item_parcelas",
+      "Preserva identificador anterior em conciliacao_dados"
+    ],
+    "regras": [
+      "Juros/moras aumentam o recebido",
+      "Desconto reduz o recebido",
+      "Nenhuma divergência financeira é aplicada sem revisão quando houver alteração",
+      "Ocorrência sem liquidação não disputa a ocorrência 06",
+      "CSV cadastral fica para etapa isolada"
+    ]
+  }
+},
+{
+  "version": "0.6.4",
+  "title": "Contas a Receber — aplicação transacional da conferência inteligente Strato",
+  "description": "Libera no frontend a aplicação seletiva da conferência Strato, recalculando a análise no backend e registrando cada parcela aprovada com sua própria baixa e seu próprio Movimento Bancário, sem consolidar descontos, juros, moras, seguro ou resíduo.",
+  "frontend_version": "0.6.4",
+  "backend_version": "0.6.4",
+  "released_at": "2026-07-24T14:00:00.000Z",
+  "changes": [
+    "O botão Aplicar ajustes e baixas é habilitado somente para parcelas elegíveis selecionadas na conferência inteligente.",
+    "O backend ignora valores enviados pelo navegador e recalcula cliente, contrato, parcela, nominal, descontos, acréscimos e datas diretamente do RET e do relatório Strato anexado.",
+    "Toda a aplicação ocorre em uma única transação; qualquer validação final recusada desfaz parcelas, relacionamentos e movimentos da operação.",
+    "Cada parcela aprovada gera um Movimento Bancário individual, mesmo quando várias parcelas pertencem ao mesmo boleto do retorno.",
+    "A data da baixa e do Movimento Bancário usa a data de recebimento do relatório Strato; a data de crédito bancário permanece na auditoria.",
+    "Valor nominal, J.FCT, seguro, moras, desconto, resíduo, total e valor recebido permanecem gravados separadamente por parcela.",
+    "Parcelas ausentes podem ser criadas somente quando o cliente e o contrato já foram identificados de forma única.",
+    "Cliente ou contrato ausente/ambíguo permanece bloqueado, evitando a criação de cadastro incompleto com base apenas no relatório de retorno.",
+    "Os vínculos item do retorno, parcela e Movimento Bancário passam a ser persistidos na estrutura multiparcelas criada na 0.6.1.",
+    "A aplicação é idempotente e possui bloqueios de concorrência para impedir a duplicação de movimentos.",
+    "A coluna visual da listagem de títulos foi renomeada para Item e passa a iniciar em 1; a linha física do CNAB continua preservada internamente para auditoria.",
+    "Não há migration de banco nesta etapa; a versão utiliza a estrutura validada na 0.6.1."
+  ],
+  "architecture": {
+    "frontend": [
+      "StratoIntelligentReview com seleção por parcela",
+      "Aplicação pela mesma tela de Contas a Receber",
+      "Numeração visual iniciando em 1",
+      "Atualização da conferência após aplicar"
+    ],
+    "backend": [
+      "stratoIntelligentApplyService",
+      "Reanálise determinística antes da escrita",
+      "FOR UPDATE e advisory lock",
+      "Auditoria da aplicação inteligente"
+    ],
+    "database": [
+      "com_parcelas",
+      "fin_movimento",
+      "fin_retornos_cobranca",
+      "fin_retornos_cobranca_itens",
+      "fin_retornos_cobranca_item_parcelas",
+      "Sem nova migration"
+    ],
+    "regras": [
+      "Uma baixa e um movimento por parcela",
+      "Desconto separado do nominal",
+      "Data de recebimento do Strato",
+      "Rollback integral em falha",
+      "Cadastro incompleto bloqueado"
+    ]
+  }
+},
+{
+  "version": "0.6.3",
+  "title": "Contas a Receber — conferência visual inteligente no padrão Strato",
+  "description": "Exibe no frontend a análise inteligente do retorno Bradesco com o relatório Strato em grupos expansíveis, preservando por parcela valor nominal, J.FCT, seguro, moras, desconto, resíduo, total, recebimento, pago, diferença, correspondência no LarmHub e ação proposta.",
+  "frontend_version": "0.6.3",
+  "backend_version": "0.6.2",
+  "released_at": "2026-07-24T05:00:00.000Z",
+  "changes": [
+    "A tela passa a tratar a resposta de revisão obrigatória do backend sem mostrar apenas um erro genérico.",
+    "Cada linha do retorno pode ser expandida para mostrar uma ou várias parcelas relacionadas pelo relatório Strato.",
+    "O quadro de conferência segue as colunas do relatório Strato: obra, unidade, parcela, boleto, vencimento, A PAGAR, J.FCT, seguro, moras, desconto, resíduo, total, recebimento, pago e diferença.",
+    "A correspondência encontrada no LarmHub, a classificação, as divergências, a confiança e a ação proposta aparecem por parcela.",
+    "Clientes, contratos e parcelas ausentes são destacados nos indicadores e nas linhas correspondentes.",
+    "Descontos, juros, moras, seguro e resíduo permanecem separados do valor nominal e do valor efetivamente recebido.",
+    "Ajustes de arredondamento do relatório impresso são exibidos como evidência, sem ocultar o valor original.",
+    "Foi adicionada exportação para impressão/PDF da conferência em formato paisagem.",
+    "A etapa permanece somente leitura; o botão de aplicação fica desabilitado e identificado para a versão 0.6.4.",
+    "O versionador permanece node scripts/migrate_system_releases.js, lendo exclusivamente src/data/system_releases_seed.js."
+  ],
+  "architecture": {
+    "frontend": ["StratoIntelligentReview", "Tratamento do HTTP 409 requires_review", "Tabela expansível no Contas a Receber", "Exportação PDF"],
+    "backend": ["Mantido na versão 0.6.2", "Nenhuma rota financeira alterada nesta etapa"],
+    "database": ["Nenhuma migration", "Nenhuma escrita financeira"],
+    "regras": ["Conferência visual antes da aplicação", "Uma linha CNAB para várias parcelas", "Desconto separado do nominal", "Data de recebimento do Strato", "Aplicação somente na 0.6.4"]
+  }
+},
+{
+  "version": "0.6.2",
+  "title": "Contas a Receber — análise inteligente Strato multiparcelas",
+  "description": "Adiciona uma análise genérica e somente leitura que relaciona retorno Bradesco, relatório Strato, clientes, contratos e parcelas do LarmHub, incluindo boletos com várias parcelas, descontos, juros, moras, resíduos e diferenças de arredondamento.",
+  "frontend_version": "0.6.0",
+  "backend_version": "0.6.2",
+  "released_at": "2026-07-24T04:00:00.000Z",
+  "changes": [
+    "O leitor local do relatório Strato passa a preservar separadamente A PAGAR, J.FCT, seguro, moras, desconto, resíduo, total pago e diferença.",
+    "Linhas do relatório com o mesmo boleto são agrupadas e relacionadas a uma única linha do retorno Bradesco.",
+    "Frações equivalentes são reconhecidas, incluindo 052/120 = 13/30, 014/120 = 7/60 e 008/180 = 2/45.",
+    "A análise compara cliente, contrato, unidade, obra, parcela, vencimento, nominal, desconto, juros e situação da baixa com o LarmHub.",
+    "Clientes, contratos ou parcelas ausentes são classificados e retornados como propostas para revisão, sem criação automática nesta etapa.",
+    "Diferenças de um centavo causadas pela impressão em duas casas são reconciliadas na última parcela e mantidas como evidência de arredondamento.",
+    "Casos multiparcelas, com descontos, divergências ou cadastros ausentes são bloqueados antes de qualquer baixa e aguardam aprovação no fluxo 0.6.4.",
+    "Casos simples já suportados continuam no fluxo atual; a resposta da prévia recebe o bloco analise_inteligente.",
+    "O comando de versionamento permanece node scripts/migrate_system_releases.js e a fonte canônica src/data/system_releases_seed.js volta a ser entregue sincronizada."
+  ],
+  "architecture": {
+    "frontend": ["Sem alteração visual nesta etapa; a tela Strato será entregue na 0.6.3"],
+    "backend": ["stratoReturnReportAnalyzer", "stratoMultiParcelAnalysisService", "Pré-análise integrada à rota atual do retorno"],
+    "database": ["Somente leitura", "Usa a estrutura fin_retornos_cobranca_item_parcelas criada na 0.6.1 sem gravá-la nesta etapa"],
+    "regras": ["Uma linha CNAB para várias parcelas", "Desconto separado do nominal", "Data de recebimento vinda do relatório", "Nenhuma escrita financeira na análise", "Bloqueio preventivo até 0.6.4"]
+  }
+},
+{
+  "version": "0.6.1",
+  "title": "Contas a Receber — estrutura para retorno com múltiplas parcelas",
+  "description": "Cria uma estrutura aditiva para relacionar uma única linha do retorno Bradesco a duas ou mais parcelas identificadas no relatório Strato, preservando nominal, acréscimos, desconto, resíduo, recebido, evidências e bloqueio de segurança por parcela.",
+  "frontend_version": "0.6.0",
+  "backend_version": "0.6.1",
+  "released_at": "2026-07-24T03:00:00.000Z",
+  "changes": [
+    "Criada a tabela fin_retornos_cobranca_item_parcelas sem alterar a tabela atual de itens do retorno.",
+    "Um item CNAB poderá possuir várias parcelas relacionadas, cada uma com parcela, movimento, ordem e evidências independentes.",
+    "A composição financeira segue as colunas do relatório Strato: nominal, juros financeiros, seguro, moras, desconto, resíduo, total, pago e diferença.",
+    "Novos relacionamentos nascem bloqueados e nenhuma baixa será executada nesta versão.",
+    "A migration é idempotente, a conferência é somente leitura e o rollback se recusa a excluir a tabela quando houver dados.",
+    "Nenhum cliente, contrato, parcela, baixa ou Movimento Bancário é criado ou alterado nesta etapa."
+  ],
+  "architecture": {
+    "frontend": ["Sem alteração nesta etapa; permanece em 0.6.0"],
+    "backend": ["Migration aditiva", "Conferência somente leitura", "Rollback estrutural protegido"],
+    "database": ["fin_retornos_cobranca_item_parcelas", "Chaves para retorno, parcela e movimento", "Índices parciais e constraints contábeis"],
+    "regras": ["Um retorno para muitas parcelas", "Desconto separado do nominal", "Movimento individual por parcela nas etapas futuras", "Bloqueado por padrão"]
+  }
+},
+{
+  "version": "0.5.9",
+  "title": "Contas a Receber — correção individual do retorno CB230700 LUCKY",
+  "description": "Aplica de forma transacional e auditável as duas ocorrências pendentes do retorno CB230700 LUCKY, respeitando a composição confirmada no SQL Server Strato, a data real de recebimento e os descontos de cada parcela.",
+  "frontend_version": "0.5.5",
+  "backend_version": "0.5.9",
+  "released_at": "2026-07-24T01:30:00.000Z",
+  "changes": [
+    "Confirmados no SQL Server Strato o controle 101266 da Márcia e as parcelas 018/037 a 027/037 da Briza.",
+    "A data de recebimento e do Movimento Bancário é 22/07/2026; a data de crédito 23/07/2026 permanece apenas nos metadados de auditoria.",
+    "A Márcia recebe uma baixa individual de R$ 1.774,18, composta por R$ 1.715,93 de nominal e R$ 58,25 de juros.",
+    "A Briza recebe dez baixas e dez movimentos individuais, sem consolidação: nove de R$ 1.847,48 com desconto de R$ 225,73 e uma de R$ 1.847,47 com desconto de R$ 225,74.",
+    "Os valores nominais, descontos, juros e valores recebidos ficam gravados separadamente em com_parcelas e nos metadados de conciliação.",
+    "O retorno passa de quatro para seis títulos conciliados e os dois itens não localizados são vinculados às parcelas corrigidas.",
+    "A execução exige prévia, confirmação de 11 itens, cria backup JSON antes do COMMIT, é idempotente e inclui conferência e rollback por lote."
+  ],
+  "architecture": {
+    "frontend": ["Sem alteração nesta etapa; permanece em 0.5.5"],
+    "backend": ["Script de execução controlada", "Conferência somente leitura", "Rollback por backup e lote"],
+    "database": ["com_parcelas", "fin_movimento", "fin_retornos_cobranca", "fin_retornos_cobranca_itens", "Sem migration estrutural"],
+    "regras": ["11 baixas individuais", "11 movimentos individuais", "Data 22/07/2026", "Desconto e juros separados", "Nenhuma consolidação"]
+  }
+},
+{
+  "version": "0.5.8",
+  "title": "Auditoria Strato — simulação controlada da correção",
+  "description": "Corrige a normalização de datas da auditoria e adiciona uma Etapa B somente leitura que revalida o retorno no banco atual e gera o plano detalhado de parcelas, baixas e movimentos antes de qualquer execução.",
+  "frontend_version": "0.5.5",
+  "backend_version": "0.5.8",
+  "released_at": "2026-07-24T01:15:00.000Z",
+  "changes": [
+    "Corrigida a conversão de campos PostgreSQL do tipo date, evitando valores como Sun Jul 26 na comparação com YYYY-MM-DD.",
+    "A nova simulação revalida o cabeçalho e os itens do retorno, os contratos, as parcelas e os movimentos diretamente no PostgreSQL atual.",
+    "Registros já conciliados são separados e não recebem proposta de alteração.",
+    "Casos pendentes geram plano em JSON, CSV e Markdown com valores, correspondências, alterações previstas e bloqueios obrigatórios.",
+    "Boletos consolidados continuam bloqueados até a composição ser confirmada no backup SQL Server.",
+    "A Etapa B usa BEGIN TRANSACTION READ ONLY e ROLLBACK e não possui parâmetro de execução."
+  ],
+  "architecture": {
+    "frontend": ["Sem alteração; permanece em 0.5.5"],
+    "backend": ["Auditoria 0.5.8 com datas normalizadas", "Simulador CLI somente leitura", "Relatórios JSON, CSV e Markdown"],
+    "database": ["Sem migration", "PostgreSQL em transação READ ONLY", "Nenhum INSERT, UPDATE ou DELETE"],
+    "regras": ["Não altera registros já baixados", "Não cria clientes ou contratos", "Não executa baixas", "Não cria movimentos", "Confirmação SQL Server obrigatória antes da etapa de execução"]
+  }
+},
+{
+  "version": "0.5.7",
+  "title": "Auditoria Strato — compatibilidade com hash do retorno",
+  "description": "Corrige a identificação do tenant na auditoria somente leitura, usando a coluna sha256 da estrutura atual e mantendo compatibilidade com bases antigas que utilizavam hash_arquivo.",
+  "frontend_version": "0.5.5",
+  "backend_version": "0.5.7",
+  "released_at": "2026-07-24T00:30:00.000Z",
+  "changes": [
+    "Corrigida a consulta que procurava uma coluna hash_arquivo inexistente na tabela fin_retornos_cobranca atual.",
+    "A auditoria agora detecta automaticamente se a base utiliza sha256 ou hash_arquivo.",
+    "Mantida a transação PostgreSQL em modo READ ONLY, sem INSERT, UPDATE ou DELETE.",
+    "Nenhuma tabela, parcela, baixa, cliente, contrato ou movimento bancário é alterado."
+  ],
+  "architecture": {
+    "frontend": ["Sem alteração; permanece em 0.5.5"],
+    "backend": ["Hotfix do comando de auditoria Strato x LarmHub"],
+    "database": ["Sem migration", "Consulta adaptativa ao nome da coluna de hash"],
+    "regras": ["Somente leitura", "Rollback obrigatório", "Sem alteração de dados"]
+  }
+},
+{
+  "version": "0.5.6",
+  "title": "Contas a Receber — auditoria Strato x LarmHub",
+  "description": "Adiciona uma auditoria somente leitura para comparar retorno Bradesco, relatório Strato, clientes, contratos e parcelas do LarmHub antes de qualquer sincronização ou baixa corretiva.",
+  "frontend_version": "0.5.5",
+  "backend_version": "0.5.6",
+  "released_at": "2026-07-23T18:30:00.000Z",
+  "changes": [
+    "Adicionado comando somente leitura para analisar um arquivo RET e o relatório Strato correspondente.",
+    "Boletos consolidados são agrupados por nosso número e discriminados por parcela.",
+    "A auditoria identifica cliente e contrato existentes, parcelas ausentes, frações importadas incorretamente, divergências de vencimento e valor e registros já baixados.",
+    "Os relatórios são gerados em JSON, CSV e Markdown para validação antes de qualquer correção.",
+    "A conexão PostgreSQL é aberta em transação READ ONLY e encerrada com ROLLBACK.",
+    "Incluída consulta SQL Server somente leitura para confirmar a composição dos casos Márcia e Briza no backup BKPTMP.",
+    "Nenhuma tabela, parcela, baixa ou movimento bancário é alterado por esta versão."
+  ],
+  "architecture": {
+    "frontend": [
+      "Sem alteração; permanece em 0.5.5"
+    ],
+    "backend": [
+      "Auditoria CLI somente leitura",
+      "Parser CNAB 400 existente",
+      "Leitura local do relatório Strato",
+      "Exportação JSON, CSV e Markdown"
+    ],
+    "database": [
+      "Sem migration",
+      "PostgreSQL em transação READ ONLY",
+      "Consulta SQL Server somente leitura"
+    ],
+    "regras": [
+      "Não cria clientes",
+      "Não cria contratos",
+      "Não altera parcelas",
+      "Não executa baixas",
+      "Não cria movimentos bancários"
+    ]
+  }
+},
+{
+  "version": "0.5.5",
+  "title": "Contas a Pagar — dados de pagamento do fornecedor",
+  "description": "Remove os campos bancários internos sem uso da abertura do CP e vincula PIX, TED, DOC e transferência aos dados persistentes do fornecedor.",
+  "frontend_version": "0.5.5",
+  "backend_version": "0.5.5",
+  "released_at": "2026-07-22T14:50:00.000Z",
+  "changes": [
+    "Os campos Banco para Pagamento e Conta cadastrada foram removidos do formulário normal de Contas a Pagar.",
+    "PIX passa a carregar a chave cadastrada do fornecedor, permitindo preenchimento ou correção diretamente no lançamento.",
+    "TED, DOC e transferência passam a carregar banco, agência, conta e dígito do fornecedor.",
+    "Ao salvar o lançamento, a chave PIX ou os dados bancários informados são atualizados no cadastro do fornecedor dentro da mesma transação.",
+    "Boleto continua armazenando somente a linha digitável e seus arquivos no lançamento, sem gravar esses dados variáveis no fornecedor.",
+    "O rateio, as parcelas, as baixas, o Movimento Bancário e os lançamentos existentes não foram modificados por esta atualização.",
+    "Nenhuma migration de banco é necessária porque os campos já existem nas tabelas atuais."
+  ],
+  "architecture": {
+    "frontend": [
+      "Contas a Pagar > Novo lançamento",
+      "Campos condicionais por modalidade",
+      "BancoSearchSelect para dados do fornecedor"
+    ],
+    "backend": [
+      "Snapshot de pagamento por lançamento",
+      "Atualização transacional do fornecedor",
+      "Compatibilidade com TED, DOC e transferência"
+    ],
+    "database": [
+      "Sem alteração estrutural",
+      "fin_fornecedores",
+      "fin_lancamentos_cp"
+    ],
+    "regras": [
+      "PIX salva somente a chave",
+      "TED, DOC e transferência salvam dados bancários",
+      "Boleto não altera o fornecedor"
+    ]
+  }
+},
+{
   "version": "0.5.3",
   "title": "Contas a Pagar — backend seguro para rateio (etapa 2)",
   "description": "Ativa a API para cadastrar um único documento dividido entre duas ou mais contas bancárias, mantendo cada parte como lançamento individual e vinculada ao mesmo grupo de rateio.",

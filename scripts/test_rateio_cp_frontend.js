@@ -63,6 +63,8 @@ const source = fs.readFileSync(sourcePath, 'utf8');
 assert.match(source, /if \(!editingId && fRateioAtivo\) \{/);
 assert.match(source, /payload\.rateios = rateios\.map/);
 assert.doesNotMatch(source, /rateios:\s*fRateioAtivo/);
-assert.match(source, /if \(l\.rateio_id\) \{/);
+assert.match(source, /if \(l\.rateio_id \|\| l\.rateio_contabil_id\) \{/);
+assert.match(source, /plano_contas_id/);
+assert.doesNotMatch(source, /Rateio por contas bancárias/i);
 
-console.log('Rateio CP frontend: cálculos e proteções estáticas OK.');
+console.log('Rateio CP frontend/contábil: cálculos e proteções estáticas OK.');

@@ -1,0 +1,9 @@
+9d9657ce7094011bc770c0597c83424fa8f8c9b836b560ff330f645682478dec  ./ARQUIVOS-ALTERADOS-0.5.5.txt
+40c769fed3e2e253795281e3aa6f3c572ce56106b737876a463bdf87f678cfed  ./README-ATUALIZACAO-0.5.5-BACKEND.txt
+29d97c267102723a857bce7098e2b3919c401fcdb42fba27a2ebfe3276546abc  ./data/system_releases_seed.js
+6e3cfa338e32d6a77fb9bdf25b2b77b70b81da0c434433b4d717e8b712d57f7a  ./package-lock.json
+3c995bdf650a9b940ef75f4a4620ea3d3afd2e15e1725fad60332ab19ff46033  ./package.json
+0bd8877b0b5eaa01f33fd97ea68dd104736c0f9d8b1d9578a4f8178714aec5d2  ./scripts/test_pagamento_fornecedor_cp.js
+29d97c267102723a857bce7098e2b3919c401fcdb42fba27a2ebfe3276546abc  ./src/data/system_releases_seed.js
+7afdb513d66b5692e575c2509ff7408b3032981574cd8f67599a26120f051512  ./src/routes/fornecedores_bancos.js
+c44ac95770d777d5d680b5a1d8967d18fa90d101cc11ae3c0a4eec40e5c2e8e5  ./src/services/contasPagarPagamentoService.js

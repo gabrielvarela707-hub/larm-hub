@@ -1,0 +1,15 @@
+Backend 0.7.1 — arquivos alterados
+
+src/services/stratoIntelligentApplyService.js
+src/data/system_releases_seed.js
+data/system_releases_seed.js
+package.json
+package-lock.json
+scripts/test_strato_intelligent_apply.js
+scripts/test_strato_matching_juros.js
+scripts/test_strato_multi_analysis.js
+README-ATUALIZACAO-0.7.1.txt
+ARQUIVOS-ALTERADOS-0.7.1.txt
+
+Sem migration.
+Frontend mantido em 0.6.8.

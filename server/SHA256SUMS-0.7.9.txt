@@ -1,0 +1,7 @@
+6634b3ed59dafe5ab782dd2c42430c8778aeaf080cceb942eece8efba171df84  ./README-BACKEND.md
+f7ef38121fff71a37c00c0294dc668f169c3153ed426554c33ed6a36ddb27236  ./VALIDACAO.txt
+8dc29974a859ff54b5e56d22db0aeee84df105c13f978c2259416473e3260662  ./instalar-backend-0.7.9.sh
+82649c6a498db2d051fc845cc125c0820213ecd2d0d201175e98f66353e23613  ./package.json
+b582101d327f9344851d4a27c990f0ec78325ff5eb16ac081e9b7c4163a4dd65  ./scripts/test_strato_0_7_9.js
+d32c7ebda125bf2b0f89c0a73f84075fd0348491c9e1eb0e161fd3d86ec4208a  ./src/data/system_releases_seed.js
+941e7eb7321ed9a29b04f0309192820be14c020513872d45e9f7c993041ca2ff  ./src/services/stratoIntelligentApplyService.js

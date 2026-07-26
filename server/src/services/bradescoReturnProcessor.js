@@ -386,10 +386,40 @@ function selectReportRowForReturn(item, stratoReports = [], usedReportRows = nul
   return best
 }
 
+function parcelFraction(value, totalValue = null) {
+  if (totalValue !== null && totalValue !== undefined) {
+    const number = Number(value)
+    const total = Number(totalValue)
+    return Number.isFinite(number) && Number.isFinite(total) && total > 0 ? { number, total } : null
+  }
+  const match = String(value || '').match(/(\d{1,4})\s*\/\s*(\d{1,4})/)
+  return match ? { number: Number(match[1]), total: Number(match[2]) } : null
+}
+
+function equivalentParcelFraction(left, right) {
+  return Boolean(left && right && left.total && right.total && left.number * right.total === right.number * left.total)
+}
+
+function fullReturnBoleto(item) {
+  return onlyDigits(item?.nossoNumeroWithDv || `${item?.nossoNumero || ''}${item?.nossoNumeroDv || ''}`)
+}
+
+function explicitFinancialComposition(reportItem) {
+  const additions = roundMoney(
+    Number(reportItem?.juros_financeiro_pago ?? reportItem?.juros_financeiro ?? 0)
+      + Number(reportItem?.seguro_pago ?? reportItem?.seguro ?? 0)
+      + Number(reportItem?.moras_pago ?? reportItem?.moras ?? 0)
+      + Number(reportItem?.valor_residuo ?? 0),
+  )
+  const discount = roundMoney(Number(reportItem?.valor_desconto ?? 0))
+  return { additions, discount, explicit: additions !== 0 || discount !== 0 }
+}
+
 function scoreParcelForReport(parcel, item, reportItem) {
   let score = 0
   let identityEvidence = false
   let financialEvidence = 0
+  const evidence = []
   const clientCode = String(reportItem?.cliente_codigo || '').trim()
   const unit = String(reportItem?.unidade || '').trim()
   const exactContract = clientCode && unit ? `STR-${clientCode}-${unit}`.toUpperCase() : ''
@@ -400,8 +430,10 @@ function scoreParcelForReport(parcel, item, reportItem) {
   const reportUnit = unit.toUpperCase()
   const candidateObra = String(parcel?.contrato_obra_codigo || parcel?.obra_codigo_legado || '').trim()
   const reportObra = String(reportItem?.obra || '').trim()
-  const referenceAmount = roundMoney(reportItem?.valor_titulo || reportItem?.valor_pago || item?.titleAmount || item?.paidAmount || 0)
-  const candidateAmount = roundMoney(parcel?.valor_atual || 0)
+  const reportNominal = roundMoney(reportItem?.valor_titulo || 0)
+  const reportPaid = roundMoney(reportItem?.valor_pago || item?.paidAmount || item?.titleAmount || 0)
+  const candidateCurrent = roundMoney(parcel?.valor_atual || 0)
+  const candidateNominal = roundMoney(parcel?.valor_nominal || candidateCurrent)
 
   const candidateClientCodes = [parcel?.cliente_codigo, parcel?.cliente_codigo_legado]
     .map(value => String(value || '').trim())
@@ -409,56 +441,104 @@ function scoreParcelForReport(parcel, item, reportItem) {
   if (clientCode && candidateClientCodes.includes(clientCode)) {
     score += 70
     identityEvidence = true
+    evidence.push('CLIENTE_CODIGO_EXATO')
   }
   if (exactContract && contractNumber === exactContract) {
     score += 40
     identityEvidence = true
+    evidence.push('CONTRATO_EXATO')
   } else if (clientCode && contractNumber.startsWith(`STR-${clientCode}-`)) {
     score += 25
     identityEvidence = true
+    evidence.push('CONTRATO_POR_CLIENTE')
   }
 
   if (reportClient && candidateClient) {
     if (reportClient === candidateClient) {
       score += 45
       identityEvidence = true
+      evidence.push('CLIENTE_NOME_EXATO')
     } else if (reportClient.includes(candidateClient) || candidateClient.includes(reportClient)) {
       score += 25
       identityEvidence = true
+      evidence.push('CLIENTE_NOME_COMPATIVEL')
     }
   }
 
-  if (reportUnit && candidateUnit && reportUnit === candidateUnit) score += 25
-  if (reportObra && candidateObra && reportObra === candidateObra) score += 20
-  if (reportItem?.parcela_numero && Number(parcel?.parcela_numero_legado) === Number(reportItem.parcela_numero)) {
-    score += 20
-    financialEvidence += 1
+  if (reportUnit && candidateUnit && reportUnit === candidateUnit) {
+    score += 25
+    evidence.push('UNIDADE_EXATA')
   }
-  if (reportItem?.parcela_total && Number(parcel?.parcela_total_legado) === Number(reportItem.parcela_total)) score += 15
+  if (reportObra && candidateObra && reportObra === candidateObra) {
+    score += 20
+    evidence.push('OBRA_EXATA')
+  }
+
+  const reportFraction = parcelFraction(reportItem?.parcela_numero, reportItem?.parcela_total)
+    || parcelFraction(reportItem?.parcela)
+  const candidateFraction = parcelFraction(parcel?.parcela_numero_legado, parcel?.parcela_total_legado)
+  if (equivalentParcelFraction(reportFraction, candidateFraction)) {
+    score += 40
+    financialEvidence += 1
+    evidence.push(reportFraction?.number === candidateFraction?.number && reportFraction?.total === candidateFraction?.total
+      ? 'FRACAO_EXATA'
+      : 'FRACAO_EQUIVALENTE')
+  }
 
   const dueDates = [reportItem?.vencimento, item?.dueDate].filter(Boolean)
   if (dueDates.includes(String(parcel?.vencimento || '').slice(0, 10))) {
-    score += 25
+    score += 30
     financialEvidence += 1
-  }
-  if (referenceAmount > 0 && Math.abs(candidateAmount - referenceAmount) <= 0.02) {
-    score += 35
-    financialEvidence += 1
-  } else if (referenceAmount > 0 && Math.abs(candidateAmount - referenceAmount) <= Math.max(100, referenceAmount * 0.03)) {
-    score += 10
+    evidence.push('VENCIMENTO_EXATO')
   }
 
-  const returnBoleto = onlyDigits(item?.nossoNumero)
-  if (returnBoleto && onlyDigits(parcel?.nosso_numero) === returnBoleto) {
+  const nominalDifference = reportNominal > 0 ? Math.abs(candidateNominal - reportNominal) : Number.POSITIVE_INFINITY
+  if (reportNominal > 0 && nominalDifference <= 0.02) {
+    score += 35
+    financialEvidence += 1
+    evidence.push('VALOR_NOMINAL_EXATO')
+  } else if (reportNominal > 0 && nominalDifference <= Math.max(100, reportNominal * 0.05)) {
+    score += 12
+    evidence.push('VALOR_NOMINAL_APROXIMADO')
+  }
+
+  const paidDifference = reportPaid > 0 ? Math.abs(candidateCurrent - reportPaid) : Number.POSITIVE_INFINITY
+  if (reportPaid > 0 && paidDifference <= 0.02) {
+    score += 20
+    financialEvidence += 1
+    evidence.push('VALOR_RECEBIDO_EXATO')
+  }
+
+  const composition = explicitFinancialComposition(reportItem)
+  if (composition.explicit && reportNominal > 0 && reportPaid > 0) {
+    const explainedPaid = roundMoney(reportNominal + composition.additions - composition.discount)
+    if (Math.abs(explainedPaid - reportPaid) <= 0.05) {
+      score += 20
+      financialEvidence += 1
+      evidence.push('DIFERENCA_EXPLICADA_PELO_RELATORIO')
+    }
+  }
+
+  const returnBoleto = fullReturnBoleto(item)
+  const returnBase = onlyDigits(item?.nossoNumero)
+  const candidateFull = onlyDigits(`${parcel?.nosso_numero || ''}${parcel?.nosso_numero_dv || ''}`)
+  const candidateBase = onlyDigits(parcel?.nosso_numero)
+  if (returnBoleto && candidateFull === returnBoleto) {
+    score += 120
+    identityEvidence = true
+    evidence.push('BOLETO_COMPLETO_EXATO')
+  } else if (returnBase && candidateBase === returnBase) {
     score += 100
     identityEvidence = true
+    evidence.push('NOSSO_NUMERO_BASE_EXATO')
   }
   if (item?.participantControl && String(parcel?.controle_participante || '') === String(item.participantControl)) {
     score += 100
     identityEvidence = true
+    evidence.push('CONTROLE_PARTICIPANTE_EXATO')
   }
 
-  return { score, identityEvidence, financialEvidence }
+  return { score, identityEvidence, financialEvidence, evidence }
 }
 
 async function matchExactParcelFromStratoReport(client, options, selectedReport) {
@@ -557,7 +637,7 @@ async function matchByStratoReport(client, options, stratoReports, usedReportRow
   const best = ranked[0]
   const second = ranked[1]
   const uniqueEnough = best && (!second || best.score - second.score >= 15)
-  const safe = best && best.score >= 90 && best.identityEvidence && best.financialEvidence >= 2 && uniqueEnough
+  const safe = best && best.score >= 100 && best.identityEvidence && best.financialEvidence >= 2 && uniqueEnough
 
   if (!safe) {
     return {
@@ -572,6 +652,11 @@ async function matchByStratoReport(client, options, stratoReports, usedReportRow
         contrato: entry.parcel.contrato_numero,
         cliente: entry.parcel.cliente_nome,
         score: entry.score,
+        confianca: Math.min(99, entry.score),
+        evidencias: entry.evidence || [],
+        parcela: entry.parcel.documento_legado || null,
+        vencimento: entry.parcel.vencimento || null,
+        valor_atual: roundMoney(entry.parcel.valor_atual || 0),
       })),
     }
   }
@@ -918,6 +1003,7 @@ async function loadPersistedReturnResult(client, { tenantId, returnId }) {
       cliente: row.cliente || null,
       metodo_conciliacao: row.metodo_conciliacao || null,
       confianca_conciliacao: data.confianca_conciliacao || null,
+      candidatos_conciliacao: Array.isArray(data.candidatos_conciliacao) ? data.candidatos_conciliacao : [],
       relatorio_strato: Object.keys(report).length ? report : null,
       movimento_id: row.movimento_id || row.parcela_movimento_id || null,
       divergencia_valor: row.divergencia_valor == null ? null : roundMoney(row.divergencia_valor),
@@ -1250,6 +1336,7 @@ async function processBradescoReturn({
       cliente: parcel?.cliente_nome || null,
       metodo_conciliacao: matched?.method || null,
       confianca_conciliacao: matched?.confidence || null,
+      candidatos_conciliacao: Array.isArray(matched?.candidates) ? matched.candidates : [],
       relatorio_strato: matched?.reportItem ? {
         arquivo: matched.report?.nome_arquivo_relatorio || null,
         arquivo_retorno: matched.report?.arquivo_retorno || null,
@@ -1272,7 +1359,7 @@ async function processBradescoReturn({
     summary.itens.push(itemResult)
 
     if (effectivePersist) {
-      const itemParams = [batch.id, tenantId, parcel?.id || null, parcel?.remessa_item_id || null, item.nossoNumero, item.nossoNumeroDv, item.participantControl || null, item.occurrence, item.occurrenceLabel, item.occurrenceDate, item.creditDate, item.dueDate, item.titleAmount, item.paidAmount, item.interestAmount, item.discount, item.rejectionReasons, status, JSON.stringify({ ...item, relatorio_strato: matched?.reportItem || null, confianca_conciliacao: matched?.confidence || null }), movementId, matched?.method || null, valueDifference, context.company]
+      const itemParams = [batch.id, tenantId, parcel?.id || null, parcel?.remessa_item_id || null, item.nossoNumero, item.nossoNumeroDv, item.participantControl || null, item.occurrence, item.occurrenceLabel, item.occurrenceDate, item.creditDate, item.dueDate, item.titleAmount, item.paidAmount, item.interestAmount, item.discount, item.rejectionReasons, status, JSON.stringify({ ...item, relatorio_strato: matched?.reportItem || null, confianca_conciliacao: matched?.confidence || null, candidatos_conciliacao: matched?.candidates || [] }), movementId, matched?.method || null, valueDifference, context.company]
       const { rowCount: updatedItemCount } = await client.query(
         `WITH target AS (
            SELECT id
@@ -1351,4 +1438,8 @@ module.exports = {
   documentFraction,
   roundMoney,
   loadPersistedReturnResult,
+  scoreParcelForReport,
+  equivalentParcelFraction,
+  fullReturnBoleto,
+  explicitFinancialComposition,
 }

@@ -1,6 +1,6 @@
 {
   "name": "larmhub-api",
-  "version": "0.5.3",
+  "version": "0.8.3",
   "description": "API backend LarmHub / Santa Clara HUB",
   "main": "src/server.js",
   "scripts": {
@@ -68,7 +68,25 @@
     "db:migrate:rateio-cp-backend": "node scripts/migrate_rateio_contas_pagar_backend.js",
     "db:check:rateio-cp-backend": "node scripts/check_rateio_contas_pagar_backend.js",
     "db:rollback:rateio-cp-backend": "node scripts/rollback_rateio_contas_pagar_backend.js",
-    "test:rateio-cp-backend": "node scripts/test_rateio_contas_pagar_backend.js"
+    "test:rateio-cp-backend": "node scripts/test_rateio_contas_pagar_backend.js",
+    "test:pagamento-fornecedor-cp": "node scripts/test_pagamento_fornecedor_cp.js",
+    "db:audit:strato-larmhub": "node scripts/auditar_sincronizacao_strato_larmhub.js",
+    "test:audit:strato-larmhub": "node scripts/test_auditoria_strato_larmhub.js",
+    "db:simulate:strato-larmhub": "node scripts/simular_sincronizacao_strato_larmhub.js",
+    "test:simulate:strato-larmhub": "node scripts/test_simulacao_strato_larmhub.js",
+    "db:fix:cb230700-lucky": "node scripts/aplicar_correcao_cb230700_lucky.js",
+    "db:check:cb230700-lucky": "node scripts/conferir_correcao_cb230700_lucky.js",
+    "db:rollback:cb230700-lucky": "node scripts/rollback_correcao_cb230700_lucky.js",
+    "test:fix:cb230700-lucky": "node scripts/test_correcao_cb230700_lucky.js",
+    "db:migrate:retorno-multiparcelas": "node scripts/migrate_retorno_multiparcelas.js",
+    "db:check:retorno-multiparcelas": "node scripts/check_retorno_multiparcelas.js",
+    "db:rollback:retorno-multiparcelas": "node scripts/rollback_retorno_multiparcelas.js",
+    "test:retorno-multiparcelas": "node scripts/test_retorno_multiparcelas.js",
+    "test:strato-inteligente": "node scripts/test_strato_multi_analysis.js",
+    "test:strato-apply": "node scripts/test_strato_intelligent_apply.js",
+    "test:strato-matching": "node scripts/test_strato_matching_juros.js",
+    "db:preview:strato-cadastros": "node scripts/sync_strato_snapshot_cadastros.js --file=scripts/imports/strato_snapshot_2026_07_25.csv --cutoff=2026-06-01",
+    "db:sync:strato-cadastros": "node scripts/sync_strato_snapshot_cadastros.js --file=scripts/imports/strato_snapshot_2026_07_25.csv --cutoff=2026-06-01 --execute"
   },
   "dependencies": {
     "@aws-sdk/client-ses": "^3.750.0",

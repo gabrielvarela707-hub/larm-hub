@@ -1,0 +1,14 @@
+FUNCIONAL
+- src/services/stratoIntelligentApplyService.js
+
+VERSIONAMENTO/AUDITORIA
+- src/routes/recebiveis.js
+- src/data/system_releases_seed.js
+- data/system_releases_seed.js
+- package.json
+- package-lock.json
+
+TESTES
+- scripts/test_strato_intelligent_apply.js
+- scripts/test_strato_matching_juros.js
+- scripts/test_strato_multi_analysis.js
