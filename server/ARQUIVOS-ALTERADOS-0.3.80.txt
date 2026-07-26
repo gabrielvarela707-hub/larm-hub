@@ -1,9 +1,0 @@
-src/routes/financeiro.js
-src/routes/recebiveis.js
-scripts/migrate_movimento_orcado_inativacao.js
-src/data/system_releases_seed.js
-scripts/system_releases_seed.js
-data/system_releases_seed.js
-system_releases_seed.js
-package.json
-package-lock.json

@@ -1,7 +1,0 @@
-src/services/stratoIntelligentApplyService.js
-src/data/system_releases_seed.js
-package.json
-package-lock.json
-scripts/test_strato_intelligent_apply.js
-instalar-0.7.3.sh
-README-ATUALIZACAO-0.7.3.txt

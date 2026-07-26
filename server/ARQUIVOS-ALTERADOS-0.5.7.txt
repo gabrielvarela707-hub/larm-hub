@@ -1,7 +1,0 @@
-scripts/auditar_sincronizacao_strato_larmhub.js
-scripts/test_auditoria_strato_larmhub.js
-package.json
-package-lock.json
-src/data/system_releases_seed.js
-data/system_releases_seed.js
-README-ATUALIZACAO-0.5.7.txt

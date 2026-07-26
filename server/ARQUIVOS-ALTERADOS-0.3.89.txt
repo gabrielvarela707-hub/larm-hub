@@ -1,9 +1,0 @@
-LarmHub API 0.3.89 — arquivos alterados
-
-src/routes/financeiro.js
-src/data/system_releases_seed.js
-data/system_releases_seed.js
-scripts/migrate_system_releases.js
-package.json
-package-lock.json
-README-ATUALIZACAO-0.3.89.txt

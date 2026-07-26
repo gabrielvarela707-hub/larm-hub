@@ -1,7 +1,0 @@
-28d92e20201423d93ec849911d942dfc47756ecd5c3cae3f5eea42265064e9d8  ./README-BACKEND.md
-71e7c4878aa4721054b8ddbfdd3d84b137444b8f5de8f00b00ba8ef859e68278  ./instalar-backend-0.8.2.sh
-2e300c491c0635eda0ad70da117d8e61f78fa27e13d8b8fa6be8729d0d177fd7  ./package.json
-fb85a09a091fa0fb4b70f10637a25a8c5bbe3a304ee5d5c8aa87b7384bf6faf8  ./scripts/test_strato_0_8_2.js
-ef442ad76122a43bc3477adb4f72398927e492010ece4700c4544d856e50aab7  ./src/data/system_releases_seed.js
-08754d169936e0ad14d5d4804d06e9d9104c61a4d8aefb696b2c66ae5ec9f817  ./src/services/stratoIntelligentApplyService.js
-d9d6d9969b188d88c89cd383e3ebec60f6adb2f4e3ac3c4bf37fc7f21121a21d  ./src/services/stratoMultiParcelAnalysisService.js

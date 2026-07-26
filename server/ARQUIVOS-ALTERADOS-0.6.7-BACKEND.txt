@@ -1,8 +1,0 @@
-package.json
-package-lock.json
-src/services/stratoIntelligentApplyService.js
-scripts/test_strato_intelligent_apply.js
-src/data/system_releases_seed.js
-data/system_releases_seed.js
-README-ATUALIZACAO-0.6.7-BACKEND.txt
-ARQUIVOS-ALTERADOS-0.6.7-BACKEND.txt
