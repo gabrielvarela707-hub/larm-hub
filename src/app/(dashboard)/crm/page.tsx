@@ -19,6 +19,8 @@ import {
   Flame,
   History,
   Loader2,
+  MapPin,
+  ChevronDown,
   Mail,
   MessageSquare,
   MoreHorizontal,
@@ -1760,6 +1762,7 @@ export default function CRMPage() {
   const [importOpen, setImportOpen] = useState(false)
   const [newLeadStageId, setNewLeadStageId] = useState('')
   const [recalculatingScores, setRecalculatingScores] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
 
   async function loadAll() {
     setLoading(true)

@@ -1,7 +1,9 @@
 'use client'
 
 import type { ElementType } from 'react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
+import AccountSwitcherPopover from './account-switcher-popover'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -42,11 +44,11 @@ const NAV: NavItem[] = [
       { label: 'Funil de Vendas', href: '/crm', moduleIds: ['crm'] },
       { label: 'Todos os Leads', href: '/crm/leads', moduleIds: ['crm'] },
       { label: 'Automacoes', href: '/automacoes', moduleIds: ['automacoes'] },
-      { label: 'Conversas',  href: '/conversas',  moduleIds: ['crm'] },
-      { label: 'Reservas',   href: '/reservas',   moduleIds: ['crm'] },
-      { label: 'Propostas',  href: '/propostas',  moduleIds: ['crm'] },
-      { label: 'Comissoes',   href: '/comissoes',   moduleIds: ['crm'] },
-      { label: 'Agenda',      href: '/agenda',      moduleIds: ['crm'] },
+      { label: 'Conversas', href: '/conversas', moduleIds: ['crm'] },
+      { label: 'Reservas', href: '/reservas', moduleIds: ['crm'] },
+      { label: 'Propostas', href: '/propostas', moduleIds: ['crm'] },
+      { label: 'Comissoes', href: '/comissoes', moduleIds: ['crm'] },
+      { label: 'Agenda', href: '/agenda', moduleIds: ['crm'] },
     ],
   },
   { label: 'Marketing & Midia', href: '/marketing', icon: Megaphone, moduleIds: ['crm'] },
@@ -108,7 +110,8 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const user = useAuthStore(s => s.user)
   const logout = useAuthStore(s => s.logout)
   const [openGroups, setOpenGroups] = useState<string[]>(['CRM & Funil', 'Cadastros', 'Financeiro'])
-
+  const [accountOpen, setAccountOpen] = useState(false)
+  const accountButtonRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { hydrate() }, [hydrate])
 
   const logoUrl = config.logoUrl
@@ -191,7 +194,6 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           <ChevronLeft className={cn('w-4 h-4 transition-transform', collapsed && 'rotate-180')} />
         </button>
       </div>
-
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
         {visibleNav.map(item => {
@@ -222,8 +224,42 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                     </>
                   )}
                 </button>
-                {!collapsed && open && children.length > 0 && (
+                {!collapsed && open && (
                   <div className="mt-0.5 ml-4 pl-2.5 border-l border-white/10 space-y-0.5">
+                    {item.label === 'CRM & Funil' && (
+                      <div className="relative">
+                        <button
+                          type="button"
+                          ref={accountButtonRef}
+                          onClick={() => setAccountOpen(!accountOpen)}
+                          className="mb-2 flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2 py-2 hover:bg-white/10"
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/10">
+                              <MapPin className="h-3.5 w-3.5 text-white/70" />
+                            </div>
+
+                            <div className="min-w-0 text-left">
+                              <p className="truncate text-xs font-semibold text-white">
+                                Santa Clara - Spine
+                              </p>
+                              <p className="truncate text-[11px] text-white/45">
+                                São Paulo
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="ml-2 flex flex-col">
+                            <ChevronDown className="h-3 w-3 rotate-180 text-white/50" />
+                            <ChevronDown className="-mt-1 h-3 w-3 text-white/50" />
+                          </div>
+                        </button>
+                        <AccountSwitcherPopover
+                          open={accountOpen}
+                          buttonRef={accountButtonRef}
+                        />
+                      </div>
+                    )}
                     {children.map(child => (
                       <Link key={child.href} href={child.href}
                         className={cn(
